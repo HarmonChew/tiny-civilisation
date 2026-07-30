@@ -1,0 +1,25 @@
+{
+  "name": "tiny-civilisation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @tiny-civ/web",
+    "build": "npm run build --workspace @tiny-civ/sim-core && npm run build --workspace @tiny-civ/headless && npm run build --workspace @tiny-civ/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspace @tiny-civ/sim-core && npm run test --workspace @tiny-civ/web",
+    "test:run": "npm run test:run --workspace @tiny-civ/sim-core && npm run test:run --workspace @tiny-civ/web",
+    "headless": "npm run start --workspace @tiny-civ/headless --",
+    "batch": "npm run batch --workspace @tiny-civ/headless --"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "devDependencies": {
+    "jsdom": "29.1.1"
+  }
+}

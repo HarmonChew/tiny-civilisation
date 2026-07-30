@@ -1,0 +1,20 @@
+{
+  "name": "@tiny-civ/headless",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/index.ts",
+    "batch": "tsx src/index.ts batch"
+  },
+  "dependencies": {
+    "@tiny-civ/sim-core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "tsx": "4.20.6",
+    "typescript": "7.0.2"
+  }
+}
