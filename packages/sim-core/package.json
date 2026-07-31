@@ -10,7 +10,9 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run --update=none",
+    "test:golden": "vitest run tests/golden-replays.test.ts --update=none",
+    "test:golden:update": "vitest run tests/golden-replays.test.ts --update=all"
   },
   "devDependencies": {
     "typescript": "7.0.2",

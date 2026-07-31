@@ -40,10 +40,13 @@ Useful verification commands:
 ```sh
 npm run typecheck
 npm run test:run
+npm run test:golden
 npm run build
 ```
 
 `npm test` starts the interactive Vitest watchers. Use `npm run test:run` for a single non-interactive pass.
+
+`npm run test:golden` verifies the checked-in deterministic replay baseline without updating it. Use `npm run test:golden:update` only for an intentional simulation behavior change, then review the fixture diff and record the rationale in the commit or pull request. Ordinary `npm run test:run` verification also disables snapshot updates.
 
 ## Browser controls
 

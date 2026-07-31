@@ -1,0 +1,520 @@
+{
+  "replaySchemaVersion": 1,
+  "simulationSchemaVersion": 1,
+  "scenarios": [
+    {
+      "id": "default-social-loop",
+      "seed": 4182,
+      "scheduledCommands": [],
+      "jsonRoundTripAtTicks": [],
+      "checkpoints": [
+        {
+          "tick": 0,
+          "hash": "8929268fdecf0225",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 0,
+            "foodShared": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 51,
+          "hash": "b20ccb8d1f663a11",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 35,
+            "foodShared": 4,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 166,
+          "hash": "f21477f1b6ad24aa",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 38,
+            "foodShared": 4,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 1,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 473,
+          "hash": "6c568e951affab9a",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 40,
+            "foodShared": 4,
+            "thefts": 1,
+            "witnessedThefts": 1,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 1,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 1000,
+          "hash": "ec370b8bc2152f00",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 66,
+            "foodShared": 4,
+            "thefts": 1,
+            "witnessedThefts": 1,
+            "attacks": 9,
+            "groupsFormed": 1,
+            "storagesCompleted": 1,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 5000,
+          "hash": "52c72e217a64a022",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 178,
+            "foodShared": 4,
+            "thefts": 1,
+            "witnessedThefts": 1,
+            "attacks": 9,
+            "groupsFormed": 1,
+            "storagesCompleted": 1,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "peaceful-save-resume",
+      "seed": 921,
+      "scheduledCommands": [],
+      "jsonRoundTripAtTicks": [
+        1200
+      ],
+      "checkpoints": [
+        {
+          "tick": 0,
+          "hash": "882eb042a49a0b5a",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 0,
+            "foodShared": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 181,
+          "hash": "8c82fc63c7bcd628",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 35,
+            "foodShared": 3,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 1,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 1200,
+          "hash": "fe3a32a1ff666da7",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 69,
+            "foodShared": 3,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 1,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 2400,
+          "hash": "925d6eb89bf435d3",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 107,
+            "foodShared": 3,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 1,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "food-shock",
+      "seed": 4182,
+      "scheduledCommands": [
+        {
+          "commandId": 1,
+          "applyAtTick": 25,
+          "type": "REMOVE_FOOD",
+          "tileIndex": 346,
+          "amount": 20,
+          "blocked": null
+        },
+        {
+          "commandId": 2,
+          "applyAtTick": 80,
+          "type": "ADD_FOOD",
+          "tileIndex": 496,
+          "amount": 30,
+          "blocked": null
+        },
+        {
+          "commandId": 3,
+          "applyAtTick": 240,
+          "type": "ADD_FOOD",
+          "tileIndex": 346,
+          "amount": 12,
+          "blocked": null
+        }
+      ],
+      "jsonRoundTripAtTicks": [],
+      "checkpoints": [
+        {
+          "tick": 0,
+          "hash": "8929268fdecf0225",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 0,
+            "foodShared": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 25,
+          "hash": "ef4e3615b7b477af",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 7,
+            "foodShared": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 26,
+          "hash": "3e28e2d9042c6056",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 9,
+            "foodShared": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 1,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 80,
+          "hash": "aa1606fd5289727b",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 15,
+            "foodShared": 2,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 0,
+            "playerInterventions": 1,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 81,
+          "hash": "4c2205a973148b5e",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 15,
+            "foodShared": 2,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 0,
+            "playerInterventions": 2,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 240,
+          "hash": "ee9982e7d06af70e",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 2,
+          "metrics": {
+            "foodGathered": 36,
+            "foodShared": 6,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 2,
+            "storagesCompleted": 0,
+            "playerInterventions": 2,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 241,
+          "hash": "bcc0e210c14a0098",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 2,
+          "metrics": {
+            "foodGathered": 36,
+            "foodShared": 6,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 2,
+            "storagesCompleted": 0,
+            "playerInterventions": 3,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 1000,
+          "hash": "83aadfa24f9abe34",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 2,
+          "metrics": {
+            "foodGathered": 83,
+            "foodShared": 6,
+            "thefts": 1,
+            "witnessedThefts": 1,
+            "attacks": 8,
+            "groupsFormed": 2,
+            "storagesCompleted": 2,
+            "playerInterventions": 3,
+            "invalidPathFailures": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "chokepoint-close-reopen",
+      "seed": 23,
+      "scheduledCommands": [
+        {
+          "commandId": 1,
+          "applyAtTick": 0,
+          "type": "TOGGLE_OBSTACLE",
+          "tileIndex": 696,
+          "amount": 0,
+          "blocked": true
+        },
+        {
+          "commandId": 2,
+          "applyAtTick": 0,
+          "type": "TOGGLE_OBSTACLE",
+          "tileIndex": 744,
+          "amount": 0,
+          "blocked": true
+        },
+        {
+          "commandId": 3,
+          "applyAtTick": 0,
+          "type": "TOGGLE_OBSTACLE",
+          "tileIndex": 792,
+          "amount": 0,
+          "blocked": true
+        },
+        {
+          "commandId": 4,
+          "applyAtTick": 0,
+          "type": "TOGGLE_OBSTACLE",
+          "tileIndex": 840,
+          "amount": 0,
+          "blocked": true
+        },
+        {
+          "commandId": 5,
+          "applyAtTick": 120,
+          "type": "TOGGLE_OBSTACLE",
+          "tileIndex": 744,
+          "amount": 0,
+          "blocked": false
+        }
+      ],
+      "jsonRoundTripAtTicks": [],
+      "checkpoints": [
+        {
+          "tick": 0,
+          "hash": "eec50fe3397582f9",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 0,
+            "foodShared": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 1,
+          "hash": "06919339f77e945d",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 0,
+            "foodShared": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 4,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 120,
+          "hash": "ad8b7b0fcef4c764",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 35,
+            "foodShared": 3,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 0,
+            "playerInterventions": 4,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 121,
+          "hash": "4d9dca6256804840",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 35,
+            "foodShared": 3,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 0,
+            "playerInterventions": 5,
+            "invalidPathFailures": 0
+          }
+        },
+        {
+          "tick": 600,
+          "hash": "63d09f157f04ec4a",
+          "schemaVersion": 1,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 52,
+            "foodShared": 3,
+            "thefts": 1,
+            "witnessedThefts": 1,
+            "attacks": 6,
+            "groupsFormed": 1,
+            "storagesCompleted": 1,
+            "playerInterventions": 5,
+            "invalidPathFailures": 0
+          }
+        }
+      ]
+    }
+  ]
+}
