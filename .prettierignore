@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+packages/sim-core/tests/fixtures/golden-replays.v1.json
+package-lock.json

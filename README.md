@@ -16,8 +16,11 @@ This repository implements the first vertical slice of the larger design: a smal
 - A PixiJS world view with React controls and inspectors for intentions, relationships, groups, decisions, and history.
 - Player commands for adding or removing food and toggling obstacles. Commands enter the simulation at an authoritative tick.
 - A Node.js headless runner for deterministic single-seed and multi-seed runs.
+- Versioned command, snapshot, replay, save, behavior, and authoritative-state contracts with tested save migration and invalid-data rejection.
+- A declared tick pipeline, focused simulation systems, typed lookup indexes, and an exhaustive action resolver registry.
+- Real-browser Pixi smoke coverage, responsive screenshot baselines, enforced coverage floors, and a repeatable throughput benchmark.
 
-The current slice deliberately excludes water, shelters, birth and ageing, culture, migration, trade, territory, seasons, disease, predators, technology, saving, Web Workers, and LLM narration. Those belong to later milestones after the social feedback loop is reliable and understandable.
+The current product slice deliberately excludes water, shelters, birth and ageing, culture, migration, trade, territory, seasons, disease, predators, technology, user-facing save/replay workflows, Web Workers, and LLM narration. Those belong to later milestones after the social feedback loop is reliable and understandable.
 
 ## Quick start
 
@@ -38,30 +41,33 @@ Vite prints the local URL when the development server starts.
 Useful verification commands:
 
 ```sh
+npm run check
 npm run typecheck
 npm run test:run
 npm run test:golden
+npm run test:e2e
+npm run benchmark
 npm run build
 ```
 
-`npm test` starts the interactive Vitest watchers. Use `npm run test:run` for a single non-interactive pass.
+`npm run check` is the complete local and CI gate: formatting, linting, type-checking, coverage, real-browser journeys, and production builds. `npm test` starts the interactive Vitest watchers; use `npm run test:run` for a single non-interactive pass.
 
 `npm run test:golden` verifies the checked-in deterministic replay baseline without updating it. Use `npm run test:golden:update` only for an intentional simulation behavior change, then review the fixture diff and record the rationale in the commit or pull request. Ordinary `npm run test:run` verification also disables snapshot updates.
 
 ## Browser controls
 
-| Control | Result |
-| --- | --- |
-| Space | Play or pause |
-| `.` | Advance one authoritative tick while paused |
-| `1`, `2`, `4` | Set simulation speed |
-| Click a creature | Select and inspect it |
-| `F` | Follow the selected creature |
-| Escape | Return to the inspect tool |
-| Add food tool | Add food at the chosen tile through the command queue |
-| Remove food tool | Remove food at the chosen tile through the command queue |
-| Obstacle tool | Toggle a tile between open and blocked |
-| Restart same seed | Recreate the initial world for a controlled comparison |
+| Control           | Result                                                   |
+| ----------------- | -------------------------------------------------------- |
+| Space             | Play or pause                                            |
+| `.`               | Advance one authoritative tick while paused              |
+| `1`, `2`, `4`     | Set simulation speed                                     |
+| Click a creature  | Select and inspect it                                    |
+| `F`               | Follow the selected creature                             |
+| Escape            | Return to the inspect tool                               |
+| Add food tool     | Add food at the chosen tile through the command queue    |
+| Remove food tool  | Remove food at the chosen tile through the command queue |
+| Obstacle tool     | Toggle a tile between open and blocked                   |
+| Restart same seed | Recreate the initial world for a controlled comparison   |
 
 The interface also provides resource, intention, and group overlays plus filters for the event timeline.
 
@@ -109,6 +115,8 @@ Headless runner ─────────► deterministic sim-core
 
 The simulation core owns time and authoritative state. PixiJS renders read-only snapshots, React owns the interface, and the history layer summarizes facts emitted by the simulation. The headless app imports the same core as the browser and does not require a DOM or renderer.
 
+`sim-core` exposes a small simulation facade and explicit tick coordinator. Commands, social state, groups, events, projections, persistence, actions, and maintenance systems live in focused modules. The web app consumes those contracts directly through a simulation controller hook; its Pixi camera/runtime/layers remain downstream of read-only snapshots.
+
 The repository is organized as npm workspaces:
 
 ```text
@@ -126,7 +134,7 @@ tiny-civilisation/
 
 The authoritative simulation advances at a fixed 10 ticks per simulated second. It uses integer or fixed-point values, stable entity IDs, deterministic iteration, a saved sequential RNG for generation, and keyed random values for action outcomes. Player edits are scheduled commands rather than immediate renderer mutations.
 
-`hashSimulationState` produces a canonical state hash. Given the same implementation, seed, tick count, and command log, a run should reach the same hash. Tests cover repeated runs, command ordering, seeded randomness, pathfinding, bounded social data, and social scenario invariants.
+`hashSimulationState` produces a canonical state hash. Given the same behavior version, seed, tick count, and command log, a run should reach the same hash. Tests cover repeated runs, command ordering, seeded randomness, pathfinding, bounded social data, persistence contracts, multi-seed invariants, and social scenario outcomes.
 
 Rendering frame rate, camera state, open panels, elapsed wall-clock time, and CLI throughput are outside the authoritative state.
 
@@ -144,4 +152,6 @@ food pressure
   → relationship and historical consequences
 ```
 
-New systems should wait until this loop remains deterministic, bounded, inspectable, and interesting across many seeds. The next production milestones can then add water and shelter, lifecycle, culture, migration, saving, and worker execution without moving authority into the renderer or bypassing creature choice.
+Phases 0 and 1 are complete: the baseline is protected and the architecture has been split without changing the golden replay corpus. Phase 2 is next and will add paused onboarding, scenario selection, save/load, intervention logs, deterministic replay, comparison, causal navigation, and worker execution. See `PROGRESS.md` for the ordered plan.
+
+Major new simulation systems should wait until that experiment loop is complete. Water and shelter, lifecycle, culture, and migration can then extend the same typed events and decisions without moving authority into the renderer or bypassing creature choice.

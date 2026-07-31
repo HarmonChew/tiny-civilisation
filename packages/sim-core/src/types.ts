@@ -126,12 +126,7 @@ export interface ActiveAction {
   navigationRevision: number;
 }
 
-export type CreatureRole =
-  | "FORAGER"
-  | "BUILDER"
-  | "GUARD"
-  | "LEADER"
-  | "DRIFTER";
+export type CreatureRole = "FORAGER" | "BUILDER" | "GUARD" | "LEADER" | "DRIFTER";
 
 export interface CreatureState {
   id: EntityId;
@@ -198,11 +193,7 @@ export interface GroupState {
 }
 
 export type MemoryKind =
-  | "HELP_RECEIVED"
-  | "THEFT_OBSERVED"
-  | "HARM_RECEIVED"
-  | "RESOURCE_FOUND"
-  | "GROUP_FOUNDED";
+  "HELP_RECEIVED" | "THEFT_OBSERVED" | "HARM_RECEIVED" | "RESOURCE_FOUND" | "GROUP_FOUNDED";
 
 export interface EpisodicMemory {
   id: number;
@@ -366,10 +357,7 @@ export interface ToggleObstacleCommand {
   blocked?: boolean;
 }
 
-export type PlayerCommand =
-  | AddFoodCommand
-  | RemoveFoodCommand
-  | ToggleObstacleCommand;
+export type PlayerCommand = AddFoodCommand | RemoveFoodCommand | ToggleObstacleCommand;
 
 export interface ScheduledPlayerCommand {
   commandId: number;
@@ -426,6 +414,8 @@ export interface RenderStructure {
 }
 
 export interface RenderSnapshot {
+  schemaVersion: number;
+  behaviorVersion: number;
   tick: Tick;
   timeLabel: string;
   width: number;

@@ -1,9 +1,7 @@
 export * from "./types.js";
-export {
-  keyedRandomUnit,
-  keyedRandomU32,
-  nextRandomU32,
-} from "./rng.js";
+export * from "./contracts.js";
+export * from "./versions.js";
+export { keyedRandomUnit, keyedRandomU32, nextRandomU32 } from "./rng.js";
 export {
   findPath,
   manhattanDistance,
@@ -12,10 +10,9 @@ export {
 } from "./pathfinding.js";
 export {
   advanceSimulation,
-  createRenderSnapshot,
   createSimulation,
-  formatSimulationTime,
-  hashSimulationState,
   queuePlayerCommand,
   TICKS_PER_SECOND,
 } from "./simulation.js";
+export { createRenderSnapshot, formatSimulationTime } from "./projection.js";
+export { hashSimulationState } from "./state-hash.js";

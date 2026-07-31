@@ -1,30 +1,30 @@
 # Tiny Civilisation — Progress and Expansion Plan
 
-Last updated: 30 July 2026
+Last updated: 1 August 2026
 
 ## Current position
 
-Tiny Civilisation has a sound vertical-slice foundation. The deterministic simulation, scheduled player commands, state hashing, headless runner, and separation between simulation authority and rendering are the right long-term boundaries. The browser experience also has a distinct field-notebook identity that supports the observational premise.
+Phase 0 (baseline protection) and Phase 1 (behavior-preserving architecture) are complete. The deterministic simulation is now divided into focused systems behind typed, versioned contracts; the browser is split into controller, feature, rendering, and style modules; and CI can detect behavior, coverage, visual, build, and throughput regressions.
 
-The next milestone should focus on maintainability and the player’s experiment loop before adding major simulation systems.
+The project is ready to begin Phase 2: completing the player’s repeatable experiment loop. Major simulation systems remain deferred until experiments can be saved, replayed, compared, and explained.
 
 ### Verified baseline
 
-- TypeScript type-checking passes across all workspaces.
-- All 20 existing tests pass.
-- The production build succeeds.
-- The desktop and mobile interfaces render without observed console errors or horizontal overflow.
-- The repository is divided into a simulation core, browser application, and headless runner.
-- Deterministic replay, state hashing, command scheduling, bounded collections, pathfinding, and core social outcomes have automated coverage.
+- TypeScript type-checking, formatting, linting, and production builds pass across all workspaces.
+- All 29 unit and integration tests pass: 24 simulation-core tests and 5 web tests.
+- Four Playwright journeys pass against the real Pixi renderer, including narrow, medium, and wide screenshot baselines.
+- The unchanged golden replay fixture has SHA-256 `8D343349EBE11F6113FDCD145391602FC74C8FA34BB5F05CE35098F78BAB299C`.
+- Measured coverage is 88.68% statements in `sim-core` and 44.03% across the full web surface, with enforced regression floors.
+- The post-refactor 200,000-tick benchmark reaches 23,704.9 ticks per second against a 12,874-tick minimum.
+- CI exercises Node.js 22.12 and the primary Node.js 24 runtime.
+- Commands, snapshots, replays, saves, behavior, and authoritative state have explicit version contracts.
 
 ### Main engineering risks
 
-- `packages/sim-core/src/simulation.ts` is approximately 2,800 lines and combines commands, needs, relationships, groups, Utility AI, action execution, events, invariants, snapshots, and hashing.
-- `apps/web/src/App.tsx`, `apps/web/src/sim-adapter.ts`, `apps/web/src/components/PixiWorld.tsx`, and `apps/web/src/styles.css` have also accumulated several responsibilities.
-- The web adapter casts the typed simulation package to `unknown` and reconstructs view data through runtime field probing. This weakens the monorepo’s compile-time contracts and makes every new simulation field more expensive to integrate.
-- UI tests mock the Pixi renderer. There are no browser end-to-end, visual regression, accessibility, coverage, or performance gates.
-- Serialized state already survives a JSON round trip, but there is no versioned save schema or migration policy.
-- The simulation currently runs on the browser’s main thread and rebuilds the projected view frequently. This is acceptable for eight creatures but should be addressed before increasing population or world complexity.
+- The simulation still runs on the browser’s main thread. Move it into a Web Worker during Phase 2 before increasing population or world complexity.
+- The render projection is rebuilt frequently. Measure and optimize this only after representative larger scenarios exist.
+- Versioned save and replay contracts exist in the core, but the product has no save, load, replay, comparison, or import/export workflow yet.
+- Pixi rendering has real browser coverage, but its camera and layer modules remain costly to unit-test in jsdom; the screenshot gate is the present regression boundary.
 
 ### Main product risks
 
@@ -54,6 +54,8 @@ The phases below are ordered by dependency. Calendar estimates should be set aft
 
 ### Phase 0 — Protect the baseline
 
+Status: **Complete (1 August 2026).**
+
 Goal: make refactoring safe before changing simulation behavior.
 
 - Capture golden state hashes for a representative seed corpus and intervention logs.
@@ -71,6 +73,8 @@ The baseline is protected when:
 - Performance regressions are visible.
 
 ### Phase 1 — Refactor without behavior changes
+
+Status: **Complete (1 August 2026).** The checked-in replay corpus is byte-for-byte unchanged.
 
 Goal: make new systems cheaper and safer to add.
 
@@ -113,6 +117,8 @@ The architecture phase is complete when:
 - Core browser journeys run against the real renderer in CI.
 
 ### Phase 2 — Complete the experiment loop
+
+Status: **Next full phase.**
 
 Goal: turn the current simulation viewer into a repeatable experimental sandbox.
 
@@ -205,11 +211,13 @@ The project is ready for broad feature expansion when:
 
 ## Recommended next work
 
-Start with Phase 0 and the typed-boundary portion of Phase 1:
+Phase 1 is complete. Implement Phase 2 in this dependency order:
 
-- Add golden seed and intervention replay fixtures.
-- Replace the `unknown` simulation adapter with a typed projection.
-- Extract action definitions and the tick pipeline from `simulation.ts` while preserving hashes.
-- Add formatting, linting, coverage, and a real browser smoke test to CI.
+1. Start new sessions paused; add a skippable orientation plus seed and scenario selection.
+2. Expose the versioned save contract through save, load, export, import, and clear incompatibility recovery UI.
+3. Record interventions automatically and let players bookmark meaningful ticks.
+4. Build deterministic replay from seed plus command log, then add baseline-versus-intervention comparison and outcome deltas.
+5. Connect events, decisions, memories, relationships, and consequences into a navigable causal trail.
+6. Move authoritative ticking and replay into a Web Worker, retaining the existing typed command and snapshot boundary.
 
-Do not add major simulation systems until these four tasks are complete.
+Phase 2 should finish with one browser-level acceptance journey: create a baseline, branch with one intervention, save and reload both runs, replay them to identical hashes, and compare the explained outcome.

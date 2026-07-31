@@ -43,17 +43,12 @@ export function createPetriWorld(): WorldState {
       const index = y * WIDTH + x;
       const border = x === 0 || y === 0 || x === WIDTH - 1 || y === HEIGHT - 1;
       const centralBarrier = x === 24 && (y < 14 || y > 17);
-      const westRock =
-        (x === 4 && y >= 4 && y <= 8) ||
-        (y === 20 && x >= 3 && x <= 8);
-      const eastRock =
-        (x === 41 && y >= 8 && y <= 13) ||
-        (y === 27 && x >= 33 && x <= 39);
+      const westRock = (x === 4 && y >= 4 && y <= 8) || (y === 20 && x >= 3 && x <= 8);
+      const eastRock = (x === 41 && y >= 8 && y <= 13) || (y === 27 && x >= 33 && x <= 39);
       const shallowWater =
         !border &&
         !centralBarrier &&
-        ((x >= 30 && x <= 34 && y === 18) ||
-          (x === 34 && y >= 19 && y <= 23));
+        ((x >= 30 && x <= 34 && y === 18) || (x === 34 && y >= 19 && y <= 23));
       const blocked = border || centralBarrier || westRock || eastRock;
       tiles.push({
         index,
@@ -202,11 +197,7 @@ function createCreature(
   prototype: CreaturePrototype,
 ): CreatureState {
   const ordinaryJitter = (): number => randomRange(state, -700, 700);
-  const traitJitter = (
-    channel: string,
-    ordinarySpan: number,
-    taroSpan: number,
-  ): number => {
+  const traitJitter = (channel: string, ordinarySpan: number, taroSpan: number): number => {
     const sequential = randomRange(
       state,
       -(prototype.name === "Taro" ? taroSpan : ordinarySpan),
@@ -222,9 +213,7 @@ function createCreature(
           ? "creature-sociability"
           : `creature-${channel}`;
     const normalized = keyedRandomUnit(state.seed, keyedChannel, 0, id);
-    return (
-      Math.floor((normalized * (taroSpan * 2 + 1)) / 10_001) - taroSpan
-    );
+    return Math.floor((normalized * (taroSpan * 2 + 1)) / 10_001) - taroSpan;
   };
   const tileIndex = tileIndexAt(world, prototype.x, prototype.y);
   return {
@@ -241,18 +230,12 @@ function createCreature(
       fatigue: clampUnit(800 + randomRange(state, 0, 900)),
     },
     traits: {
-      generosity: clampUnit(
-        prototype.generosity + traitJitter("generosity", 700, 700),
-      ),
-      aggression: clampUnit(
-        prototype.aggression + traitJitter("aggression", 700, 3_000),
-      ),
+      generosity: clampUnit(prototype.generosity + traitJitter("generosity", 700, 700)),
+      aggression: clampUnit(prototype.aggression + traitJitter("aggression", 700, 3_000)),
       sociability: clampUnit(
         prototype.sociability + traitJitter("sociability", 700, 1_800),
       ),
-      loyalty: clampUnit(
-        prototype.loyalty + traitJitter("loyalty", 700, 1_000),
-      ),
+      loyalty: clampUnit(prototype.loyalty + traitJitter("loyalty", 700, 1_000)),
     },
     skills: {
       foraging: clampUnit(prototype.foraging + ordinaryJitter()),
@@ -277,12 +260,7 @@ function createCreature(
 
 export function populateInitialWorld(state: SimulationState): void {
   for (const prototype of PROTOTYPES) {
-    const creature = createCreature(
-      state,
-      state.world,
-      state.nextEntityId,
-      prototype,
-    );
+    const creature = createCreature(state, state.world, state.nextEntityId, prototype);
     state.nextEntityId += 1;
     state.creatures.push(creature);
   }

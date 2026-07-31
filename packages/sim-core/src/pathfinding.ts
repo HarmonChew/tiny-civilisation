@@ -107,9 +107,7 @@ export function findPath(
       if (
         candidateF < currentF ||
         (candidateF === currentF && candidateH < currentH) ||
-        (candidateF === currentF &&
-          candidateH === currentH &&
-          candidate < current)
+        (candidateF === currentF && candidateH === currentH && candidate < current)
       ) {
         bestOpenIndex = index;
         current = candidate;

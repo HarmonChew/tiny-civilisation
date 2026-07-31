@@ -1,12 +1,7 @@
 export type EntityId = number;
 
 export type TimelineCategory =
-  | "all"
-  | "social"
-  | "resources"
-  | "conflict"
-  | "group"
-  | "player";
+  "all" | "social" | "resources" | "conflict" | "group" | "player";
 
 export type InterventionTool = "inspect" | "add-food" | "remove-food" | "obstacle";
 

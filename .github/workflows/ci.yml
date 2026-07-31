@@ -5,9 +5,26 @@ on:
   pull_request:
 
 jobs:
-  test:
+  minimum-node:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - run: npm run build
+      - run: npm run benchmark
+
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,7 +32,6 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm run test:run
-      - run: npm run build
-      - run: npm run headless -- --seed 4182 --ticks 5000
+      - run: npx playwright install chromium
+      - run: npm run check
+      - run: npm run benchmark

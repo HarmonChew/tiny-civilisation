@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest",
     "test:run": "vitest run --update=none",
+    "test:coverage": "vitest run --coverage --update=none",
     "test:golden": "vitest run tests/golden-replays.test.ts --update=none",
     "test:golden:update": "vitest run tests/golden-replays.test.ts --update=all"
   },

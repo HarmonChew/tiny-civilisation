@@ -124,10 +124,7 @@ function assertNonnegativeInteger(value: number, label: string): void {
   }
 }
 
-function assertStrictlyAscending(
-  values: readonly number[],
-  label: string,
-): void {
+function assertStrictlyAscending(values: readonly number[], label: string): void {
   let previous = -1;
   for (const value of values) {
     assertNonnegativeInteger(value, label);
@@ -138,9 +135,7 @@ function assertStrictlyAscending(
   }
 }
 
-function validateScenarios(
-  scenarios: readonly GoldenReplayScenario[],
-): void {
+function validateScenarios(scenarios: readonly GoldenReplayScenario[]): void {
   const ids = new Set<string>();
   for (const scenario of scenarios) {
     if (ids.has(scenario.id)) {
@@ -149,10 +144,7 @@ function validateScenarios(
     ids.add(scenario.id);
 
     assertNonnegativeInteger(scenario.seed, `${scenario.id} seed`);
-    assertStrictlyAscending(
-      scenario.checkpoints,
-      `${scenario.id} checkpoints`,
-    );
+    assertStrictlyAscending(scenario.checkpoints, `${scenario.id} checkpoints`);
     if (scenario.checkpoints[0] !== 0) {
       throw new Error(`${scenario.id} must have an initial tick 0 checkpoint.`);
     }
@@ -164,14 +156,9 @@ function validateScenarios(
 
     let previousInterventionTick = -1;
     for (const intervention of scenario.interventions) {
-      assertNonnegativeInteger(
-        intervention.atTick,
-        `${scenario.id} intervention tick`,
-      );
+      assertNonnegativeInteger(intervention.atTick, `${scenario.id} intervention tick`);
       if (intervention.atTick < previousInterventionTick) {
-        throw new Error(
-          `${scenario.id} interventions must be ordered by scheduled tick.`,
-        );
+        throw new Error(`${scenario.id} interventions must be ordered by scheduled tick.`);
       }
       if (intervention.atTick >= finalCheckpoint) {
         throw new Error(
@@ -192,9 +179,7 @@ function validateScenarios(
     );
     for (const tick of scenario.jsonRoundTripAtTicks) {
       if (!scenario.checkpoints.includes(tick)) {
-        throw new Error(
-          `${scenario.id} JSON round trips must occur at checkpoints.`,
-        );
+        throw new Error(`${scenario.id} JSON round trips must occur at checkpoints.`);
       }
       if (tick >= finalCheckpoint) {
         throw new Error(
@@ -292,36 +277,29 @@ function runScenario(scenario: GoldenReplayScenario): GoldenReplayResult {
 }
 
 describe("golden deterministic replays", () => {
-  it(
-    "matches the versioned replay corpus",
-    async () => {
-      validateScenarios(SCENARIOS);
-      const scenarios = SCENARIOS.map(runScenario);
-      const simulationSchemaVersions = new Set(
-        scenarios.flatMap((scenario) =>
-          scenario.checkpoints.map((checkpoint) => checkpoint.schemaVersion),
-        ),
-      );
-      expect(simulationSchemaVersions.size).toBe(1);
+  it("matches the versioned replay corpus", async () => {
+    validateScenarios(SCENARIOS);
+    const scenarios = SCENARIOS.map(runScenario);
+    const simulationSchemaVersions = new Set(
+      scenarios.flatMap((scenario) =>
+        scenario.checkpoints.map((checkpoint) => checkpoint.schemaVersion),
+      ),
+    );
+    expect(simulationSchemaVersions.size).toBe(1);
 
-      const simulationSchemaVersion = simulationSchemaVersions.values().next()
-        .value;
-      if (simulationSchemaVersion === undefined) {
-        throw new Error(
-          "The golden replay corpus has no simulation schema version.",
-        );
-      }
+    const simulationSchemaVersion = simulationSchemaVersions.values().next().value;
+    if (simulationSchemaVersion === undefined) {
+      throw new Error("The golden replay corpus has no simulation schema version.");
+    }
 
-      const corpus: GoldenReplayCorpus = {
-        replaySchemaVersion: 1,
-        simulationSchemaVersion,
-        scenarios,
-      };
+    const corpus: GoldenReplayCorpus = {
+      replaySchemaVersion: 1,
+      simulationSchemaVersion,
+      scenarios,
+    };
 
-      await expect(`${JSON.stringify(corpus, null, 2)}\n`).toMatchFileSnapshot(
-        "./fixtures/golden-replays.v1.json",
-      );
-    },
-    15_000,
-  );
+    await expect(`${JSON.stringify(corpus, null, 2)}\n`).toMatchFileSnapshot(
+      "./fixtures/golden-replays.v1.json",
+    );
+  }, 15_000);
 });

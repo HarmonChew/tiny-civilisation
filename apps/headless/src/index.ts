@@ -8,7 +8,7 @@ import {
 } from "@tiny-civ/sim-core";
 
 import {
-  EventCounter,
+  readEventCounts,
   readFinalTick,
   readGroupCount,
   readPopulation,
@@ -179,24 +179,15 @@ function round(value: number, decimalPlaces: number): number {
 }
 
 function simulate({ seed, ticks }: RunOptions): RunResult {
-  let state = createSimulation(seed);
-  const events = new EventCounter();
-  const advance = advanceSimulation as unknown as (
-    currentState: typeof state,
-    tickCount?: number,
-  ) => typeof state | void;
+  const state = createSimulation(seed);
 
   const startedAt = performance.now();
   if (ticks > 0) {
-    const advancedState = advance(state, ticks);
-    if (advancedState !== undefined) {
-      state = advancedState;
-    }
+    advanceSimulation(state, ticks);
   }
-  events.observe(state);
   const elapsedMs = performance.now() - startedAt;
   const finalTick = readFinalTick(state);
-  const eventCounts = events.resolveFinalCounts(state);
+  const eventCounts = readEventCounts(state);
 
   return {
     seed,
@@ -243,24 +234,13 @@ function runBatch(options: BatchOptions): object {
       totalTicks,
       meanPopulation: round(mean(runs.map((run) => run.metrics.population)), 2),
       meanGroups: round(mean(runs.map((run) => run.metrics.groups)), 2),
-      sharingEvents: runs.reduce(
-        (sum, run) => sum + run.metrics.sharingEvents,
-        0,
-      ),
+      sharingEvents: runs.reduce((sum, run) => sum + run.metrics.sharingEvents, 0),
       theftEvents: runs.reduce((sum, run) => sum + run.metrics.theftEvents, 0),
-      conflictEvents: runs.reduce(
-        (sum, run) => sum + run.metrics.conflictEvents,
-        0,
-      ),
-      storageEvents: runs.reduce(
-        (sum, run) => sum + run.metrics.storageEvents,
-        0,
-      ),
+      conflictEvents: runs.reduce((sum, run) => sum + run.metrics.conflictEvents, 0),
+      storageEvents: runs.reduce((sum, run) => sum + run.metrics.storageEvents, 0),
       elapsedMs: round(elapsedMs, 3),
       ticksPerSecond:
-        totalTicks === 0
-          ? 0
-          : round((totalTicks * 1_000) / Math.max(elapsedMs, 0.001), 1),
+        totalTicks === 0 ? 0 : round((totalTicks * 1_000) / Math.max(elapsedMs, 0.001), 1),
     },
   };
 }
@@ -273,9 +253,7 @@ function main(args: readonly string[]): void {
 
   const [first, ...rest] = args;
   if (first === "batch") {
-    process.stdout.write(
-      `${JSON.stringify(runBatch(parseBatchOptions(rest)), null, 2)}\n`,
-    );
+    process.stdout.write(`${JSON.stringify(runBatch(parseBatchOptions(rest)), null, 2)}\n`);
     return;
   }
 

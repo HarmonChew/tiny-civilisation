@@ -239,6 +239,8 @@ describe("Tiny Civilisation workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add food" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply active tool" }));
     expect(testState.interventionCalls).toBe(1);
-    expect(screen.getByText(/Creatures will respond through their own decisions/)).toBeTruthy();
+    expect(
+      screen.getByText(/Creatures will respond through their own decisions/),
+    ).toBeTruthy();
   });
 });

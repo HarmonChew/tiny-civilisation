@@ -25,9 +25,7 @@ describe("simulation UI adapter", () => {
     expect(after.tick).toBe(1);
     expect(after.population).toBe(8);
     expect(
-      after.events.some(
-        (event) => event.type === "INTERVENTION" && event.playerCaused,
-      ),
+      after.events.some((event) => event.type === "INTERVENTION" && event.playerCaused),
     ).toBe(true);
   });
 
@@ -187,8 +185,8 @@ describe("simulation UI adapter", () => {
       collidingEvents.find((event) => event.type === "SOCIAL_BOND")?.decisionActorId,
     ).toBe(owner.id);
     expect(
-      collidingEvents.find((event) => event.type === "SOCIAL_BOND")
-        ?.decisionCandidates?.[0]?.action,
+      collidingEvents.find((event) => event.type === "SOCIAL_BOND")?.decisionCandidates?.[0]
+        ?.action,
     ).toBe("SHARE");
     const linkedCandidates = collidingEvents.find(
       (event) => event.type === "SOCIAL_BOND",
@@ -223,9 +221,7 @@ describe("simulation UI adapter", () => {
       (creature) => creature.id === subject.id,
     );
     const generosity = mapped?.traits.find((trait) => trait.key === "generosity");
-    const relationship = mapped?.relationships.find(
-      (edge) => edge.otherId === other.id,
-    );
+    const relationship = mapped?.relationships.find((edge) => edge.otherId === other.id);
 
     expect(mapped?.health).toBeCloseTo(0.34);
     expect(mapped?.hunger).toBeCloseTo(0.04);

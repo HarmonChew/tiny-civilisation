@@ -69,9 +69,7 @@ describe("player command queue", () => {
 
     advanceSimulation(state, 3);
     expect(state.tick).toBe(3);
-    expect(
-      state.resourceNodes.find((node) => node.tileIndex === target),
-    ).toBeUndefined();
+    expect(state.resourceNodes.find((node) => node.tileIndex === target)).toBeUndefined();
 
     advanceSimulation(state, 1);
     expect(

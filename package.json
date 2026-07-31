@@ -10,18 +10,31 @@
   "scripts": {
     "dev": "npm run dev --workspace @tiny-civ/web",
     "build": "npm run build --workspace @tiny-civ/sim-core && npm run build --workspace @tiny-civ/headless && npm run build --workspace @tiny-civ/web",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint apps packages e2e scripts playwright.config.ts",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspace @tiny-civ/sim-core && npm run test --workspace @tiny-civ/web",
     "test:run": "npm run test:run --workspace @tiny-civ/sim-core && npm run test:run --workspace @tiny-civ/web",
+    "test:coverage": "npm run test:coverage --workspace @tiny-civ/sim-core && npm run test:coverage --workspace @tiny-civ/web",
     "test:golden": "npm run test:golden --workspace @tiny-civ/sim-core",
     "test:golden:update": "npm run test:golden:update --workspace @tiny-civ/sim-core",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run test:e2e && npm run build",
     "headless": "npm run start --workspace @tiny-civ/headless --",
-    "batch": "npm run batch --workspace @tiny-civ/headless --"
+    "batch": "npm run batch --workspace @tiny-civ/headless --",
+    "benchmark": "npm run benchmark --workspace @tiny-civ/headless --"
   },
   "engines": {
     "node": ">=22.12.0"
   },
   "devDependencies": {
-    "jsdom": "29.1.1"
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^10.8.0",
+    "jsdom": "29.1.1",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.65.0"
   }
 }

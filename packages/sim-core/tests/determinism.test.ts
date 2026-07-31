@@ -28,9 +28,7 @@ describe("deterministic simulation", () => {
     const loaded = JSON.parse(JSON.stringify(saved)) as SimulationState;
     advanceSimulation(loaded, 1_200);
 
-    expect(hashSimulationState(loaded)).toBe(
-      hashSimulationState(uninterrupted),
-    );
+    expect(hashSimulationState(loaded)).toBe(hashSimulationState(uninterrupted));
   });
 
   it("makes distinct seeds produce distinct authoritative states", () => {
@@ -60,21 +58,15 @@ describe("deterministic simulation", () => {
       );
       expect(
         state.relationships.filter((edge) => edge.fromId === creature.id).length,
-      ).toBeLessThanOrEqual(
-        state.configuration.maxRelationshipsPerCreature,
-      );
+      ).toBeLessThanOrEqual(state.configuration.maxRelationshipsPerCreature);
     }
 
     const eventIds = new Set(state.domainEvents.map((event) => event.id));
-    const decisionIds = new Set(
-      state.decisionRecords.map((decision) => decision.id),
-    );
+    const decisionIds = new Set(state.decisionRecords.map((decision) => decision.id));
     for (const history of state.historyEvents) {
       for (const sourceId of history.sourceEventIds) {
         expect(eventIds.has(sourceId)).toBe(true);
-        const source = state.domainEvents.find(
-          (event) => event.id === sourceId,
-        );
+        const source = state.domainEvents.find((event) => event.id === sourceId);
         for (const decisionId of source?.decisionRecordIds ?? []) {
           expect(decisionIds.has(decisionId)).toBe(true);
         }
