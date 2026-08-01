@@ -248,6 +248,8 @@ function createCreature(
     },
     groupId: null,
     role: prototype.name === "Taro" ? "DRIFTER" : "FORAGER",
+    activeDesire: null,
+    activePlan: null,
     activeGoal: null,
     activeAction: null,
     nextDecisionTick: id % 4,
@@ -255,6 +257,15 @@ function createCreature(
     lastActionTick: -1,
     actionCounts: createEmptyActionCounts(),
     memoryIds: [],
+    intentHistory: [],
+    recentRoute: [
+      {
+        tick: 0,
+        tileIndex,
+        x: prototype.x * TILE_FIXED_UNITS + TILE_FIXED_UNITS / 2,
+        y: prototype.y * TILE_FIXED_UNITS + TILE_FIXED_UNITS / 2,
+      },
+    ],
   };
 }
 

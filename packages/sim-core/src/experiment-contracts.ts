@@ -10,6 +10,11 @@ import {
 } from "./state-validation.js";
 import type { ScheduledPlayerCommand } from "./types.js";
 import {
+  assertInterventionResponseTrace,
+  freezeInterventionResponseTrace,
+  type InterventionResponseTrace,
+} from "./intervention-response.js";
+import {
   EXPERIMENT_SCHEMA_VERSION,
   SCENARIO_SCHEMA_VERSION,
   SIMULATION_BEHAVIOR_VERSION,
@@ -51,6 +56,7 @@ export type InterventionOutcomeV1 =
 export interface InterventionLogEntryV1 {
   readonly command: Readonly<ScheduledPlayerCommand>;
   readonly outcome: InterventionOutcomeV1;
+  readonly responseTrace: InterventionResponseTrace | null;
 }
 
 export interface ExperimentBranchV1 {
@@ -283,9 +289,34 @@ export function assertInterventionLogEntry(
   value: unknown,
   label = "Intervention",
 ): asserts value is InterventionLogEntryV1 {
-  const entry = exactObject(value, ["command", "outcome"], label);
+  const entry = exactObject(value, ["command", "outcome", "responseTrace"], label);
   assertScheduledPlayerCommand(entry.command, `${label}.command`);
   assertOutcome(entry.outcome, `${label}.outcome`);
+  if (entry.responseTrace !== null) {
+    assertInterventionResponseTrace(entry.responseTrace, `${label}.responseTrace`);
+    if (
+      entry.responseTrace.command.commandId !== entry.command.commandId ||
+      entry.responseTrace.command.applyAtTick !== entry.command.applyAtTick ||
+      entry.responseTrace.command.type !== entry.command.type ||
+      entry.responseTrace.command.tileIndex !== entry.command.tileIndex
+    ) {
+      throw new Error(`${label}.responseTrace command must match the intervention.`);
+    }
+    if (
+      entry.outcome.status === "PENDING" &&
+      entry.responseTrace.phase !== "WAITING_FOR_OUTCOME"
+    ) {
+      throw new Error(`${label}.responseTrace cannot settle before its intervention.`);
+    }
+    if (
+      entry.outcome.status !== "PENDING" &&
+      entry.responseTrace.outcome !== null &&
+      (entry.responseTrace.outcome.status !== entry.outcome.status ||
+        !entry.outcome.eventIds.includes(entry.responseTrace.outcome.eventId))
+    ) {
+      throw new Error(`${label}.responseTrace outcome must match the intervention.`);
+    }
+  }
   if (
     entry.outcome.status !== "PENDING" &&
     entry.outcome.resolvedTileIndex !== entry.command.tileIndex
@@ -313,20 +344,28 @@ function frozenEntry(entry: InterventionLogEntryV1): InterventionLogEntryV1 {
   return Object.freeze({
     command: Object.freeze({ ...entry.command }),
     outcome: frozenOutcome(entry.outcome),
+    responseTrace:
+      entry.responseTrace === null
+        ? null
+        : freezeInterventionResponseTrace(entry.responseTrace),
   });
 }
 
 export function createPendingIntervention(
   command: ScheduledPlayerCommand,
 ): InterventionLogEntryV1 {
-  return frozenEntry({ command, outcome: { status: "PENDING" } });
+  return frozenEntry({
+    command,
+    outcome: { status: "PENDING" },
+    responseTrace: null,
+  });
 }
 
 export function createSettledIntervention(
   command: ScheduledPlayerCommand,
   outcome: SettledInterventionOutcomeV1,
 ): InterventionLogEntryV1 {
-  return frozenEntry({ command, outcome });
+  return frozenEntry({ command, outcome, responseTrace: null });
 }
 
 function assertBranch(value: unknown, label: string): asserts value is ExperimentBranchV1 {
@@ -605,8 +644,10 @@ function updateBranch(
   if (index < 0) throw new Error(`Experiment branch ${branchId} does not exist.`);
   const branch = experiment.branches[index];
   if (!branch) throw new Error(`Experiment branch ${branchId} does not exist.`);
+  const updated = update(branch);
+  if (updated === branch) return experiment;
   const branches = experiment.branches.map((candidate) =>
-    candidate.id === branchId ? update(branch) : candidate,
+    candidate.id === branchId ? updated : candidate,
   );
   return frozenExperiment({ ...experiment, branches });
 }
@@ -656,11 +697,49 @@ export function settleExperimentIntervention(
         `Branch ${branchId} command ${commandId.toString()} is already settled.`,
       );
     }
-    const settled = createSettledIntervention(existing.command, outcome);
+    const settled = frozenEntry({
+      command: existing.command,
+      outcome,
+      responseTrace: existing.responseTrace,
+    });
     return {
       ...branch,
       commandLog: branch.commandLog.map((entry, index) =>
         index === commandIndex ? settled : entry,
+      ),
+    };
+  });
+}
+
+export function setExperimentInterventionResponseTrace(
+  experiment: ExperimentV1,
+  branchId: string,
+  commandId: number,
+  responseTrace: InterventionResponseTrace | null,
+): ExperimentV1 {
+  assertExperiment(experiment);
+  if (nonnegativeInteger(commandId, "Intervention command ID") === 0) {
+    throw new Error("Intervention command ID must be positive.");
+  }
+  const immutableTrace =
+    responseTrace === null ? null : freezeInterventionResponseTrace(responseTrace);
+  return updateBranch(experiment, branchId, (branch) => {
+    const commandIndex = branch.commandLog.findIndex(
+      (entry) => entry.command.commandId === commandId,
+    );
+    const existing = branch.commandLog[commandIndex];
+    if (!existing) {
+      throw new Error(`Branch ${branchId} has no command ${commandId.toString()}.`);
+    }
+    if (existing.responseTrace === responseTrace) return branch;
+    const updated = frozenEntry({
+      ...existing,
+      responseTrace: immutableTrace,
+    });
+    return {
+      ...branch,
+      commandLog: branch.commandLog.map((entry, index) =>
+        index === commandIndex ? updated : entry,
       ),
     };
   });
@@ -775,6 +854,101 @@ export function serializeExperiment(experiment: ExperimentV1): string {
 }
 
 export function migrateExperiment(value: unknown): ExperimentV1 {
+  if (
+    isRecord(value) &&
+    value.kind === "tiny-civilisation/experiment" &&
+    value.schemaVersion === 1
+  ) {
+    const legacy = exactObject(
+      value,
+      [
+        "kind",
+        "schemaVersion",
+        "behaviorVersion",
+        "stateSchemaVersion",
+        "scenario",
+        "rootBranchId",
+        "branches",
+        "bookmarks",
+        "checkpoints",
+      ],
+      "Experiment",
+    );
+    const scenario = exactObject(
+      legacy.scenario,
+      ["kind", "schemaVersion", "behaviorVersion", "scenarioId", "scenarioVersion", "seed"],
+      "Scenario",
+    );
+    const legacyBehavior = legacy.behaviorVersion;
+    const legacyState = legacy.stateSchemaVersion;
+    const isBehaviorV1 = legacyBehavior === 1 && legacyState === 1;
+    const isCurrentBehavior =
+      legacyBehavior === SIMULATION_BEHAVIOR_VERSION &&
+      legacyState === SIMULATION_STATE_VERSION;
+    if (!isBehaviorV1 && !isCurrentBehavior) {
+      throw new Error(
+        `Experiment schema version 1 has incompatible behavior/state versions ${String(legacyBehavior)}/${String(legacyState)}.`,
+      );
+    }
+    const expectedScenarioBehavior = isBehaviorV1 ? 1 : SIMULATION_BEHAVIOR_VERSION;
+    if (scenario.behaviorVersion !== expectedScenarioBehavior) {
+      throw new Error(
+        `Legacy experiment scenario behavior version must be ${expectedScenarioBehavior.toString()}.`,
+      );
+    }
+    const branches = boundedArray(legacy.branches, "Experiment.branches").map(
+      (branchValue, branchIndex) => {
+        const branch = exactObject(
+          branchValue,
+          [
+            "id",
+            "label",
+            "parentBranchId",
+            "forkTick",
+            "targetTick",
+            "expectedHash",
+            "commandLog",
+          ],
+          `Experiment.branches[${branchIndex.toString()}]`,
+        );
+        const commandLog = boundedArray(
+          branch.commandLog,
+          `Experiment.branches[${branchIndex.toString()}].commandLog`,
+        ).map((entryValue, entryIndex) => {
+          const entry = exactObject(
+            entryValue,
+            ["command", "outcome"],
+            `Experiment.branches[${branchIndex.toString()}].commandLog[${entryIndex.toString()}]`,
+          );
+          return {
+            command: entry.command,
+            outcome: isBehaviorV1 ? { status: "PENDING" as const } : entry.outcome,
+            responseTrace: null,
+          };
+        });
+        return {
+          ...branch,
+          targetTick: isBehaviorV1 ? null : branch.targetTick,
+          expectedHash: isBehaviorV1 ? null : branch.expectedHash,
+          commandLog,
+        };
+      },
+    );
+    const migrated = {
+      ...legacy,
+      schemaVersion: EXPERIMENT_SCHEMA_VERSION,
+      behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
+      stateSchemaVersion: SIMULATION_STATE_VERSION,
+      scenario: {
+        ...scenario,
+        behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
+      },
+      branches,
+      checkpoints: isBehaviorV1 ? [] : legacy.checkpoints,
+    };
+    assertExperiment(migrated);
+    return frozenExperiment(migrated);
+  }
   assertExperiment(value);
   return frozenExperiment(value);
 }

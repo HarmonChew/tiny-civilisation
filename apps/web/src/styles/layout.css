@@ -86,7 +86,8 @@
   line-height: 1.1;
 }
 
-.brand-lockup span {
+.brand-lockup h1 {
+  margin: 0;
   overflow: hidden;
   font-family: var(--font-editorial);
   font-size: 18px;

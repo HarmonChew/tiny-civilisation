@@ -244,6 +244,13 @@ p {
   background: transparent;
 }
 
+.timeline-entry.is-selected .timeline-entry__body {
+  margin: -5px -7px;
+  padding: 5px 7px;
+  background: rgba(79, 103, 70, 0.1);
+  box-shadow: inset 2px 0 var(--action-primary);
+}
+
 button.timeline-entry__body:hover strong {
   color: var(--action-primary);
   text-decoration: underline;
@@ -600,6 +607,46 @@ button.timeline-entry__body:hover strong {
   font-size: 10px;
 }
 
+.subject-summary {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+  padding: 10px;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+  background: rgba(255, 250, 235, 0.34);
+}
+
+.subject-summary dl,
+.subject-summary dd {
+  margin: 0;
+}
+
+.subject-summary dl {
+  display: grid;
+  gap: 6px;
+}
+
+.subject-summary dl > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.subject-summary dt {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.subject-summary dd {
+  color: var(--text-primary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .vitals-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -741,11 +788,25 @@ button.timeline-entry__body:hover strong {
 }
 
 .candidate__name {
+  display: flex;
+  align-items: baseline;
   overflow: hidden;
+  gap: 6px;
   font-size: 11px;
-  font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.candidate__name strong {
+  font-weight: 680;
+}
+
+.candidate__name small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 8px;
+  font-weight: 560;
+  text-overflow: ellipsis;
 }
 
 .candidate__name em {
@@ -783,6 +844,12 @@ button.timeline-entry__body:hover strong {
 
 .factor > span:first-child {
   font-weight: 800;
+}
+
+.factor span small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 8px;
 }
 
 .factor--positive > span:first-child {

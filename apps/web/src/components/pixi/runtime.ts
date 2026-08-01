@@ -5,6 +5,8 @@ export interface RenderLayers {
   terrain: Graphics;
   groupInfluence: Graphics;
   intentions: Graphics;
+  interaction: Graphics;
+  interventionPreview: Graphics;
   frame: Graphics;
   resources: Container;
   structures: Container;
@@ -42,6 +44,8 @@ export const PALETTE = {
   ink: 0x202722,
   selected: 0xffd98f,
   danger: 0xce6450,
+  paper: 0xfff3d3,
+  action: 0xf0b86e,
 } as const;
 
 export const GROUP_COLORS = [0x8ea66c, 0xd4775f, 0x71a0a6, 0xc4a461, 0xa68bb1] as const;
@@ -51,6 +55,8 @@ export function createRenderLayers(): RenderLayers {
     terrain: new Graphics(),
     groupInfluence: new Graphics(),
     intentions: new Graphics(),
+    interaction: new Graphics(),
+    interventionPreview: new Graphics(),
     frame: new Graphics(),
     resources: new Container(),
     structures: new Container(),

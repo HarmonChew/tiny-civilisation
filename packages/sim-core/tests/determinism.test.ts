@@ -5,6 +5,13 @@ import {
   hashSimulationState,
   type SimulationState,
 } from "../src/index.js";
+import {
+  addHistory,
+  beginEventRetentionContext,
+  emitDomainEvent,
+  endEventRetentionContext,
+  historicallyProtectedDecisionIds,
+} from "../src/events.js";
 
 describe("deterministic simulation", () => {
   it("produces the same full-state hash for the same seed", () => {
@@ -17,6 +24,56 @@ describe("deterministic simulation", () => {
     }
 
     expect(hashSimulationState(first)).toBe(hashSimulationState(second));
+  });
+
+  it("keeps indexed and scan-based retention paths hash-equivalent", () => {
+    const indexed = createSimulation(77);
+    const scanned = createSimulation(77);
+    const exerciseRetention = (state: SimulationState, useIndex: boolean): number[] => {
+      state.configuration.maxDomainEvents = 12;
+      state.configuration.maxHistoryEvents = 1;
+      const actor = state.creatures[0]!;
+      let historicalSourceId = state.domainEvents[0]!.id;
+      if (useIndex) beginEventRetentionContext(state);
+      try {
+        for (let index = 0; index < 48; index += 1) {
+          const event = emitDomainEvent(state, {
+            type: "ACTION_STARTED",
+            actorIds: [actor.id],
+            locationTileIndex: actor.tileIndex,
+            causedByEventIds: index % 4 === 0 ? [historicalSourceId] : [],
+            decisionRecordIds: [index + 1],
+            summary: `${actor.name} exercised retained event ${index.toString()}.`,
+          });
+          if (index === 5 || index === 24) {
+            historicalSourceId = event.id;
+            addHistory(
+              state,
+              "SOCIAL_BOND",
+              `Retention checkpoint ${index.toString()}`,
+              "A retained event used to verify bounded-history equivalence.",
+              [event.id],
+              [actor.id],
+              [],
+              20,
+            );
+          }
+        }
+        return [...historicallyProtectedDecisionIds(state)].sort(
+          (left, right) => left - right,
+        );
+      } finally {
+        if (useIndex) endEventRetentionContext(state);
+      }
+    };
+
+    const indexedProtectedDecisions = exerciseRetention(indexed, true);
+    const scannedProtectedDecisions = exerciseRetention(scanned, false);
+
+    expect(indexed.domainEvents).toEqual(scanned.domainEvents);
+    expect(indexed.historyEvents).toEqual(scanned.historyEvents);
+    expect(indexedProtectedDecisions).toEqual(scannedProtectedDecisions);
+    expect(hashSimulationState(indexed)).toBe(hashSimulationState(scanned));
   });
 
   it("keeps save/load continuation identical to uninterrupted simulation", () => {

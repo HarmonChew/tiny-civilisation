@@ -38,6 +38,35 @@ export function tileCenter(
   };
 }
 
+const TRAVEL_LANE_OFFSETS = [
+  [-24, -12],
+  [0, -24],
+  [24, -12],
+  [24, 12],
+  [0, 24],
+  [-24, 12],
+  [-12, 0],
+  [12, 0],
+] as const;
+
+/**
+ * Stable sub-tile lanes keep creatures visually and authoritatively distinct
+ * while they cross the same route tile. Interaction endpoints still come from
+ * their explicit slot claim.
+ */
+export function creatureTravelPosition(
+  state: SimulationState,
+  tileIndex: number,
+  creatureId: number,
+): { x: number; y: number } {
+  const center = tileCenter(state, tileIndex);
+  const offset = TRAVEL_LANE_OFFSETS[(creatureId - 1) % TRAVEL_LANE_OFFSETS.length]!;
+  return {
+    x: center.x + offset[0],
+    y: center.y + offset[1],
+  };
+}
+
 export function groupStorage(
   state: SimulationState,
   groupId: number | null,

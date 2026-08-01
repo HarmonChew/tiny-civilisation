@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_PERSISTED_COLLECTION_ITEMS,
   MAX_PERSISTED_JSON_CHARACTERS,
+  advanceSimulation,
   assertCompatibleSimulationState,
   createSimulation,
   createSimulationSave,
@@ -106,6 +107,51 @@ describe("deep persisted state validation", () => {
     );
   });
 
+  it("rejects malformed intent facts, dangling decisions, and duplicate claims", () => {
+    const malformedIntent = createSimulation(4_182);
+    advanceUntilIntent(malformedIntent);
+    const intentCreature = malformedIntent.creatures.find(
+      (creature) => creature.activeDesire !== null,
+    );
+    if (!intentCreature?.activeDesire) throw new Error("Missing active intent fixture.");
+    (intentCreature.activeDesire as unknown as { kind: string }).kind = "PLAYER_ORDER";
+    expect(() => assertCompatibleSimulationState(malformedIntent)).toThrow(
+      "activeDesire.kind must be one of",
+    );
+
+    const danglingDecision = createSimulation(4_182);
+    advanceUntilIntent(danglingDecision);
+    const danglingCreature = danglingDecision.creatures.find(
+      (creature) => creature.activePlan !== null,
+    );
+    if (!danglingCreature?.activePlan) throw new Error("Missing active plan fixture.");
+    danglingCreature.activePlan.selectedByDecisionId = 999_999;
+    expect(() => assertCompatibleSimulationState(danglingDecision)).toThrow(
+      "selectedByDecisionId references missing ID 999999",
+    );
+
+    const duplicateClaim = createSimulation(4_182);
+    let claimOwners = duplicateClaim.creatures.filter(
+      (creature) => creature.activeAction?.interactionClaim,
+    );
+    for (let tick = 0; tick < 300 && claimOwners.length < 2; tick += 1) {
+      advanceSimulation(duplicateClaim, 1);
+      claimOwners = duplicateClaim.creatures.filter(
+        (creature) => creature.activeAction?.interactionClaim,
+      );
+    }
+    const firstClaim = claimOwners[0]?.activeAction?.interactionClaim;
+    const second = claimOwners[1];
+    if (!firstClaim || !second?.activeAction || !second.activePlan) {
+      throw new Error("Missing duplicate-claim fixture.");
+    }
+    second.activeAction.interactionClaim = { ...firstClaim };
+    second.activePlan.interactionClaim = { ...firstClaim };
+    expect(() => assertCompatibleSimulationState(duplicateClaim)).toThrow(
+      "invalid interaction claims",
+    );
+  });
+
   it("enforces collection and serialized-input limits before accepting data", () => {
     const state = clonedState();
     state.commandQueue = new Array(MAX_PERSISTED_COLLECTION_ITEMS + 1).fill({
@@ -137,3 +183,10 @@ describe("deep persisted state validation", () => {
     expect(hashSimulationState(active)).toBe(before);
   });
 });
+
+function advanceUntilIntent(state: SimulationState): void {
+  for (let tick = 0; tick < 100; tick += 1) {
+    if (state.creatures.some((creature) => creature.activePlan !== null)) return;
+    advanceSimulation(state, 1);
+  }
+}

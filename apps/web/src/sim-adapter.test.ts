@@ -1,13 +1,67 @@
 import { describe, expect, it } from "vitest";
-import type { SimulationState } from "@tiny-civ/sim-core";
+import {
+  createRenderSnapshot,
+  hashSimulationState,
+  projectCreatureObservationSummary,
+  type SimulationState,
+} from "@tiny-civ/sim-core";
 import {
   advanceSimulationTicks,
   createSimulationState,
   makeWorldView,
+  makeWorldViewFromSnapshot,
   queueIntervention,
 } from "./sim-adapter";
 
 describe("simulation UI adapter", () => {
+  it("uses the core factual observation summary for state-derived views", () => {
+    const state = createSimulationState(4_182);
+    advanceSimulationTicks(state, 25);
+    const subject = state.creatures.find(
+      (creature) => creature.activeDesire && creature.activePlan && creature.activeAction,
+    );
+    if (!subject) throw new Error("Missing active creature fixture.");
+
+    const expected = projectCreatureObservationSummary(subject);
+    const mapped = makeWorldView(state).creatures.find(
+      (creature) => creature.id === subject.id,
+    );
+    const projected = makeWorldViewFromSnapshot(
+      createRenderSnapshot(state, false),
+      hashSimulationState(state),
+    ).creatures.find((creature) => creature.id === subject.id);
+    expect(mapped?.summary).toEqual({
+      desire: expected.desire.text,
+      plan: expected.plan.text,
+      action: expected.action.text,
+      reason: expected.reason.text,
+    });
+    expect(projected?.reason).toBe(mapped?.reason);
+    expect(projected?.summary).toEqual(mapped?.summary);
+    expect(projected?.candidates).toEqual(mapped?.candidates);
+    expect(projected?.inventory).toEqual(mapped?.inventory);
+    expect(projected?.interactionSlot).toEqual(mapped?.interactionSlot);
+  });
+
+  it("retains bootstrap tiles when a dynamic observation omits static world data", () => {
+    const state = createSimulationState(4_182);
+    const bootstrap = makeWorldViewFromSnapshot(
+      createRenderSnapshot(state),
+      hashSimulationState(state),
+    );
+    advanceSimulationTicks(state, 1);
+    const dynamic = makeWorldViewFromSnapshot(
+      createRenderSnapshot(state, false),
+      hashSimulationState(state),
+      bootstrap.tiles,
+    );
+
+    expect(bootstrap.tiles.length).toBeGreaterThan(0);
+    expect(dynamic.tiles).toEqual(bootstrap.tiles);
+    expect(dynamic.tiles).not.toBe(bootstrap.tiles);
+    expect(dynamic.tick).toBe(1);
+  });
+
   it("keeps the authoritative state intact when an intervention is queued", () => {
     const state = createSimulationState(4182);
     const initial = makeWorldView(state);
@@ -24,9 +78,16 @@ describe("simulation UI adapter", () => {
     const after = makeWorldView(advanced);
     expect(after.tick).toBe(1);
     expect(after.population).toBe(8);
-    expect(
-      after.events.some((event) => event.type === "INTERVENTION" && event.playerCaused),
-    ).toBe(true);
+    const intervention = after.events.find(
+      (event) => event.type === "INTERVENTION" && event.playerCaused,
+    );
+    expect(intervention).toMatchObject({
+      commandId: 1,
+      commandOutcome: "APPLIED",
+      locationTileIndex: tile!.index,
+    });
+    expect(intervention?.commandSourceEventId).toBeTypeOf("number");
+    expect(intervention?.causedByEventIds).toContain(intervention?.commandSourceEventId);
   });
 
   it("maps null social IDs, storage stock, and colliding event sequences truthfully", () => {
@@ -82,11 +143,16 @@ describe("simulation UI adapter", () => {
         actorId: earlierActor.id,
         previousAction: null,
         selectedAction: "STEAL",
+        selectedDesire: "RELIEVE_HUNGER",
+        selectedPlan: "TAKE_FOOD",
         selectedTargetId: owner.id,
+        strongestReason: null,
         switchReason: "NO_ACTIVE_GOAL",
         candidates: [
           {
             action: "STEAL",
+            desire: "RELIEVE_HUNGER",
+            plan: "TAKE_FOOD",
             targetEntityId: owner.id,
             targetTileIndex: null,
             utility: 4_000,
@@ -100,11 +166,25 @@ describe("simulation UI adapter", () => {
         actorId: owner.id,
         previousAction: null,
         selectedAction: "SHARE",
+        selectedDesire: "RECIPROCATE_OR_REPAIR",
+        selectedPlan: "SHARE_WITH_OTHER",
         selectedTargetId: earlierActor.id,
+        strongestReason: {
+          kind: "MEMORY",
+          key: "remembered help",
+          label: "Remembered help",
+          value: "recent",
+          unit: "LABEL",
+          sourceEntityId: earlierActor.id,
+          sourceEventIds: [],
+          capturedAtTick: 0,
+        },
         switchReason: "NO_ACTIVE_GOAL",
         candidates: [
           {
             action: "SHARE",
+            desire: "RECIPROCATE_OR_REPAIR",
+            plan: "SHARE_WITH_OTHER",
             targetEntityId: state.creatures[2]!.id,
             targetTileIndex: null,
             utility: 7_000,
@@ -112,6 +192,8 @@ describe("simulation UI adapter", () => {
           },
           {
             action: "SHARE",
+            desire: "RECIPROCATE_OR_REPAIR",
+            plan: "SHARE_WITH_OTHER",
             targetEntityId: earlierActor.id,
             targetTileIndex: null,
             utility: 6_000,
@@ -133,6 +215,11 @@ describe("simulation UI adapter", () => {
       causedByEventIds: [],
       decisionRecordIds: [901],
       importance: 22,
+      attentionTier: "NOTABLE",
+      clusterKey: "test-share",
+      commandId: null,
+      commandOutcome: null,
+      commandRejectionReason: null,
       summary: `${owner.name} shared a test portion.`,
     });
     state.domainEvents.push({
@@ -148,6 +235,11 @@ describe("simulation UI adapter", () => {
       causedByEventIds: [],
       decisionRecordIds: [900],
       importance: 62,
+      attentionTier: "SIGNIFICANT",
+      clusterKey: "test-theft",
+      commandId: null,
+      commandOutcome: null,
+      commandRejectionReason: null,
       summary: `${earlierActor.name} stole an earlier test portion.`,
     });
     state.historyEvents.push({
@@ -184,6 +276,9 @@ describe("simulation UI adapter", () => {
     expect(
       collidingEvents.find((event) => event.type === "SOCIAL_BOND")?.decisionActorId,
     ).toBe(owner.id);
+    expect(collidingEvents.find((event) => event.type === "SOCIAL_BOND")?.reason).toBe(
+      "the retained “remembered help” factor weighs most.",
+    );
     expect(
       collidingEvents.find((event) => event.type === "SOCIAL_BOND")?.decisionCandidates?.[0]
         ?.action,

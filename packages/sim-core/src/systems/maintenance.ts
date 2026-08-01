@@ -1,4 +1,5 @@
 import type { Inventory, SimulationState } from "../types.js";
+import { repairInteractionClaims } from "../interaction-slots.js";
 
 const UNIT_MAX = 10_000;
 
@@ -36,6 +37,7 @@ export function maintainBoundedSocialState(state: SimulationState): void {
 }
 
 export function validateAuthoritativeInvariants(state: SimulationState): void {
+  repairInteractionClaims(state);
   for (const creature of state.creatures) {
     creature.inventory.food = Math.max(0, Math.floor(creature.inventory.food));
     creature.inventory.material = Math.max(0, Math.floor(creature.inventory.material));

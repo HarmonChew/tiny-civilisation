@@ -16,6 +16,8 @@ import type {
   WorldView,
 } from "../model";
 import { PixiWorld } from "./PixiWorld";
+import type { ReplayCameraTarget } from "./pixi/camera";
+import { compactLabel, identityGlyph } from "./pixi/visual-grammar";
 import { IconButton } from "./ui";
 
 const toolOptions: Array<{
@@ -54,31 +56,47 @@ export function WorldStage({
   seed,
   view,
   selectedId,
+  focusedId,
   followedId,
   tool,
   overlays,
   feedback,
   mutationDisabled = false,
+  replayCamera = null,
   onTool,
   onOverlay,
   onSelect,
+  onHover,
   onWorldAction,
 }: {
   seed: number;
   view: WorldView;
   selectedId: EntityId | null;
+  focusedId: EntityId | null;
   followedId: EntityId | null;
   tool: InterventionTool;
   overlays: OverlaySettings;
   feedback: string;
   mutationDisabled?: boolean;
+  replayCamera?: ReplayCameraTarget | null;
   onTool: (tool: InterventionTool) => void;
   onOverlay: (overlay: keyof OverlaySettings) => void;
   onSelect: (id: EntityId | null) => void;
+  onHover: (id: EntityId | null) => void;
   onWorldAction: (action: WorldAction) => void;
 }) {
   const activeTool = toolOptions.find((option) => option.id === tool) ?? toolOptions[0]!;
   const ActiveToolIcon = activeTool.icon;
+  const selectedCreature = view.creatures.find((creature) => creature.id === selectedId);
+  const focusedCreature = view.creatures.find((creature) => creature.id === focusedId);
+  const dishSubject = selectedCreature ?? focusedCreature;
+  const subjectMode = selectedCreature ? "Selected" : "Focused";
+  const subjectColor = dishSubject
+    ? `#${(dishSubject.color > 0 ? dishSubject.color : 0x8ea66c)
+        .toString(16)
+        .padStart(6, "0")
+        .slice(-6)}`
+    : undefined;
   return (
     <section className="dish-stage" aria-labelledby="dish-heading">
       <div className="dish-toolbar">
@@ -89,7 +107,9 @@ export function WorldStage({
               label={option.label}
               icon={option.icon}
               pressed={tool === option.id}
-              disabled={mutationDisabled && option.id !== "inspect"}
+              disabled={
+                replayCamera !== null || (mutationDisabled && option.id !== "inspect")
+              }
               onClick={() => onTool(option.id)}
             >
               {option.label}
@@ -124,22 +144,51 @@ export function WorldStage({
         </div>
         <span className="dish-heading__instruction">
           <ActiveToolIcon aria-hidden="true" size={15} />
-          {mutationDisabled && tool !== "inspect"
-            ? "Wait for the current experiment operation to finish."
-            : activeTool.help}
+          {replayCamera
+            ? "Replay framing is locked; return to the live world to pan or zoom."
+            : mutationDisabled && tool !== "inspect"
+              ? "Wait for the current experiment operation to finish."
+              : activeTool.help}
         </span>
       </div>
       <div className="dish-well">
         <PixiWorld
           view={view}
           selectedId={selectedId}
+          focusedId={focusedId}
           followedId={followedId}
           tool={tool}
           overlays={overlays}
           mutationDisabled={mutationDisabled}
+          replayCamera={replayCamera}
           onSelect={onSelect}
+          onHover={onHover}
           onWorldAction={onWorldAction}
         />
+        {dishSubject ? (
+          <aside
+            className={`dish-subject-label dish-subject-label--${subjectMode.toLowerCase()}`}
+            aria-label={`${subjectMode} creature: ${dishSubject.name}`}
+          >
+            <span
+              className="dish-subject-label__identity"
+              style={{ borderColor: subjectColor, color: subjectColor }}
+              aria-hidden="true"
+            >
+              {identityGlyph(dishSubject.id)}
+            </span>
+            <span className="dish-subject-label__copy">
+              <span className="eyebrow">{subjectMode} subject</span>
+              <strong>{dishSubject.name}</strong>
+              <span>
+                {compactLabel(dishSubject.action)} · {compactLabel(dishSubject.actionPhase)}
+              </span>
+              <span className="dish-subject-label__desire">
+                Wants {compactLabel(dishSubject.desire, 34).toLowerCase()}
+              </span>
+            </span>
+          </aside>
+        ) : null}
         <div className="dish-legend" aria-label="World legend">
           <span>
             <i className="legend-dot legend-dot--creature" /> creature
@@ -159,7 +208,11 @@ export function WorldStage({
         <span className="feedback-line" role="status" aria-live="polite">
           {feedback}
         </span>
-        <span>Wheel to zoom · drag to pan · Shift-drag with a tool</span>
+        <span>
+          {replayCamera
+            ? "Replay camera locked · return live to restore your view"
+            : "Wheel to zoom · drag to pan · Shift-drag with a tool"}
+        </span>
       </div>
     </section>
   );

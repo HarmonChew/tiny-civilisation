@@ -3,23 +3,36 @@ import {
   SIMULATION_BEHAVIOR_VERSION,
   SIMULATION_STATE_VERSION,
   advanceSimulation,
+  compareExperimentOutcomes,
+  createCausalEvidenceProjection,
+  createExperimentOutcome,
   createRenderSnapshot,
   createSimulation,
   deserializeSimulationSave,
   hashSimulationState,
   queuePlayerCommand,
   serializeSimulationSave,
+  type CausalEvidenceQueryOptions,
+  type CausalEvidenceRef,
+  type ExperimentOutcomeV1,
   type PlayerCommand,
   type ScheduledPlayerCommand,
   type SimulationState,
 } from "@tiny-civ/sim-core";
 import { detachedClone } from "./clone";
+import { projectInterventionOutcomes } from "./state-projections";
+import { MAX_CAPTURE_TICKS } from "./types";
 import type {
   InterventionAcknowledgement,
   LongRunningOperationOptions,
   ReplayResult,
   RunToTickResult,
+  RuntimeCanonicalHash,
+  RuntimeCheckpoint,
+  RuntimeEntityDetail,
+  RuntimeInterventionOutcomeProjection,
   RuntimeProgress,
+  RuntimeQueryOptions,
   RuntimeReplay,
   SimulationFrame,
   SimulationRuntime,
@@ -45,8 +58,76 @@ function normalizeTickCount(ticks: number, label: string): number {
   return Math.floor(ticks);
 }
 
+function normalizeCaptureTicks(
+  captureTicks: readonly number[] | undefined,
+  startTick: number,
+  targetTick: number,
+): number[] | null {
+  if (captureTicks === undefined) return null;
+  if (!Array.isArray(captureTicks)) {
+    throw new TypeError("Capture ticks must be an array.");
+  }
+  if (captureTicks.length > MAX_CAPTURE_TICKS) {
+    throw new RangeError(
+      `Capture ticks cannot contain more than ${MAX_CAPTURE_TICKS.toString()} entries.`,
+    );
+  }
+
+  const normalized = captureTicks.map((tick, index) => {
+    if (!Number.isFinite(tick) || !Number.isInteger(tick) || tick < 0) {
+      throw new RangeError(
+        `Capture tick ${index.toString()} must be a nonnegative whole number.`,
+      );
+    }
+    if (tick < startTick || tick > targetTick) {
+      throw new RangeError(
+        `Capture tick ${tick.toString()} must be between ${startTick.toString()} and ${targetTick.toString()}.`,
+      );
+    }
+    return tick;
+  });
+  return [...new Set(normalized)].sort((left, right) => left - right);
+}
+
+interface PreparedTickExecution {
+  readonly startTick: number;
+  readonly targetTick: number;
+  readonly totalTicks: number;
+  readonly chunkSize: number;
+  readonly captureTicks: number[] | null;
+}
+
+function prepareTickExecution(
+  startTick: number,
+  targetTickInput: number,
+  options: LongRunningOperationOptions,
+): PreparedTickExecution {
+  const targetTick = normalizeTickCount(targetTickInput, "Target tick");
+  if (targetTick < startTick) {
+    throw new RangeError(`Target tick ${targetTick} precedes current tick ${startTick}.`);
+  }
+  const chunkSize = Math.max(
+    1,
+    normalizeTickCount(options.chunkSize ?? DEFAULT_CHUNK_SIZE, "Chunk size"),
+  );
+  return {
+    startTick,
+    targetTick,
+    totalTicks: targetTick - startTick,
+    chunkSize,
+    captureTicks: normalizeCaptureTicks(options.captureTicks, startTick, targetTick),
+  };
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const error = new Error("The runtime query was cancelled.");
+  error.name = "AbortError";
+  throw error;
 }
 
 function assertReplay(replay: RuntimeReplay): void {
@@ -103,6 +184,8 @@ export class CoreSimulationRuntime implements SimulationRuntime {
   private lastError: string | null = null;
   private activeRun = false;
   private activeRunCancellation: AbortController | null = null;
+  private lastProjectedNavigationRevision: number | null = null;
+  private verifiedCanonicalHash: RuntimeCanonicalHash | null = null;
   private readonly yieldControl: () => Promise<void>;
 
   constructor(options: CoreSimulationRuntimeOptions = {}) {
@@ -135,6 +218,8 @@ export class CoreSimulationRuntime implements SimulationRuntime {
       this.playing = false;
       this.phase = "ready";
       this.lastError = null;
+      this.lastProjectedNavigationRevision = null;
+      this.verifiedCanonicalHash = null;
       this.revision += 1;
       return this.makeFrame();
     } catch (error) {
@@ -169,6 +254,7 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     const state = this.requireSimulation();
     try {
       const scheduled = queuePlayerCommand(state, detachedClone(command));
+      this.verifiedCanonicalHash = null;
       this.revision += 1;
       return {
         accepted: true,
@@ -191,6 +277,95 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     return this.makeFrame();
   }
 
+  getState(): SimulationState {
+    this.assertNotDisposed();
+    return detachedClone(this.requireSimulation());
+  }
+
+  getCanonicalHash(options: RuntimeQueryOptions = {}): RuntimeCanonicalHash {
+    this.assertReadyForQuery(options);
+    const state = this.requireSimulation();
+    if (this.verifiedCanonicalHash?.tick !== state.tick) {
+      this.verifiedCanonicalHash = {
+        tick: state.tick,
+        hash: hashSimulationState(state),
+      };
+    }
+    return { ...this.verifiedCanonicalHash };
+  }
+
+  getCheckpoint(options: RuntimeQueryOptions = {}): RuntimeCheckpoint {
+    this.assertReadyForQuery(options);
+    const canonical = this.getCanonicalHash(options);
+    return {
+      ...canonical,
+      state: detachedClone(this.requireSimulation()),
+    };
+  }
+
+  getCausalEvidence(
+    focus: CausalEvidenceRef,
+    query: CausalEvidenceQueryOptions = {},
+    options: RuntimeQueryOptions = {},
+  ) {
+    this.assertReadyForQuery(options);
+    const projection = createCausalEvidenceProjection(
+      this.requireSimulation(),
+      detachedClone(focus),
+      detachedClone(query),
+    );
+    throwIfAborted(options.signal);
+    return detachedClone(projection);
+  }
+
+  getEntityDetail(
+    ref: CausalEvidenceRef,
+    options: RuntimeQueryOptions = {},
+  ): RuntimeEntityDetail {
+    this.assertReadyForQuery(options);
+    const projection = createCausalEvidenceProjection(
+      this.requireSimulation(),
+      detachedClone(ref),
+      { maxDepth: 0, maxNodes: 1 },
+    );
+    throwIfAborted(options.signal);
+    return detachedClone({
+      stateTick: projection.stateTick,
+      ref,
+      node: projection.nodes[0] ?? null,
+    });
+  }
+
+  getInterventionOutcomes(
+    commands: readonly ScheduledPlayerCommand[],
+    options: RuntimeQueryOptions = {},
+  ): readonly RuntimeInterventionOutcomeProjection[] {
+    this.assertReadyForQuery(options);
+    const projection = projectInterventionOutcomes(
+      this.requireSimulation(),
+      detachedClone(commands),
+    );
+    throwIfAborted(options.signal);
+    return detachedClone(projection);
+  }
+
+  getOutcome(options: RuntimeQueryOptions = {}) {
+    this.assertReadyForQuery(options);
+    const outcome = createExperimentOutcome(this.requireSimulation());
+    throwIfAborted(options.signal);
+    return detachedClone(outcome);
+  }
+
+  compareOutcome(baseline: ExperimentOutcomeV1, options: RuntimeQueryOptions = {}) {
+    this.assertReadyForQuery(options);
+    const comparison = compareExperimentOutcomes(
+      detachedClone(baseline),
+      createExperimentOutcome(this.requireSimulation()),
+    );
+    throwIfAborted(options.signal);
+    return detachedClone(comparison);
+  }
+
   save(): string {
     this.assertNotDisposed();
     return serializeSimulationSave(this.requireSimulation());
@@ -202,11 +377,13 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     try {
       // Parsing and compatibility checks complete before the active run is replaced.
       const candidate = detachedClone(deserializeSimulationSave(serialized));
-      hashSimulationState(candidate);
+      const candidateHash = hashSimulationState(candidate);
       this.simulation = candidate;
       this.playing = false;
       this.phase = "ready";
       this.lastError = null;
+      this.lastProjectedNavigationRevision = null;
+      this.verifiedCanonicalHash = { tick: candidate.tick, hash: candidateHash };
       this.revision += 1;
       return this.makeFrame();
     } catch (error) {
@@ -253,18 +430,34 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     if (targetTick < latestApplicationTick) {
       throw new Error("Replay final tick precedes a scheduled command.");
     }
+    const execution = prepareTickExecution(candidate.tick, targetTick, options);
 
     this.simulation = candidate;
     this.playing = false;
     this.phase = "ready";
     this.lastError = null;
+    this.lastProjectedNavigationRevision = null;
+    this.verifiedCanonicalHash = null;
     this.revision += 1;
-    const result = await this.executeToTick(targetTick, "replay", options);
+    const result = await this.executePreparedToTick(
+      candidate,
+      "replay",
+      options,
+      execution,
+    );
+    const canonical = this.getCanonicalHash();
+    const frame = { ...result.frame, hash: canonical.hash };
+    const capturedFrames = result.capturedFrames?.map((captured) =>
+      captured.tick === frame.tick ? frame : captured,
+    );
     const expectedHash = replay.finalHash ?? null;
     return {
       ...result,
+      frame,
+      ...(capturedFrames === undefined ? {} : { capturedFrames }),
       expectedHash,
-      hashMatches: expectedHash === null ? null : expectedHash === result.frame.hash,
+      actualHash: canonical.hash,
+      hashMatches: expectedHash === null ? null : expectedHash === canonical.hash,
     };
   }
 
@@ -276,6 +469,8 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     this.activeRun = false;
     this.phase = "disposed";
     this.lastError = null;
+    this.lastProjectedNavigationRevision = null;
+    this.verifiedCanonicalHash = null;
     this.revision += 1;
   }
 
@@ -287,18 +482,19 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     this.assertNotDisposed();
     if (this.activeRun) throw new Error("A replay is already running.");
     const state = this.requireSimulation();
-    const targetTick = normalizeTickCount(targetTickInput, "Target tick");
-    if (targetTick < state.tick) {
-      throw new RangeError(
-        `Target tick ${targetTick} precedes current tick ${state.tick}.`,
-      );
-    }
-    const chunkSize = Math.max(
-      1,
-      normalizeTickCount(options.chunkSize ?? DEFAULT_CHUNK_SIZE, "Chunk size"),
-    );
-    const startTick = state.tick;
-    const totalTicks = targetTick - startTick;
+    const execution = prepareTickExecution(state.tick, targetTickInput, options);
+    return this.executePreparedToTick(state, operation, options, execution);
+  }
+
+  private async executePreparedToTick(
+    state: SimulationState,
+    operation: RuntimeProgress["operation"],
+    options: LongRunningOperationOptions,
+    execution: PreparedTickExecution,
+  ): Promise<RunToTickResult> {
+    const { captureTicks, chunkSize, startTick, targetTick, totalTicks } = execution;
+    const capturedFrames: SimulationFrame[] = [];
+    let captureIndex = 0;
     const wasPlaying = this.playing;
     const internalCancellation = new AbortController();
     this.activeRun = true;
@@ -325,15 +521,29 @@ export class CoreSimulationRuntime implements SimulationRuntime {
 
     let cancelled = false;
     try {
+      if (captureTicks?.[captureIndex] === state.tick) {
+        capturedFrames.push(this.makeFrame());
+        captureIndex += 1;
+      }
       report();
       while (
         state.tick < targetTick &&
         !options.signal?.aborted &&
         !internalCancellation.signal.aborted
       ) {
-        const count = Math.min(chunkSize, targetTick - state.tick);
+        const nextCaptureTick = captureTicks?.[captureIndex] ?? targetTick;
+        const count = Math.min(
+          chunkSize,
+          targetTick - state.tick,
+          nextCaptureTick - state.tick,
+        );
+        this.verifiedCanonicalHash = null;
         advanceSimulation(state, count);
         this.revision += 1;
+        if (captureTicks?.[captureIndex] === state.tick) {
+          capturedFrames.push(this.makeFrame());
+          captureIndex += 1;
+        }
         report();
         if (state.tick < targetTick) await this.yieldControl();
       }
@@ -352,11 +562,21 @@ export class CoreSimulationRuntime implements SimulationRuntime {
       }
     }
     this.assertNotDisposed();
-    return { cancelled, frame: this.makeFrame() };
+    const lastCapturedFrame = capturedFrames.at(-1);
+    const frame =
+      lastCapturedFrame?.tick === state.tick
+        ? { ...lastCapturedFrame, playing: this.playing }
+        : this.makeFrame();
+    return {
+      cancelled,
+      frame,
+      ...(captureTicks === null ? {} : { capturedFrames }),
+    };
   }
 
   private advanceAuthoritatively(ticks: number): SimulationFrame {
     try {
+      this.verifiedCanonicalHash = null;
       advanceSimulation(this.requireSimulation(), ticks);
       this.revision += 1;
       return this.makeFrame();
@@ -367,16 +587,21 @@ export class CoreSimulationRuntime implements SimulationRuntime {
 
   private makeFrame(): SimulationFrame {
     const state = this.requireSimulation();
-    const stateClone = detachedClone(state);
-    return {
+    const navigationRevision = state.world.navigationRevision;
+    const includeStaticWorld = this.lastProjectedNavigationRevision !== navigationRevision;
+    const frame: SimulationFrame = {
       revision: this.revision,
       seed: state.seed,
       tick: state.tick,
-      hash: hashSimulationState(state),
+      hash:
+        this.verifiedCanonicalHash?.tick === state.tick
+          ? this.verifiedCanonicalHash.hash
+          : null,
       playing: this.playing,
-      snapshot: detachedClone(createRenderSnapshot(state)),
-      state: stateClone,
+      snapshot: detachedClone(createRenderSnapshot(state, includeStaticWorld)),
     };
+    this.lastProjectedNavigationRevision = navigationRevision;
+    return frame;
   }
 
   private requireSimulation(): SimulationState {
@@ -394,6 +619,13 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     if (this.phase === "error") {
       throw new Error(this.lastError ?? "The simulation runtime has failed.");
     }
+    this.requireSimulation();
+  }
+
+  private assertReadyForQuery(options: RuntimeQueryOptions): void {
+    this.assertNotDisposed();
+    if (this.activeRun) throw new Error("The simulation is busy replaying.");
+    throwIfAborted(options.signal);
     this.requireSimulation();
   }
 

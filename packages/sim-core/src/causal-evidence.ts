@@ -1,13 +1,17 @@
 import type {
   ActionKind,
   DecisionSwitchReason,
+  DesireKind,
   DomainEventType,
   HistoricalEventType,
   MemoryKind,
+  PlanKind,
+  ReasonFact,
   ResourceKind,
   SimulationState,
   StructureKind,
 } from "./types.js";
+import { DESIRE_LABELS, PLAN_LABELS } from "./desires.js";
 import { CAUSAL_EVIDENCE_SCHEMA_VERSION, SIMULATION_BEHAVIOR_VERSION } from "./versions.js";
 
 export type CausalEvidenceRef =
@@ -20,7 +24,9 @@ export type CausalEvidenceRef =
   | { readonly kind: "group"; readonly id: number }
   | { readonly kind: "structure"; readonly id: number }
   | { readonly kind: "resource"; readonly id: number }
-  | { readonly kind: "tile"; readonly id: number };
+  | { readonly kind: "tile"; readonly id: number }
+  | { readonly kind: "desire"; readonly id: number }
+  | { readonly kind: "plan"; readonly id: number };
 
 export type CausalEvidenceRelation =
   | "CAUSED_BY"
@@ -41,16 +47,23 @@ export type CausalEvidenceRelation =
   | "HAS_RELATIONSHIP"
   | "MEMBER_OF"
   | "HAS_MEMBER"
-  | "GUARDED_BY";
+  | "GUARDED_BY"
+  | "WANTS"
+  | "PURSUES"
+  | "SERVES";
 
 export interface DecisionFactorEvidenceV1 {
   readonly key: string;
   readonly contribution: number;
   readonly evidence: readonly Extract<CausalEvidenceRef, { kind: "event" }>[];
+  /** The factual value captured when this candidate was ranked. */
+  readonly fact: ReasonFact | null;
 }
 
 export interface DecisionCandidateEvidenceV1 {
   readonly action: ActionKind;
+  readonly desire: DesireKind;
+  readonly plan: PlanKind;
   readonly target: CausalEvidenceRef | null;
   readonly targetTileIndex: number | null;
   readonly utility: number;
@@ -69,6 +82,8 @@ export type CausalEvidenceDetailV1 =
       readonly actorId: number;
       readonly previousAction: ActionKind | null;
       readonly selectedAction: ActionKind;
+      readonly selectedDesire: DesireKind;
+      readonly selectedPlan: PlanKind;
       readonly selectedTarget: CausalEvidenceRef | null;
       readonly switchReason: DecisionSwitchReason;
       readonly candidates: readonly DecisionCandidateEvidenceV1[];
@@ -119,6 +134,22 @@ export type CausalEvidenceDetailV1 =
       readonly x: number;
       readonly y: number;
       readonly blocked: boolean;
+    }
+  | {
+      readonly kind: "desire";
+      readonly desireKind: DesireKind;
+      readonly strength: number;
+    }
+  | {
+      readonly kind: "plan";
+      readonly planKind: PlanKind;
+      readonly status: "ACTIVE" | "BLOCKED" | "COMPLETED" | "ABANDONED";
+    }
+  | {
+      readonly kind: "retention-gap";
+      readonly missingKind: "event";
+      readonly context: "HISTORY_SOURCE";
+      readonly retainedHistoryId: number;
     };
 
 export interface CausalEvidenceNodeV1 {
@@ -165,6 +196,65 @@ function eventRef(id: number): Extract<CausalEvidenceRef, { kind: "event" }> {
   return { kind: "event", id };
 }
 
+function humanize(value: string): string {
+  return value
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/^\w/u, (letter) => letter.toUpperCase());
+}
+
+function creatureName(state: SimulationState, id: number): string | null {
+  return state.creatures.find((creature) => creature.id === id)?.name ?? null;
+}
+
+function groupName(state: SimulationState, id: number): string | null {
+  return state.groups.find((group) => group.id === id)?.name ?? null;
+}
+
+function tileLabel(state: SimulationState, tileIndex: number): string {
+  const tile = state.world.tiles[tileIndex];
+  return tile ? `tile ${tile.x.toString()}, ${tile.y.toString()}` : "an unavailable tile";
+}
+
+function resourceName(
+  state: SimulationState,
+  resource: SimulationState["resourceNodes"][number],
+): string {
+  return `${humanize(resource.kind)} patch at ${tileLabel(state, resource.tileIndex)}`;
+}
+
+function structureName(
+  state: SimulationState,
+  structure: SimulationState["structures"][number],
+): string {
+  const owner = groupName(state, structure.groupId);
+  const kind = structure.kind === "STORAGE" ? "shared store" : "storage site";
+  return owner
+    ? `${owner}'s ${kind}`
+    : `${humanize(kind)} at ${tileLabel(state, structure.tileIndex)}`;
+}
+
+function entityName(state: SimulationState, id: number): string | null {
+  const creature = creatureName(state, id);
+  if (creature) return creature;
+  const structure = state.structures.find((candidate) => candidate.id === id);
+  if (structure) return structureName(state, structure);
+  const resource = state.resourceNodes.find((candidate) => candidate.id === id);
+  return resource ? resourceName(state, resource) : null;
+}
+
+const MEMORY_LABELS: Record<MemoryKind, string> = {
+  HELP_RECEIVED: "receiving help",
+  THEFT_OBSERVED: "witnessing theft",
+  HARM_RECEIVED: "being harmed",
+  RESOURCE_FOUND: "finding a resource",
+  GROUP_FOUNDED: "a group being founded",
+};
+
+function cloneReasonFact(fact: ReasonFact | null): ReasonFact | null {
+  return fact ? { ...fact, sourceEventIds: [...fact.sourceEventIds] } : null;
+}
+
 function entityRef(state: SimulationState, id: number): CausalEvidenceRef | null {
   if (state.creatures.some((creature) => creature.id === id)) {
     return { kind: "creature", id };
@@ -184,6 +274,8 @@ function decisionCandidate(
 ): DecisionCandidateEvidenceV1 {
   return {
     action: candidate.action,
+    desire: candidate.desire,
+    plan: candidate.plan,
     target:
       candidate.targetEntityId === null ? null : entityRef(state, candidate.targetEntityId),
     targetTileIndex: candidate.targetTileIndex,
@@ -192,6 +284,7 @@ function decisionCandidate(
       key: factor.key,
       contribution: factor.contribution,
       evidence: factor.evidenceEventIds.map(eventRef),
+      fact: cloneReasonFact(factor.fact),
     })),
   };
 }
@@ -203,17 +296,34 @@ function resolveNode(
   switch (ref.kind) {
     case "event": {
       const event = state.domainEvents.find((candidate) => candidate.id === ref.id);
-      return event
+      if (event) {
+        return {
+          ref,
+          label: event.type.replaceAll("_", " ").toLowerCase(),
+          tick: event.tick,
+          summary: event.summary,
+          detail: {
+            kind: "event",
+            eventType: event.type,
+            quantity: event.quantity,
+            importance: event.importance,
+          },
+        };
+      }
+      const retainedHistory = state.historyEvents
+        .filter((history) => history.sourceEventIds.includes(ref.id))
+        .sort((left, right) => left.tick - right.tick || left.id - right.id)[0];
+      return retainedHistory
         ? {
             ref,
-            label: event.type.replaceAll("_", " ").toLowerCase(),
-            tick: event.tick,
-            summary: event.summary,
+            label: "Source event no longer retained",
+            tick: null,
+            summary: `A source event summarized by "${retainedHistory.title}" is no longer retained in detail.`,
             detail: {
-              kind: "event",
-              eventType: event.type,
-              quantity: event.quantity,
-              importance: event.importance,
+              kind: "retention-gap",
+              missingKind: "event",
+              context: "HISTORY_SOURCE",
+              retainedHistoryId: retainedHistory.id,
             },
           }
         : null;
@@ -231,6 +341,8 @@ function resolveNode(
               actorId: decision.actorId,
               previousAction: decision.previousAction,
               selectedAction: decision.selectedAction,
+              selectedDesire: decision.selectedDesire,
+              selectedPlan: decision.selectedPlan,
               selectedTarget:
                 decision.selectedTargetId === null
                   ? null
@@ -245,12 +357,26 @@ function resolveNode(
     }
     case "memory": {
       const memory = state.memories.find((candidate) => candidate.id === ref.id);
+      const owner = memory ? creatureName(state, memory.ownerId) : null;
+      const subject =
+        memory?.subjectEntityId === null || memory?.subjectEntityId === undefined
+          ? null
+          : entityName(state, memory.subjectEntityId);
+      const subjectLabel = subject
+        ? ` involving ${subject}`
+        : memory?.subjectEntityId === null || memory?.subjectEntityId === undefined
+          ? ""
+          : " involving a subject no longer retained";
       return memory
         ? {
             ref,
-            label: memory.kind.replaceAll("_", " ").toLowerCase(),
+            label: `${owner ?? "A creature no longer retained"} remembers ${MEMORY_LABELS[memory.kind]}${subjectLabel}`,
             tick: memory.createdTick,
-            summary: `Memory held by creature ${memory.ownerId.toString()}.`,
+            summary: subject
+              ? `This retained memory concerns ${subject}.`
+              : memory.subjectEntityId === null
+                ? "No subject was recorded for this memory."
+                : "The subject of this memory is no longer retained.",
             detail: {
               kind: "memory",
               memoryKind: memory.kind,
@@ -263,10 +389,12 @@ function resolveNode(
     }
     case "relationship": {
       const edge = state.relationships.find((candidate) => candidate.id === ref.id);
+      const from = edge ? creatureName(state, edge.fromId) : null;
+      const to = edge ? creatureName(state, edge.toId) : null;
       return edge
         ? {
             ref,
-            label: `relationship ${edge.fromId.toString()} -> ${edge.toId.toString()}`,
+            label: `Relationship from ${from ?? "a creature no longer retained"} to ${to ?? "a creature no longer retained"}`,
             tick: edge.lastInteractionTick,
             summary: `Trust ${edge.trust.toString()}, fear ${edge.fear.toString()}, familiarity ${edge.familiarity.toString()}.`,
             detail: {
@@ -313,12 +441,20 @@ function resolveNode(
     }
     case "group": {
       const group = state.groups.find((candidate) => candidate.id === ref.id);
+      const namedMembers = group
+        ? group.memberIds
+            .map((id) => creatureName(state, id))
+            .filter((name): name is string => name !== null)
+        : [];
       return group
         ? {
             ref,
             label: group.name,
             tick: group.foundedTick,
-            summary: `${group.name} has ${group.memberIds.length.toString()} members.`,
+            summary:
+              namedMembers.length === group.memberIds.length && namedMembers.length > 0
+                ? `${group.name} has ${group.memberIds.length.toString()} members: ${namedMembers.join(", ")}.`
+                : `${group.name} has ${group.memberIds.length.toString()} members.`,
             detail: {
               kind: "group",
               stage: group.stage,
@@ -330,12 +466,13 @@ function resolveNode(
     }
     case "structure": {
       const structure = state.structures.find((candidate) => candidate.id === ref.id);
+      const label = structure ? structureName(state, structure) : null;
       return structure
         ? {
             ref,
-            label: structure.kind.replaceAll("_", " ").toLowerCase(),
+            label: label!,
             tick: structure.completedTick,
-            summary: `Structure for group ${structure.groupId.toString()} at tile ${structure.tileIndex.toString()}.`,
+            summary: `${label!} is located at ${tileLabel(state, structure.tileIndex)}.`,
             detail: {
               kind: "structure",
               structureKind: structure.kind,
@@ -349,7 +486,7 @@ function resolveNode(
       return resource
         ? {
             ref,
-            label: `${resource.kind.toLowerCase()} resource`,
+            label: resourceName(state, resource),
             tick: null,
             summary: `${resource.currentStock.toString()} of ${resource.maximumStock.toString()} units remain.`,
             detail: {
@@ -374,6 +511,40 @@ function resolveNode(
               x: tile.x,
               y: tile.y,
               blocked: tile.blocked,
+            },
+          }
+        : null;
+    }
+    case "desire": {
+      const creature = state.creatures.find((candidate) => candidate.id === ref.id);
+      const desire = creature?.activeDesire;
+      return creature && desire
+        ? {
+            ref,
+            label: DESIRE_LABELS[desire.kind],
+            tick: desire.startedAtTick,
+            summary: `${creature.name} wants to ${DESIRE_LABELS[desire.kind]}.`,
+            detail: {
+              kind: "desire",
+              desireKind: desire.kind,
+              strength: desire.strength,
+            },
+          }
+        : null;
+    }
+    case "plan": {
+      const creature = state.creatures.find((candidate) => candidate.id === ref.id);
+      const plan = creature?.activePlan;
+      return creature && plan
+        ? {
+            ref,
+            label: PLAN_LABELS[plan.kind],
+            tick: plan.startedAtTick,
+            summary: `${creature.name} plans to ${PLAN_LABELS[plan.kind]}.`,
+            detail: {
+              kind: "plan",
+              planKind: plan.kind,
+              status: plan.status,
             },
           }
         : null;
@@ -415,6 +586,13 @@ function outgoingEdges(
       const decision = state.decisionRecords.find((candidate) => candidate.id === ref.id);
       if (!decision) break;
       add({ kind: "creature", id: decision.actorId }, "ACTOR");
+      const actor = state.creatures.find((creature) => creature.id === decision.actorId);
+      if (actor?.activeDesire?.selectedByDecisionId === decision.id) {
+        add({ kind: "desire", id: decision.actorId }, "WANTS");
+      }
+      if (actor?.activePlan?.selectedByDecisionId === decision.id) {
+        add({ kind: "plan", id: decision.actorId }, "PURSUES");
+      }
       if (decision.selectedTargetId !== null) {
         add(entityRef(state, decision.selectedTargetId), "TARGET");
       }
@@ -479,6 +657,8 @@ function outgoingEdges(
       if (creature.groupId !== null) {
         add({ kind: "group", id: creature.groupId }, "MEMBER_OF");
       }
+      if (creature.activeDesire) add({ kind: "desire", id: creature.id }, "WANTS");
+      if (creature.activePlan) add({ kind: "plan", id: creature.id }, "PURSUES");
       break;
     }
     case "group": {
@@ -511,6 +691,21 @@ function outgoingEdges(
     }
     case "tile":
       break;
+    case "desire": {
+      const creature = state.creatures.find((candidate) => candidate.id === ref.id);
+      if (creature) add({ kind: "creature", id: creature.id }, "ACTOR");
+      break;
+    }
+    case "plan": {
+      const creature = state.creatures.find((candidate) => candidate.id === ref.id);
+      if (!creature?.activePlan) break;
+      add({ kind: "creature", id: creature.id }, "ACTOR");
+      add({ kind: "desire", id: creature.id }, "SERVES");
+      if (creature.activePlan.targetEntityId !== null) {
+        add(entityRef(state, creature.activePlan.targetEntityId), "TARGET");
+      }
+      break;
+    }
   }
   return edges;
 }
@@ -528,6 +723,8 @@ function assertQueryRef(ref: CausalEvidenceRef): void {
       "structure",
       "resource",
       "tile",
+      "desire",
+      "plan",
     ].includes(ref.kind) ||
     !Number.isSafeInteger(ref.id) ||
     ref.id < (ref.kind === "tile" ? 0 : 1)
@@ -567,6 +764,7 @@ export function createCausalEvidenceProjection(
       missing.set(key, current.ref);
       continue;
     }
+    if (node.detail.kind === "retention-gap") missing.set(key, current.ref);
     if (nodes.size >= maxNodes) {
       truncated = true;
       break;

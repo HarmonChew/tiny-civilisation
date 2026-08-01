@@ -3,7 +3,9 @@ import { advanceSimulation, createSimulation } from "@tiny-civ/sim-core";
 
 const DEFAULT_SEEDS = 20;
 const DEFAULT_TICKS = 10_000;
-const REFERENCE_TICKS_PER_SECOND = 23_408;
+// Phase 2.5 reference: median of three 20-seed x 10,000-tick runs on the
+// documented local Windows baseline (47,572.6 / 47,100.3 / 45,191.9).
+const REFERENCE_TICKS_PER_SECOND = 47_100;
 const REGRESSION_FLOOR_RATIO = 0.55;
 
 function positiveInteger(value: string | undefined, fallback: number): number {

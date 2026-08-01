@@ -1,30 +1,25 @@
 import {
   addExperimentBookmark,
   appendExperimentIntervention,
-  compareExperimentOutcomes,
   createBranchReplay,
-  createCausalEvidenceProjection,
   createExperiment,
-  createExperimentOutcome,
   createPendingIntervention,
   createScenarioReference,
   deserializeExperiment,
-  deserializeSimulationSave,
   forkExperimentBranch,
-  hashSimulationState,
   serializeExperiment,
   setExperimentBranchResult,
-  settleExperimentIntervention,
+  setExperimentInterventionResponseTrace,
   type CausalEvidenceNodeV1,
   type CausalEvidenceProjectionV1,
   type CausalEvidenceRef,
-  type DomainEvent,
   type ExperimentOutcomeMetrics,
   type ExperimentV1,
+  type InterventionLogEntryV1,
+  type InterventionResponseBeatKind,
+  type InterventionResponseTrace,
   type ScheduledPlayerCommand,
-  type SettledInterventionOutcomeV1,
   type SimulationReplayV1,
-  type SimulationState,
 } from "@tiny-civ/sim-core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -40,6 +35,7 @@ import type {
   ExperimentSetupDialogProps,
   ExperimentWorkspaceProps,
   InterventionComposerProps,
+  InterventionNavigationAction,
   InterventionRecord,
   InterventionToolOption,
   NewExperimentDialogProps,
@@ -48,8 +44,18 @@ import type {
   ReplayState,
   SeedPreset,
 } from "../components/ExperimentWorkspace";
-import type { InterventionTool, TileView, TimelineEventView } from "../model";
-import { createSimulationEngine, type SimulationFrame } from "../runtime";
+import type { InterventionTool, TileView, TimelineEventView, WorldView } from "../model";
+import {
+  createSimulationEngine,
+  type LongRunningOperationOptions,
+  type ReplayResult,
+  type RuntimeCanonicalHash,
+  type RuntimeCheckpoint,
+  type SimulationEngine,
+  type SimulationFrame,
+} from "../runtime";
+import { makeWorldViewFromSnapshot } from "../sim-adapter";
+import { reconcileProjectedInterventions } from "../experiment/intervention-reconciliation";
 import {
   DEFAULT_SCENARIO_PRESET,
   SCENARIO_PRESETS,
@@ -62,6 +68,7 @@ import {
   readExperimentFile,
 } from "../storage/experiment-storage";
 import type { SimulationController } from "./useSimulationController";
+import { useInterventionResponseTraces } from "./useInterventionResponseTraces";
 
 const ONBOARDING_KEY = "tiny-civilisation/orientation-complete/v1";
 const WORKSPACE_KIND = "tiny-civilisation/workspace";
@@ -69,6 +76,46 @@ const WORKSPACE_SCHEMA_VERSION = 1;
 const INTERVENTION_BRANCH_BASE_ID = "intervention";
 const MAX_INTERACTIVE_REPLAY_TICK = 100_000;
 const MAX_IMPORTED_REPLAY_COMMANDS = 10_000;
+const EMPTY_COMMAND_LOG: readonly InterventionLogEntryV1[] = [];
+
+const RESPONSE_BEAT_LABELS: Readonly<Record<InterventionResponseBeatKind, string>> = {
+  NOTICED: "noticed",
+  RECONSIDERED_DESIRE: "reconsidered desire",
+  RECONSIDERED_PLAN: "reconsidered plan",
+  REROUTED: "rerouted",
+  ACTED: "acted",
+  NO_RECORDED_RESPONSE: "no recorded response",
+};
+
+export const TIMELINE_REPLAY_WINDOW_TICKS = {
+  prelude: 20,
+  action: 1,
+  aftermath: 20,
+} as const;
+
+export interface TimelineReplayWindow {
+  readonly preludeStartTick: number;
+  readonly momentTick: number;
+  readonly actionEndTick: number;
+  readonly aftermathEndTick: number;
+}
+
+export type MomentReplayBeatKind = "APPROACH" | "DECISION" | "ACTION" | "AFTERMATH";
+
+export interface MomentReplayBeat {
+  readonly id: MomentReplayBeatKind;
+  readonly label: string;
+  readonly tick: number;
+  readonly summary: string;
+  readonly view: WorldView;
+}
+
+export interface MomentReplayPresentation {
+  readonly eventId: number;
+  readonly title: string;
+  readonly activeBeatIndex: number;
+  readonly beats: readonly MomentReplayBeat[];
+}
 
 const INTERVENTION_TOOLS: readonly InterventionToolOption[] = [
   {
@@ -135,6 +182,8 @@ interface PersistedWorkspaceV1 {
 interface UseExperimentWorkspaceOptions {
   simulation: SimulationController;
   onSelectCreature: (id: number) => void;
+  onFocusEvidence?: (ref: CausalEvidenceRef) => void;
+  createReplayEngine?: () => SimulationEngine;
 }
 
 type PendingReplacement =
@@ -161,17 +210,179 @@ interface WorkspaceOperationToken {
 export interface ExperimentWorkspaceController {
   props: ExperimentWorkspaceProps;
   busy: boolean;
+  momentReplay: MomentReplayPresentation | null;
   openDrawer: (section?: ExperimentSection) => void;
   applyWorldIntervention: (
     tool: Exclude<InterventionTool, "inspect">,
     tile: TileView,
   ) => Promise<void>;
   inspectTimelineEvent: (event: TimelineEventView) => void;
+  replayTimelineEvent: (
+    event: TimelineEventView,
+    liveBoundary?: Pick<WorldView, "tick" | "hash">,
+  ) => Promise<boolean>;
+  selectMomentReplayBeat: (index: number) => void;
+  exitMomentReplay: () => void;
   recover: () => Promise<boolean>;
 }
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function participantCountLabel(count: number): string {
+  return `${count.toLocaleString()} participant${count === 1 ? "" : "s"}`;
+}
+
+export function interventionResponseRecord(
+  trace: InterventionResponseTrace,
+  creatureNames: ReadonlyMap<number, string>,
+): NonNullable<InterventionRecord["response"]> {
+  const recordedResponses = trace.responses.filter(
+    (response) =>
+      response.failure !== null ||
+      response.beats.some((beat) => beat.kind !== "NO_RECORDED_RESPONSE"),
+  );
+  const noRecordedResponseCount = trace.responses.length - recordedResponses.length;
+  const phase =
+    trace.phase === "WAITING_FOR_OUTCOME"
+      ? "waiting"
+      : trace.phase === "OBSERVING"
+        ? "observing"
+        : "closed";
+  const window =
+    trace.windowStartTick === null || trace.windowEndTick === null
+      ? "Waiting for a typed command outcome."
+      : `Ticks ${trace.windowStartTick.toLocaleString()}–${trace.windowEndTick.toLocaleString()}; observed through ${(
+          trace.observedThroughTick ?? trace.windowStartTick
+        ).toLocaleString()}.`;
+  const summary = trace.closureReason
+    ? trace.closureReason.fact
+    : trace.phase === "OBSERVING"
+      ? `${recordedResponses.length.toLocaleString()} of ${participantCountLabel(trace.participantIds.length)} ${recordedResponses.length === 1 ? "has" : "have"} recorded response evidence so far; the window remains open.`
+      : "Waiting for the simulation to publish an exact command outcome.";
+  const closedSummary =
+    trace.phase === "CLOSED" && trace.outcome?.status === "APPLIED"
+      ? `${participantCountLabel(recordedResponses.length)} ${recordedResponses.length === 1 ? "has" : "have"} recorded response evidence; ${participantCountLabel(noRecordedResponseCount)} ${noRecordedResponseCount === 1 ? "has" : "have"} no recorded response in this window.`
+      : summary;
+  return {
+    phase,
+    window,
+    summary: closedSummary,
+    participantLines: trace.responses.map((response) => {
+      const name =
+        creatureNames.get(response.participantId) ?? `Creature ${response.participantId}`;
+      const beats = response.beats.map((beat) => RESPONSE_BEAT_LABELS[beat.kind]);
+      if (response.failure) beats.push("failed to reach");
+      return `${name}: ${beats.join(", ")} — ${response.reason.fact}`;
+    }),
+  };
+}
+
+export function interventionNavigationActions({
+  entry,
+  trace,
+  branchId,
+  parentBranchId,
+  creatureNames,
+  events,
+}: {
+  entry: InterventionLogEntryV1;
+  trace: InterventionResponseTrace | undefined;
+  branchId: string;
+  parentBranchId: string | null;
+  creatureNames: ReadonlyMap<number, string>;
+  events: readonly TimelineEventView[];
+}): InterventionNavigationAction[] {
+  const actions: InterventionNavigationAction[] = [
+    {
+      id: `location-${entry.command.tileIndex.toString()}`,
+      label: `Tile ${entry.command.tileIndex.toString()}`,
+      target: { kind: "location", tileIndex: entry.command.tileIndex },
+    },
+  ];
+  const rawEventIds = entry.outcome.status === "PENDING" ? [] : [...entry.outcome.eventIds];
+  const rawEventId = rawEventIds[0];
+  if (rawEventId !== undefined) {
+    actions.push({
+      id: `raw-event-${rawEventId.toString()}`,
+      label: "Command outcome",
+      target: { kind: "raw-evidence", ref: { kind: "event", id: rawEventId } },
+    });
+  }
+
+  if (trace) {
+    for (const response of trace.responses) {
+      const recorded =
+        response.failure !== null ||
+        response.beats.some((beat) => beat.kind !== "NO_RECORDED_RESPONSE");
+      if (!recorded) continue;
+      actions.push({
+        id: `responder-${response.participantId.toString()}`,
+        label:
+          creatureNames.get(response.participantId) ??
+          `Creature ${response.participantId.toString()}`,
+        target: {
+          kind: "responding-creature",
+          creatureId: response.participantId,
+        },
+      });
+    }
+
+    const linkedEventIds = new Set<number>();
+    for (const response of trace.responses) {
+      for (const beat of response.beats) {
+        for (const eventId of beat.reason.sourceEventIds) linkedEventIds.add(eventId);
+      }
+      if (response.failure) {
+        for (const eventId of response.failure.reason.sourceEventIds) {
+          linkedEventIds.add(eventId);
+        }
+      }
+    }
+    for (const eventId of [...linkedEventIds]
+      .filter((id) => !rawEventIds.includes(id))
+      .sort((left, right) => left - right)) {
+      const event = events.find((candidate) => candidate.id === eventId);
+      const isMoment =
+        event?.attentionTier === "SIGNIFICANT" || event?.attentionTier === "CRITICAL";
+      const eventLabel = event
+        ? `Event ${eventId.toString()} · ${event.title} · tick ${event.tick.toString()}`
+        : `Event ${eventId.toString()}`;
+      actions.push(
+        isMoment
+          ? {
+              id: `moment-${eventId.toString()}`,
+              label: eventLabel,
+              target: { kind: "linked-moment", eventId },
+            }
+          : {
+              id: `evidence-${eventId.toString()}`,
+              label: eventLabel,
+              target: {
+                kind: "linked-evidence",
+                ref: { kind: "event", id: eventId },
+              },
+            },
+      );
+    }
+  }
+
+  if (parentBranchId !== null) {
+    actions.push(
+      {
+        id: `comparison-${branchId}`,
+        label: "Baseline vs branch",
+        target: { kind: "comparison", branchId },
+      },
+      {
+        id: `replay-${branchId}`,
+        label: "Replay this branch",
+        target: { kind: "branch-replay", branchId },
+      },
+    );
+  }
+  return actions;
 }
 
 function refKey(ref: CausalEvidenceRef): string {
@@ -192,6 +403,8 @@ function parseRef(value: string): CausalEvidenceRef {
     kind !== "group" &&
     kind !== "structure" &&
     kind !== "resource" &&
+    kind !== "desire" &&
+    kind !== "plan" &&
     kind !== "tile"
   ) {
     throw new Error("Invalid evidence reference.");
@@ -329,71 +542,6 @@ export function causalDetailFromProjection(
   };
 }
 
-function eventTypeForCommand(command: ScheduledPlayerCommand): DomainEvent["type"] {
-  switch (command.type) {
-    case "ADD_FOOD":
-      return "PLAYER_ADDED_FOOD";
-    case "REMOVE_FOOD":
-      return "PLAYER_REMOVED_FOOD";
-    case "TOGGLE_OBSTACLE":
-      return "PLAYER_TOGGLED_OBSTACLE";
-  }
-}
-
-function outcomeForCommand(
-  state: SimulationState,
-  command: ScheduledPlayerCommand,
-  usedEventIds: ReadonlySet<number>,
-): SettledInterventionOutcomeV1 | null {
-  if (state.tick <= command.applyAtTick) return null;
-  const event = state.domainEvents.find(
-    (candidate) =>
-      !usedEventIds.has(candidate.id) &&
-      candidate.tick === command.applyAtTick &&
-      candidate.type === eventTypeForCommand(command) &&
-      candidate.locationTileIndex === command.tileIndex,
-  );
-  if (!event) return null;
-  const rejected =
-    command.type === "TOGGLE_OBSTACLE" && /could not|obstructed/i.test(event.summary);
-  return {
-    status: rejected ? "REJECTED" : "APPLIED",
-    appliedAtTick: command.applyAtTick,
-    resolvedTileIndex: command.tileIndex,
-    quantity: event.quantity,
-    blocked: command.blocked,
-    eventIds: [event.id],
-    reason: rejected ? event.summary : null,
-  };
-}
-
-function reconcilePendingInterventions(
-  experiment: ExperimentV1,
-  branchId: string,
-  state: SimulationState,
-): ExperimentV1 {
-  const branch = experiment.branches.find((candidate) => candidate.id === branchId);
-  if (!branch) return experiment;
-  let next = experiment;
-  const usedEventIds = new Set(
-    branch.commandLog.flatMap((entry) =>
-      entry.outcome.status === "PENDING" ? [] : [...entry.outcome.eventIds],
-    ),
-  );
-  for (const entry of branch.commandLog) {
-    if (entry.outcome.status !== "PENDING") continue;
-    const outcome = outcomeForCommand(state, entry.command, usedEventIds);
-    if (!outcome) continue;
-    next = settleExperimentIntervention(next, branchId, entry.command.commandId, outcome);
-    for (const eventId of outcome.eventIds) usedEventIds.add(eventId);
-  }
-  return next;
-}
-
-function stateFromFrame(frame: SimulationFrame): SimulationState {
-  return frame.state as unknown as SimulationState;
-}
-
 function replayAtTick(replay: SimulationReplayV1, finalTick: number): SimulationReplayV1 {
   return {
     kind: replay.kind,
@@ -403,6 +551,120 @@ function replayAtTick(replay: SimulationReplayV1, finalTick: number): Simulation
     seed: replay.seed,
     commands: replay.commands.filter((command) => command.applyAtTick < finalTick),
     finalTick,
+    ...(replay.finalTick === finalTick && replay.finalHash
+      ? { finalHash: replay.finalHash }
+      : {}),
+  };
+}
+
+export function timelineReplayWindow(
+  eventTick: number,
+  branchHorizon: number,
+): TimelineReplayWindow {
+  const horizon = Math.max(
+    0,
+    Math.floor(Number.isFinite(branchHorizon) ? branchHorizon : 0),
+  );
+  const momentTick = Math.max(
+    0,
+    Math.min(horizon, Math.floor(Number.isFinite(eventTick) ? eventTick : 0)),
+  );
+  const actionEndTick = Math.min(horizon, momentTick + TIMELINE_REPLAY_WINDOW_TICKS.action);
+  return {
+    preludeStartTick: Math.max(0, momentTick - TIMELINE_REPLAY_WINDOW_TICKS.prelude),
+    momentTick,
+    actionEndTick,
+    aftermathEndTick: Math.min(
+      horizon,
+      actionEndTick + TIMELINE_REPLAY_WINDOW_TICKS.aftermath,
+    ),
+  };
+}
+
+function replayParticipantSummary(view: WorldView, event: TimelineEventView): string {
+  const plainTerm = (value: string): string => value.replaceAll("_", " ").toLowerCase();
+  const participantIds = [...new Set([...event.actorIds, ...event.targetIds])];
+  const participants = participantIds
+    .map((id) => view.creatures.find((creature) => creature.id === id))
+    .filter(
+      (creature): creature is WorldView["creatures"][number] => creature !== undefined,
+    )
+    .slice(0, 4);
+  if (participants.length === 0) {
+    return `${view.population.toLocaleString()} creatures and ${view.foodStock.toLocaleString()} food are visible in the reconstructed world.`;
+  }
+  return participants
+    .map(
+      (creature) =>
+        `${creature.name} is at ${creature.x.toFixed(1)}, ${creature.y.toFixed(1)}, wants ${plainTerm(creature.desire)}, and is ${plainTerm(creature.action)}.`,
+    )
+    .join(" ");
+}
+
+export function createMomentReplayPresentation(
+  event: TimelineEventView,
+  window: TimelineReplayWindow,
+  capturedFrames: readonly SimulationFrame[],
+): MomentReplayPresentation | null {
+  if (capturedFrames.length === 0) return null;
+  let retainedTiles: readonly TileView[] = [];
+  const viewsByTick = new Map<number, WorldView>();
+  for (const frame of [...capturedFrames].sort((left, right) => left.tick - right.tick)) {
+    const view = makeWorldViewFromSnapshot(frame.snapshot, frame.hash, retainedTiles);
+    if (frame.snapshot.tiles.length > 0) retainedTiles = view.tiles;
+    viewsByTick.set(frame.tick, view);
+  }
+
+  const specifications: ReadonlyArray<{
+    readonly id: MomentReplayBeatKind;
+    readonly label: string;
+    readonly tick: number;
+    readonly summary: (view: WorldView) => string;
+  }> = [
+    {
+      id: "APPROACH",
+      label: "Approach",
+      tick: window.preludeStartTick,
+      summary: (view) => replayParticipantSummary(view, event),
+    },
+    {
+      id: "DECISION",
+      label: "Decision",
+      tick: window.momentTick,
+      summary: (view) =>
+        event.reason ??
+        `No retained decision reason is linked to this event. ${replayParticipantSummary(view, event)}`,
+    },
+    {
+      id: "ACTION",
+      label: "Action",
+      tick: window.actionEndTick,
+      summary: () => event.detail,
+    },
+    {
+      id: "AFTERMATH",
+      label: "Aftermath",
+      tick: window.aftermathEndTick,
+      summary: (view) => replayParticipantSummary(view, event),
+    },
+  ];
+  const beats: MomentReplayBeat[] = [];
+  for (const specification of specifications) {
+    const view = viewsByTick.get(specification.tick);
+    if (!view) return null;
+    beats.push({
+      id: specification.id,
+      label: specification.label,
+      tick: specification.tick,
+      summary: specification.summary(view),
+      view,
+    });
+  }
+  return {
+    eventId: event.id,
+    title: event.title,
+    activeBeatIndex: 0,
+    beats,
   };
 }
 
@@ -491,21 +753,10 @@ function parseWorkspace(serialized: string): PersistedWorkspaceV1 {
     throw new Error("Saved workspace metadata is incomplete.");
   }
   const experiment = deserializeExperiment(JSON.stringify(record.experiment));
-  const state = deserializeSimulationSave(record.simulationSave);
   const branch = experiment.branches.find(
     (candidate) => candidate.id === record.activeBranchId,
   );
   if (!branch) throw new Error("The saved active branch does not exist.");
-  if (experiment.scenario.seed !== state.seed) {
-    throw new Error("The saved experiment seed does not match its simulation state.");
-  }
-  if (
-    branch.targetTick !== state.tick ||
-    branch.expectedHash === null ||
-    branch.expectedHash !== hashSimulationState(state)
-  ) {
-    throw new Error("The saved experiment metadata does not match its simulation state.");
-  }
   return {
     kind: WORKSPACE_KIND,
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
@@ -514,6 +765,26 @@ function parseWorkspace(serialized: string): PersistedWorkspaceV1 {
     experiment,
     simulationSave: record.simulationSave,
   };
+}
+
+function assertWorkspaceCheckpoint(
+  workspace: PersistedWorkspaceV1,
+  checkpoint: RuntimeCheckpoint,
+): void {
+  const branch = workspace.experiment.branches.find(
+    (candidate) => candidate.id === workspace.activeBranchId,
+  );
+  if (!branch) throw new Error("The saved active branch does not exist.");
+  if (workspace.experiment.scenario.seed !== checkpoint.state.seed) {
+    throw new Error("The saved experiment seed does not match its simulation state.");
+  }
+  if (
+    branch.targetTick !== checkpoint.tick ||
+    branch.expectedHash === null ||
+    branch.expectedHash !== checkpoint.hash
+  ) {
+    throw new Error("The saved experiment metadata does not match its simulation state.");
+  }
 }
 
 function uniqueBranchId(experiment: ExperimentV1): string {
@@ -545,20 +816,28 @@ function selectedImportedBranch(experiment: ExperimentV1): string {
   );
 }
 
-function preservedSignature(branchId: string, state: SimulationState): string {
-  return `${branchId}:${state.tick}:${hashSimulationState(state)}`;
+function preservedFrameSignature(branchId: string, tick: number): string {
+  return `${branchId}:${tick.toString()}`;
 }
 
 export function useExperimentWorkspace({
   simulation,
   onSelectCreature,
+  onFocusEvidence,
+  createReplayEngine: createReplayEngineOverride,
 }: UseExperimentWorkspaceOptions): ExperimentWorkspaceController {
+  const createIsolatedReplayEngine = createReplayEngineOverride ?? createSimulationEngine;
+  const getInterventionOutcomes = simulation.getInterventionOutcomes;
+  const simulationTick = simulation.view.tick;
+  const simulationRevision = `${simulation.seed.toString()}:${simulationTick.toString()}`;
   const storageRef = useRef(createExperimentStorage());
   const experimentRef = useRef<ExperimentV1>(
     createExperiment(createScenarioReference(DEFAULT_SCENARIO_PRESET.seed)),
   );
   const activeBranchRef = useRef(experimentRef.current.rootBranchId);
   const replayAbortRef = useRef<AbortController | null>(null);
+  const causalAbortRef = useRef<AbortController | null>(null);
+  const causalRequestSequenceRef = useRef(0);
   const preservedSignatureRef = useRef<string | null>(null);
   const operationLockRef = useRef<WorkspaceOperationToken | null>(null);
   const operationSequenceRef = useRef(0);
@@ -598,6 +877,7 @@ export function useExperimentWorkspace({
   });
   const [composerValidation, setComposerValidation] = useState<string | null>(null);
   const [replayState, setReplayState] = useState<ReplayState>(EMPTY_REPLAY);
+  const [momentReplay, setMomentReplay] = useState<MomentReplayPresentation | null>(null);
   const [comparison, setComparison] = useState<ComparisonState>(EMPTY_COMPARISON);
   const [causalStatus, setCausalStatus] = useState<CausalExplorerProps["status"]>("empty");
   const [causalDetail, setCausalDetail] = useState<CausalEventDetail | undefined>();
@@ -621,6 +901,7 @@ export function useExperimentWorkspace({
       if (operationLockRef.current !== null) return null;
       const token = { id: ++operationSequenceRef.current, kind };
       operationLockRef.current = token;
+      setMomentReplay(null);
       setWorkspaceBusy(true);
       return token;
     },
@@ -633,6 +914,21 @@ export function useExperimentWorkspace({
     setWorkspaceBusy(false);
   }, []);
 
+  const replayInIsolation = useCallback(
+    async (
+      replay: SimulationReplayV1,
+      options?: LongRunningOperationOptions,
+    ): Promise<ReplayResult> => {
+      const engine = createIsolatedReplayEngine();
+      try {
+        return await engine.replay(replay, options);
+      } finally {
+        engine.dispose();
+      }
+    },
+    [createIsolatedReplayEngine],
+  );
+
   useEffect(() => {
     void storageRef.current
       .load()
@@ -640,25 +936,60 @@ export function useExperimentWorkspace({
       .catch(() => setCanLoad(false));
   }, []);
 
+  useEffect(
+    () => () => {
+      replayAbortRef.current?.abort();
+      replayAbortRef.current = null;
+      causalAbortRef.current?.abort();
+      causalAbortRef.current = null;
+    },
+    [],
+  );
+
   useEffect(() => {
-    const state = simulation.getState();
-    if (!state) return;
-    const signature = preservedSignature(activeBranchRef.current, state);
+    const signature = preservedFrameSignature(activeBranchRef.current, simulationTick);
     if (preservedSignatureRef.current === null) {
       preservedSignatureRef.current = signature;
     } else if (signature !== preservedSignatureRef.current) {
       setDirty(true);
     }
-    const reconciled = reconcilePendingInterventions(
-      experimentRef.current,
-      activeBranchRef.current,
-      state,
+    const branch = experimentRef.current.branches.find(
+      (candidate) => candidate.id === activeBranchRef.current,
     );
-    if (reconciled !== experimentRef.current) {
-      commitExperiment(reconciled);
-      setDirty(true);
-    }
-  }, [commitExperiment, simulation, simulation.view.tick]);
+    const hasResolvablePending = branch?.commandLog.some(
+      (entry) =>
+        entry.outcome.status === "PENDING" && simulationTick > entry.command.applyAtTick,
+    );
+    if (!hasResolvablePending) return;
+    const pendingCommands =
+      branch?.commandLog
+        .filter(
+          (entry) =>
+            entry.outcome.status === "PENDING" &&
+            simulationTick > entry.command.applyAtTick,
+        )
+        .map((entry) => entry.command) ?? [];
+    const abort = new AbortController();
+    void getInterventionOutcomes(pendingCommands, { signal: abort.signal })
+      .then((projections) => {
+        if (abort.signal.aborted || !projections) return;
+        const reconciled = reconcileProjectedInterventions(
+          experimentRef.current,
+          activeBranchRef.current,
+          projections,
+        );
+        if (reconciled !== experimentRef.current) {
+          commitExperiment(reconciled);
+          setDirty(true);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!abort.signal.aborted) return Promise.reject(error);
+        return undefined;
+      })
+      .catch(() => undefined);
+    return () => abort.abort();
+  }, [commitExperiment, getInterventionOutcomes, simulationRevision, simulationTick]);
 
   const markOrientationComplete = useCallback(() => {
     try {
@@ -686,10 +1017,10 @@ export function useExperimentWorkspace({
       setCausalStatus("empty");
       setCausalDetail(undefined);
       setCausalBreadcrumbs([]);
-      const state = simulation.getState();
-      if (state) {
-        preservedSignatureRef.current = preservedSignature(next.rootBranchId, state);
-      }
+      preservedSignatureRef.current = preservedFrameSignature(
+        next.rootBranchId,
+        nextView.tick,
+      );
       setSetupOpen(false);
       markOrientationComplete();
     } catch (error) {
@@ -719,10 +1050,10 @@ export function useExperimentWorkspace({
     const next = createExperiment(createScenarioReference(simulation.seed));
     commitExperiment(next);
     commitActiveBranch(next.rootBranchId);
-    const state = simulation.getState();
-    if (state) {
-      preservedSignatureRef.current = preservedSignature(next.rootBranchId, state);
-    }
+    preservedSignatureRef.current = preservedFrameSignature(
+      next.rootBranchId,
+      nextView.tick,
+    );
     setDirty(false);
     setDrawerOpen(false);
     setPendingReplacement(null);
@@ -742,56 +1073,63 @@ export function useExperimentWorkspace({
     else setSetupOpen(true);
   }, [dirty]);
 
-  const branchWithStateResult = useCallback((state: SimulationState): ExperimentV1 => {
-    return setExperimentBranchResult(
-      experimentRef.current,
-      activeBranchRef.current,
-      state.tick,
-      hashSimulationState(state),
-    );
-  }, []);
+  const branchWithCheckpointResult = useCallback(
+    (checkpoint: Pick<RuntimeCheckpoint, "tick" | "hash">): ExperimentV1 => {
+      return setExperimentBranchResult(
+        experimentRef.current,
+        activeBranchRef.current,
+        checkpoint.tick,
+        checkpoint.hash,
+      );
+    },
+    [],
+  );
 
-  const ensureInterventionBranch = useCallback((): {
-    nextExperiment: ExperimentV1;
-    branchId: string;
-  } => {
-    const current = experimentRef.current;
-    const active = current.branches.find((branch) => branch.id === activeBranchRef.current);
-    if (!active) throw new Error("The active experiment branch does not exist.");
-    const rewoundPastResult =
-      active.targetTick !== null && simulation.view.tick < active.targetTick;
-    if (active.parentBranchId !== null && !rewoundPastResult) {
-      return { nextExperiment: current, branchId: activeBranchRef.current };
-    }
-    const nextWithResult =
-      active.parentBranchId === null
-        ? setExperimentBranchResult(
-            current,
-            active.id,
-            simulation.view.tick,
-            simulation.view.hash,
-          )
-        : current;
-    const branchId = uniqueBranchId(nextWithResult);
-    const next = forkExperimentBranch(
-      nextWithResult,
-      active.id,
-      branchId,
-      "Intervention",
-      simulation.view.tick,
-    );
-    return { nextExperiment: next, branchId };
-  }, [simulation.view.hash, simulation.view.tick]);
+  const ensureInterventionBranch = useCallback(
+    (
+      canonical: RuntimeCanonicalHash,
+    ): {
+      nextExperiment: ExperimentV1;
+      branchId: string;
+    } => {
+      const current = experimentRef.current;
+      const active = current.branches.find(
+        (branch) => branch.id === activeBranchRef.current,
+      );
+      if (!active) throw new Error("The active experiment branch does not exist.");
+      const rewoundPastResult =
+        active.targetTick !== null && canonical.tick < active.targetTick;
+      if (active.parentBranchId !== null && !rewoundPastResult) {
+        return { nextExperiment: current, branchId: activeBranchRef.current };
+      }
+      const nextWithResult =
+        active.parentBranchId === null
+          ? setExperimentBranchResult(current, active.id, canonical.tick, canonical.hash)
+          : current;
+      const branchId = uniqueBranchId(nextWithResult);
+      const next = forkExperimentBranch(
+        nextWithResult,
+        active.id,
+        branchId,
+        "Intervention",
+        canonical.tick,
+      );
+      return { nextExperiment: next, branchId };
+    },
+    [],
+  );
 
   const logIntervention = useCallback(
-    (command: ScheduledPlayerCommand, base: ExperimentV1, branchId: string) => {
+    async (command: ScheduledPlayerCommand, base: ExperimentV1, branchId: string) => {
       let next = appendExperimentIntervention(
         base,
         branchId,
         createPendingIntervention(command),
       );
-      const state = simulation.getState();
-      if (state) next = reconcilePendingInterventions(next, branchId, state);
+      const projections = await simulation.getInterventionOutcomes([command]);
+      if (projections) {
+        next = reconcileProjectedInterventions(next, branchId, projections);
+      }
       commitExperiment(next);
       setDirty(true);
     },
@@ -803,8 +1141,9 @@ export function useExperimentWorkspace({
       const operation = acquireOperation("intervention");
       if (!operation) return;
       try {
-        if (!simulation.view.hash) return;
-        const { nextExperiment, branchId } = ensureInterventionBranch();
+        const canonical = await simulation.getCanonicalHash();
+        if (!canonical) throw new Error("The simulation is not ready for inspection.");
+        const { nextExperiment, branchId } = ensureInterventionBranch(canonical);
         setComposerStatus({ phase: "working", message: "Scheduling intervention…" });
         const acknowledgement = await simulation.applyIntervention(tool, tile, amount);
         if (!acknowledgement) {
@@ -819,7 +1158,7 @@ export function useExperimentWorkspace({
           return;
         }
         commitActiveBranch(branchId);
-        logIntervention(
+        await logIntervention(
           acknowledgement.command as ScheduledPlayerCommand,
           nextExperiment,
           branchId,
@@ -847,27 +1186,24 @@ export function useExperimentWorkspace({
     ],
   );
 
-  const addBookmark = useCallback(() => {
+  const addBookmark = useCallback(async () => {
     const operation = acquireOperation("bookmark");
     if (!operation) return;
     try {
-      const label = bookmarkDraft.trim() || `Moment at tick ${simulation.view.tick}`;
+      const canonical = await simulation.getCanonicalHash();
+      if (!canonical) throw new Error("The simulation is not ready to bookmark.");
+      const label = bookmarkDraft.trim() || `Moment at tick ${canonical.tick}`;
       let next = experimentRef.current;
       let branchId = activeBranchRef.current;
       let openedInterventionBranch = false;
       const active = next.branches.find((branch) => branch.id === branchId);
       if (active?.parentBranchId === null && next.branches.length === 1) {
-        next = setExperimentBranchResult(
-          next,
-          branchId,
-          simulation.view.tick,
-          simulation.view.hash,
-        );
+        next = setExperimentBranchResult(next, branchId, canonical.tick, canonical.hash);
       }
       next = addExperimentBookmark(next, {
         id: uniqueBookmarkId(next),
         branchId,
-        tick: simulation.view.tick,
+        tick: canonical.tick,
         label,
       });
       if (active?.parentBranchId === null && next.branches.length === 1) {
@@ -877,7 +1213,7 @@ export function useExperimentWorkspace({
           branchId,
           interventionBranchId,
           "Intervention",
-          simulation.view.tick,
+          canonical.tick,
         );
         branchId = interventionBranchId;
         openedInterventionBranch = true;
@@ -906,8 +1242,7 @@ export function useExperimentWorkspace({
     commitActiveBranch,
     commitExperiment,
     releaseOperation,
-    simulation.view.hash,
-    simulation.view.tick,
+    simulation,
   ]);
 
   const visitBookmark = useCallback(
@@ -988,7 +1323,7 @@ export function useExperimentWorkspace({
           targetTick: bookmark.tick,
           progressPercent: 100,
           message: `Returned to ${bookmark.label}.`,
-          hash: { status: "unverified", actual: result.frame.hash },
+          hash: { status: "unverified", actual: result.actualHash },
         });
       } catch (error) {
         let preserved = true;
@@ -1021,8 +1356,9 @@ export function useExperimentWorkspace({
     setActionStatus({ phase: "working", message: "Saving this field station…" });
     try {
       const simulationSave = await simulation.save();
-      const savedState = deserializeSimulationSave(simulationSave);
-      const next = branchWithStateResult(savedState);
+      const checkpoint = await simulation.getCheckpoint();
+      if (!checkpoint) throw new Error("The simulation is not ready to checkpoint.");
+      const next = branchWithCheckpointResult(checkpoint);
       const workspace: PersistedWorkspaceV1 = {
         kind: WORKSPACE_KIND,
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
@@ -1033,9 +1369,9 @@ export function useExperimentWorkspace({
       };
       await storageRef.current.save(serializeWorkspace(workspace));
       commitExperiment(next);
-      preservedSignatureRef.current = preservedSignature(
+      preservedSignatureRef.current = preservedFrameSignature(
         activeBranchRef.current,
-        savedState,
+        checkpoint.tick,
       );
       setDirty(false);
       setCanLoad(true);
@@ -1050,7 +1386,7 @@ export function useExperimentWorkspace({
     }
   }, [
     acquireOperation,
-    branchWithStateResult,
+    branchWithCheckpointResult,
     commitExperiment,
     releaseOperation,
     scenarioPresetId,
@@ -1060,30 +1396,44 @@ export function useExperimentWorkspace({
   const loadWorkspace = useCallback(async () => {
     const operation = acquireOperation("load");
     if (!operation) return;
+    let previousSave: string | null = null;
+    let installed = false;
     setActionStatus({ phase: "working", message: "Restoring the saved experiment…" });
     try {
       const serialized = await storageRef.current.load();
       if (!serialized) throw new Error("No browser save is available.");
       const workspace = parseWorkspace(serialized);
-      await simulation.load(workspace.simulationSave);
-      const restoredState = deserializeSimulationSave(workspace.simulationSave);
+      previousSave = await simulation.save();
+      const restoredView = await simulation.load(workspace.simulationSave);
+      installed = true;
+      const checkpoint = await simulation.getCheckpoint();
+      if (!checkpoint) throw new Error("The restored simulation could not be verified.");
+      assertWorkspaceCheckpoint(workspace, checkpoint);
       commitExperiment(workspace.experiment);
       commitActiveBranch(workspace.activeBranchId);
-      preservedSignatureRef.current = preservedSignature(
+      preservedSignatureRef.current = preservedFrameSignature(
         workspace.activeBranchId,
-        restoredState,
+        checkpoint.tick,
       );
       setScenarioPresetId(workspace.scenarioPresetId);
       setDirty(false);
       setSetupOpen(false);
       setActionStatus({
         phase: "success",
-        message: `Restored tick ${simulation.getState()?.tick ?? 0} without changing its hash.`,
+        message: `Restored tick ${restoredView.tick} without changing its hash.`,
       });
     } catch (error) {
+      let preserved = true;
+      if (installed && previousSave !== null) {
+        try {
+          await simulation.load(previousSave);
+        } catch {
+          preserved = false;
+        }
+      }
       setActionStatus({
         phase: "error",
-        message: `${errorMessage(error, "Load failed.")} The active run was preserved.`,
+        message: `${errorMessage(error, "Load failed.")} ${preserved ? "The active run was preserved." : "The active run could not be restored; start a new experiment to recover."}`,
       });
     } finally {
       releaseOperation(operation);
@@ -1096,13 +1446,13 @@ export function useExperimentWorkspace({
     simulation,
   ]);
 
-  const exportExperiment = useCallback(() => {
+  const exportExperiment = useCallback(async () => {
     const operation = acquireOperation("export");
     if (!operation) return;
     try {
-      const state = simulation.getState();
-      if (!state) throw new Error("The simulation is not ready to export.");
-      const next = branchWithStateResult(state);
+      const checkpoint = await simulation.getCheckpoint();
+      if (!checkpoint) throw new Error("The simulation is not ready to export.");
+      const next = branchWithCheckpointResult(checkpoint);
       commitExperiment(next);
       const preset = scenarioPresetById(scenarioPresetId);
       const safeName = (preset?.name ?? "tiny-civilisation")
@@ -1113,7 +1463,10 @@ export function useExperimentWorkspace({
         serializeExperiment(next),
         `${safeName || "experiment"}-seed-${next.scenario.seed}.tinyciv.json`,
       );
-      preservedSignatureRef.current = preservedSignature(activeBranchRef.current, state);
+      preservedSignatureRef.current = preservedFrameSignature(
+        activeBranchRef.current,
+        checkpoint.tick,
+      );
       setDirty(false);
       setActionStatus({
         phase: "success",
@@ -1126,7 +1479,7 @@ export function useExperimentWorkspace({
     }
   }, [
     acquireOperation,
-    branchWithStateResult,
+    branchWithCheckpointResult,
     commitExperiment,
     releaseOperation,
     scenarioPresetId,
@@ -1174,9 +1527,9 @@ export function useExperimentWorkspace({
         }
         commitExperiment(imported);
         commitActiveBranch(branchId);
-        preservedSignatureRef.current = preservedSignature(
+        preservedSignatureRef.current = preservedFrameSignature(
           branchId,
-          stateFromFrame(result.frame),
+          result.frame.tick,
         );
         setScenarioPresetId(
           SCENARIO_PRESETS.find((preset) => preset.seed === imported.scenario.seed)?.id ??
@@ -1237,38 +1590,41 @@ export function useExperimentWorkspace({
   }, [importExperiment, loadWorkspace, pendingReplacement]);
 
   const runReplay = useCallback(async () => {
-    if (!simulation.view.hash) return;
     const operation = acquireOperation("replay");
     if (!operation) return;
-    let previousTick = simulation.view.tick;
-    let previousSave: string | null = null;
-    let replay: SimulationReplayV1 | null = null;
     const abort = new AbortController();
     replayAbortRef.current = abort;
+    let replay: SimulationReplayV1 | null = null;
+    let liveTick = simulation.view.tick;
+    let liveHash = "";
+    setMomentReplay(null);
     setReplayState({
       phase: "running",
       currentTick: 0,
-      targetTick: simulation.view.tick,
+      targetTick: liveTick,
       progressPercent: 0,
-      message: "Replaying the command log in the simulation Worker…",
-      hash: { status: "verifying" },
+      message: "Replaying the command log in an isolated simulation engine…",
+      hash: { status: "verifying", expected: liveHash },
     });
     try {
-      previousSave = await simulation.save();
-      const previousState = deserializeSimulationSave(previousSave);
-      previousTick = previousState.tick;
-      const next = branchWithStateResult(previousState);
-      commitExperiment(next);
-      replay = createBranchReplay(next, activeBranchRef.current);
+      const canonical = await simulation.getCanonicalHash({ signal: abort.signal });
+      if (!canonical) throw new Error("The simulation is not ready to verify.");
+      liveTick = canonical.tick;
+      liveHash = canonical.hash;
       setReplayState((current) => ({
         ...current,
-        targetTick: replay?.finalTick ?? previousTick,
-        hash: {
-          status: "verifying",
-          ...(replay?.finalHash ? { expected: replay.finalHash } : {}),
-        },
+        targetTick: liveTick,
+        hash: { status: "verifying", expected: liveHash },
       }));
-      const result = await simulation.replay(replay, {
+      const recordedExperiment = setExperimentBranchResult(
+        experimentRef.current,
+        activeBranchRef.current,
+        liveTick,
+        liveHash,
+      );
+      commitExperiment(recordedExperiment);
+      replay = createBranchReplay(recordedExperiment, activeBranchRef.current);
+      const result = await replayInIsolation(replay, {
         signal: abort.signal,
         onProgress: (progress) =>
           setReplayState((current) => ({
@@ -1278,18 +1634,18 @@ export function useExperimentWorkspace({
             progressPercent: Math.round(progress.fraction * 100),
           })),
       });
-      const shouldRestore = result.cancelled || result.hashMatches === false;
-      if (shouldRestore) await simulation.load(previousSave);
       setReplayState({
         phase: result.cancelled ? "cancelled" : "complete",
-        currentTick: shouldRestore ? previousTick : result.frame.tick,
-        targetTick: replay.finalTick ?? result.frame.tick,
-        progressPercent: result.cancelled ? 0 : 100,
+        currentTick: result.frame.tick,
+        targetTick: replay.finalTick ?? liveTick,
+        progressPercent: result.cancelled
+          ? Math.round((result.frame.tick / Math.max(1, liveTick)) * 100)
+          : 100,
         message: result.cancelled
-          ? "Replay cancelled. The active run was restored."
+          ? "Replay cancelled. The active view was never changed."
           : result.hashMatches === false
-            ? "Replay completed with a different hash. The active run was restored."
-            : "Replay reproduced the recorded authoritative result.",
+            ? "Replay completed with a different hash. The active view was never changed."
+            : "Replay reproduced the recorded authoritative result without changing the active view.",
         hash: {
           status:
             result.hashMatches === null
@@ -1298,65 +1654,207 @@ export function useExperimentWorkspace({
                 ? "match"
                 : "mismatch",
           ...(result.expectedHash ? { expected: result.expectedHash } : {}),
-          actual: result.frame.hash,
+          actual: result.actualHash,
         },
       });
     } catch (error) {
-      let preserved = true;
-      if (previousSave !== null) {
-        try {
-          await simulation.load(previousSave);
-        } catch {
-          preserved = false;
-        }
-      }
-      setReplayState({
-        phase: "error",
-        currentTick: previousTick,
-        targetTick: replay?.finalTick ?? previousTick,
-        progressPercent: 0,
-        message: `${errorMessage(error, "Replay failed.")} ${preserved ? "The active run was preserved." : "The active run could not be restored; start a new experiment to recover."}`,
-        hash: { status: "unverified" },
-      });
+      setReplayState((current) => ({
+        ...current,
+        phase: abort.signal.aborted ? "cancelled" : "error",
+        targetTick: replay?.finalTick ?? liveTick,
+        message: abort.signal.aborted
+          ? "Replay cancelled. The active view was never changed."
+          : `${errorMessage(error, "Replay failed.")} The active view was never changed.`,
+        hash: { status: "unverified", expected: liveHash },
+      }));
     } finally {
       if (replayAbortRef.current === abort) replayAbortRef.current = null;
       releaseOperation(operation);
     }
-  }, [
-    acquireOperation,
-    branchWithStateResult,
-    commitExperiment,
-    releaseOperation,
-    simulation,
-  ]);
+  }, [acquireOperation, commitExperiment, releaseOperation, replayInIsolation, simulation]);
+
+  const replayTimelineEvent = useCallback(
+    async (
+      event: TimelineEventView,
+      liveBoundary?: Pick<WorldView, "tick" | "hash">,
+    ): Promise<boolean> => {
+      const liveTick = liveBoundary?.tick ?? simulation.view.tick;
+      const currentExperiment = experimentRef.current;
+      const activeBranch = currentExperiment.branches.find(
+        (branch) => branch.id === activeBranchRef.current,
+      );
+      const branchHorizon = Math.max(liveTick, activeBranch?.targetTick ?? 0);
+      const window = timelineReplayWindow(event.tick, branchHorizon);
+      const windowDescription = `moment tick ${window.momentTick}; window ${window.preludeStartTick}-${window.aftermathEndTick} (prelude ${window.preludeStartTick}-${window.momentTick}, action ${window.momentTick}-${window.actionEndTick}, aftermath ${window.actionEndTick}-${window.aftermathEndTick})`;
+
+      setSection("replay");
+      setDrawerOpen(true);
+      if (window.aftermathEndTick > MAX_INTERACTIVE_REPLAY_TICK) {
+        setReplayState({
+          phase: "error",
+          currentTick: liveTick,
+          targetTick: window.aftermathEndTick,
+          progressPercent: 0,
+          message: `The replay for ${windowDescription} exceeds the interactive replay limit of ${MAX_INTERACTIVE_REPLAY_TICK.toLocaleString()} ticks. The active view was never changed.`,
+          hash: { status: "unverified" },
+        });
+        return false;
+      }
+      const operation = acquireOperation("replay");
+      if (!operation) return false;
+      const abort = new AbortController();
+      replayAbortRef.current = abort;
+      setMomentReplay(null);
+      setReplayState({
+        phase: "running",
+        currentTick: 0,
+        targetTick: window.aftermathEndTick,
+        progressPercent: 0,
+        message: `Reconstructing "${event.title}" in an isolated simulation engine: ${windowDescription}…`,
+        hash: { status: "verifying" },
+      });
+      try {
+        const canonical = await simulation.getCanonicalHash({ signal: abort.signal });
+        if (!canonical) throw new Error("The simulation is not ready to verify.");
+        if (canonical.tick !== liveTick) {
+          throw new Error("The paused replay boundary changed before it was verified.");
+        }
+        const liveHash = canonical.hash;
+        const branchReplay = createBranchReplay(currentExperiment, activeBranchRef.current);
+        const boundedReplay = replayAtTick(branchReplay, window.aftermathEndTick);
+        const expectedHash =
+          window.aftermathEndTick === liveTick
+            ? liveHash
+            : window.aftermathEndTick === activeBranch?.targetTick
+              ? activeBranch.expectedHash
+              : null;
+        const replay = expectedHash
+          ? { ...boundedReplay, finalHash: expectedHash }
+          : boundedReplay;
+        setReplayState((current) => ({
+          ...current,
+          hash: {
+            status: expectedHash ? "verifying" : "unverified",
+            ...(expectedHash ? { expected: expectedHash } : {}),
+          },
+        }));
+        const result = await replayInIsolation(replay, {
+          signal: abort.signal,
+          captureTicks: [
+            window.preludeStartTick,
+            window.momentTick,
+            window.actionEndTick,
+            window.aftermathEndTick,
+          ],
+          onProgress: (progress) =>
+            setReplayState((current) => ({
+              ...current,
+              currentTick: progress.currentTick,
+              targetTick: progress.targetTick,
+              progressPercent: Math.round(progress.fraction * 100),
+            })),
+        });
+        const presentation =
+          result.cancelled || result.hashMatches === false
+            ? null
+            : createMomentReplayPresentation(event, window, result.capturedFrames ?? []);
+        if (!result.cancelled && result.hashMatches !== false && !presentation) {
+          throw new Error(
+            "The isolated replay did not return its requested observation frames.",
+          );
+        }
+        setMomentReplay(presentation);
+        setReplayState({
+          phase: result.cancelled ? "cancelled" : "complete",
+          currentTick: result.frame.tick,
+          targetTick: window.aftermathEndTick,
+          progressPercent: result.cancelled
+            ? Math.round((result.frame.tick / Math.max(1, window.aftermathEndTick)) * 100)
+            : 100,
+          message: result.cancelled
+            ? `Moment replay cancelled for "${event.title}" (${windowDescription}). The active view was never changed.`
+            : result.hashMatches === false
+              ? `Moment replay completed with a different hash for "${event.title}" (${windowDescription}). The active view was never changed.`
+              : `Moment replay completed for "${event.title}" (${windowDescription}) without changing the active view.`,
+          hash: {
+            status:
+              result.hashMatches === null
+                ? "unverified"
+                : result.hashMatches
+                  ? "match"
+                  : "mismatch",
+            ...(result.expectedHash ? { expected: result.expectedHash } : {}),
+            actual: result.actualHash,
+          },
+        });
+        return presentation !== null;
+      } catch (error) {
+        setMomentReplay(null);
+        setReplayState((current) => ({
+          ...current,
+          phase: abort.signal.aborted ? "cancelled" : "error",
+          targetTick: window.aftermathEndTick,
+          message: abort.signal.aborted
+            ? `Moment replay cancelled for "${event.title}" (${windowDescription}). The active view was never changed.`
+            : `${errorMessage(error, "Moment replay failed.")} ${windowDescription}. The active view was never changed.`,
+          hash: {
+            status: "unverified",
+            ...(current.hash.expected ? { expected: current.hash.expected } : {}),
+          },
+        }));
+        return false;
+      } finally {
+        if (replayAbortRef.current === abort) replayAbortRef.current = null;
+        releaseOperation(operation);
+      }
+    },
+    [acquireOperation, releaseOperation, replayInIsolation, simulation],
+  );
+
+  const selectMomentReplayBeat = useCallback((index: number) => {
+    setMomentReplay((current) => {
+      if (!current || current.beats.length === 0) return current;
+      const activeBeatIndex = Math.max(
+        0,
+        Math.min(current.beats.length - 1, Math.floor(index)),
+      );
+      return activeBeatIndex === current.activeBeatIndex
+        ? current
+        : { ...current, activeBeatIndex };
+    });
+  }, []);
+
+  const exitMomentReplay = useCallback(() => setMomentReplay(null), []);
 
   const calculateComparison = useCallback(async () => {
-    const current = experimentRef.current;
-    const active = current.branches.find((branch) => branch.id === activeBranchRef.current);
-    const branchState = simulation.getState();
-    if (!active || active.parentBranchId === null || !branchState) {
-      setComparison(EMPTY_COMPARISON);
-      return;
-    }
     const operation = acquireOperation("comparison");
     if (!operation) return;
-    setComparison({
-      ...EMPTY_COMPARISON,
-      status: "loading",
-      baselineTick: simulation.view.tick,
-      branchTick: simulation.view.tick,
-      message: "Replaying the baseline to the same tick…",
-    });
     const engine = createSimulationEngine();
     try {
+      const current = experimentRef.current;
+      const active = current.branches.find(
+        (branch) => branch.id === activeBranchRef.current,
+      );
+      const intervention = await simulation.getOutcome();
+      if (!active || active.parentBranchId === null || !intervention) {
+        setComparison(EMPTY_COMPARISON);
+        return;
+      }
+      setComparison({
+        ...EMPTY_COMPARISON,
+        status: "loading",
+        baselineTick: simulation.view.tick,
+        branchTick: simulation.view.tick,
+        message: "Replaying the baseline to the same tick…",
+      });
       const baselineReplay = replayAtTick(
         createBranchReplay(current, current.rootBranchId),
-        branchState.tick,
+        intervention.tick,
       );
-      const baselineResult = await engine.replay(baselineReplay);
-      const baseline = createExperimentOutcome(stateFromFrame(baselineResult.frame));
-      const intervention = createExperimentOutcome(branchState);
-      const compared = compareExperimentOutcomes(baseline, intervention);
+      await engine.replay(baselineReplay);
+      const baseline = await engine.getOutcome();
+      const compared = await simulation.compareOutcome(baseline);
+      if (!compared) throw new Error("The intervention outcome is unavailable.");
       setComparison({
         status: "ready",
         baselineLabel:
@@ -1387,15 +1885,30 @@ export function useExperimentWorkspace({
   }, [acquireOperation, releaseOperation, simulation]);
 
   const focusCausalRef = useCallback(
-    (ref: CausalEvidenceRef, appendBreadcrumb = true) => {
-      const state = simulation.getState();
-      if (!state) return;
+    async (ref: CausalEvidenceRef, appendBreadcrumb = true) => {
+      try {
+        onFocusEvidence?.(ref);
+      } catch {
+        // Shared focus observers cannot block factual evidence projection.
+      }
+      const requestId = ++causalRequestSequenceRef.current;
+      causalAbortRef.current?.abort();
+      const abort = new AbortController();
+      causalAbortRef.current = abort;
       setCausalStatus("loading");
       try {
-        const projection = createCausalEvidenceProjection(state, ref, {
-          maxDepth: 3,
-          maxNodes: 120,
-        });
+        const projection = await simulation.getCausalEvidence(
+          ref,
+          { maxDepth: 3, maxNodes: 120 },
+          { signal: abort.signal },
+        );
+        if (
+          !projection ||
+          abort.signal.aborted ||
+          requestId !== causalRequestSequenceRef.current
+        ) {
+          return;
+        }
         const detail = causalDetailFromProjection(projection);
         if (!detail) throw new Error("That evidence is no longer retained.");
         const focusNode = projection.nodes.find((node) => refKey(node.ref) === refKey(ref));
@@ -1417,11 +1930,16 @@ export function useExperimentWorkspace({
         setSection("explain");
         setDrawerOpen(true);
       } catch (error) {
+        if (abort.signal.aborted || requestId !== causalRequestSequenceRef.current) {
+          return;
+        }
         setCausalStatus("error");
         setCausalMessage(errorMessage(error, "Evidence could not be projected."));
+      } finally {
+        if (causalAbortRef.current === abort) causalAbortRef.current = null;
       }
     },
-    [simulation],
+    [onFocusEvidence, simulation],
   );
 
   const inspectTimelineEvent = useCallback(
@@ -1430,7 +1948,7 @@ export function useExperimentWorkspace({
         event.id >= 1_000_000
           ? { kind: "history", id: event.id - 1_000_000 }
           : { kind: "event", id: event.id };
-      focusCausalRef(ref, false);
+      void focusCausalRef(ref, false);
     },
     [focusCausalRef],
   );
@@ -1446,7 +1964,9 @@ export function useExperimentWorkspace({
       );
       const eventId =
         entry?.outcome.status === "PENDING" ? undefined : entry?.outcome.eventIds[0];
-      if (eventId !== undefined) focusCausalRef({ kind: "event", id: eventId }, false);
+      if (eventId !== undefined) {
+        void focusCausalRef({ kind: "event", id: eventId }, false);
+      }
     },
     [focusCausalRef],
   );
@@ -1468,7 +1988,7 @@ export function useExperimentWorkspace({
         setComposerValidation("Choose a resource or structure to inspect.");
         return;
       }
-      focusCausalRef(parseRef(composerObject), false);
+      void focusCausalRef(parseRef(composerObject), false);
       return;
     }
     const x = Number(targetX);
@@ -1522,6 +2042,48 @@ export function useExperimentWorkspace({
     [calculateComparison],
   );
 
+  const navigateIntervention = useCallback(
+    (interventionId: string, action: InterventionNavigationAction) => {
+      const activeBranch = experimentRef.current.branches.find(
+        (branch) => branch.id === activeBranchRef.current,
+      );
+      const belongsToActiveRecord = activeBranch?.commandLog.some(
+        (entry) =>
+          `${activeBranch.id}-command-${entry.command.commandId.toString()}` ===
+          interventionId,
+      );
+      if (!belongsToActiveRecord) return;
+
+      switch (action.target.kind) {
+        case "raw-evidence":
+        case "linked-evidence":
+          void focusCausalRef(action.target.ref, false);
+          break;
+        case "location":
+          void focusCausalRef({ kind: "tile", id: action.target.tileIndex }, false);
+          break;
+        case "responding-creature":
+          onSelectCreature(action.target.creatureId);
+          setDrawerOpen(false);
+          break;
+        case "linked-moment":
+          void focusCausalRef({ kind: "event", id: action.target.eventId }, false);
+          break;
+        case "comparison":
+          if (action.target.branchId === activeBranchRef.current) {
+            handleSectionChange("compare");
+          }
+          break;
+        case "branch-replay":
+          if (action.target.branchId === activeBranchRef.current) {
+            handleSectionChange("replay");
+          }
+          break;
+      }
+    },
+    [focusCausalRef, handleSectionChange, onSelectCreature],
+  );
+
   const openDrawer = useCallback(
     (next: ExperimentSection = "record") => {
       setSection(next);
@@ -1573,9 +2135,44 @@ export function useExperimentWorkspace({
     ],
     [simulation.view.resources, simulation.view.structures],
   );
+  const activeCommandLog = useMemo(
+    () =>
+      experiment.branches.find((candidate) => candidate.id === activeBranchId)
+        ?.commandLog ?? EMPTY_COMMAND_LOG,
+    [activeBranchId, experiment.branches],
+  );
+  const persistInterventionResponseTrace = useCallback(
+    (commandId: number, trace: InterventionResponseTrace) => {
+      const current = experimentRef.current;
+      const branchId = activeBranchRef.current;
+      const branch = current.branches.find((candidate) => candidate.id === branchId);
+      const entry = branch?.commandLog.find(
+        (candidate) => candidate.command.commandId === commandId,
+      );
+      if (!entry || entry.responseTrace === trace) return;
+      const next = setExperimentInterventionResponseTrace(
+        current,
+        branchId,
+        commandId,
+        trace,
+      );
+      commitExperiment(next);
+      setDirty(true);
+    },
+    [commitExperiment],
+  );
+  const interventionResponseTraces = useInterventionResponseTraces({
+    streamKey: `${simulation.seed}:${activeBranchId}`,
+    commandLog: activeCommandLog,
+    view: simulation.view,
+    onMaterialChange: persistInterventionResponseTrace,
+  });
   const interventionRecords = useMemo<InterventionRecord[]>(() => {
     const branch = experiment.branches.find((candidate) => candidate.id === activeBranchId);
     if (!branch) return [];
+    const creatureNames = new Map(
+      simulation.view.creatures.map((creature) => [creature.id, creature.name]),
+    );
     return branch.commandLog.map((entry) => {
       const x = entry.command.tileIndex % simulation.view.width;
       const y = Math.floor(entry.command.tileIndex / simulation.view.width);
@@ -1585,6 +2182,17 @@ export function useExperimentWorkspace({
           : entry.outcome.status === "APPLIED"
             ? "applied"
             : "rejected";
+      const responseTrace = interventionResponseTraces.get(entry.command.commandId);
+      const selectable =
+        entry.outcome.status !== "PENDING" && entry.outcome.eventIds.length > 0;
+      const navigationActions = interventionNavigationActions({
+        entry,
+        trace: responseTrace,
+        branchId: branch.id,
+        parentBranchId: branch.parentBranchId,
+        creatureNames,
+        events: simulation.view.events,
+      });
       return {
         id: `${branch.id}-command-${entry.command.commandId}`,
         tick: entry.command.applyAtTick,
@@ -1598,6 +2206,7 @@ export function useExperimentWorkspace({
                 : "Passage opened",
         target: `tile ${x}, ${y}`,
         status,
+        selectable,
         ...(entry.command.type === "TOGGLE_OBSTACLE"
           ? {}
           : { quantity: entry.command.amount }),
@@ -1606,9 +2215,20 @@ export function useExperimentWorkspace({
           : entry.outcome.status === "APPLIED"
             ? { detail: `Applied at tick ${entry.outcome.appliedAtTick}.` }
             : { reason: entry.outcome.reason ?? "The simulation rejected this change." }),
+        ...(responseTrace
+          ? { response: interventionResponseRecord(responseTrace, creatureNames) }
+          : {}),
+        navigationActions,
       };
     });
-  }, [activeBranchId, experiment.branches, simulation.view.width]);
+  }, [
+    activeBranchId,
+    experiment.branches,
+    interventionResponseTraces,
+    simulation.view.creatures,
+    simulation.view.events,
+    simulation.view.width,
+  ]);
   const bookmarks = useMemo<ExperimentBookmark[]>(
     () =>
       experiment.bookmarks.map((bookmark) => ({
@@ -1682,6 +2302,49 @@ export function useExperimentWorkspace({
     onAdd: addBookmark,
     onVisit: (id) => void visitBookmark(id),
   };
+  const interventionPreview = useMemo<InterventionComposerProps["preview"]>(() => {
+    if (
+      composerTool !== "add-food" &&
+      composerTool !== "remove-food" &&
+      composerTool !== "obstacle"
+    ) {
+      return undefined;
+    }
+    const x = Number(targetX);
+    const y = Number(targetY);
+    if (!Number.isInteger(x) || !Number.isInteger(y)) return undefined;
+    const tile = simulation.view.tiles.find(
+      (candidate) => candidate.x === x && candidate.y === y,
+    );
+    if (!tile) return undefined;
+    const amount = Number(quantity);
+    if (
+      composerTool !== "obstacle" &&
+      (!Number.isInteger(amount) || amount < 1 || amount > 999)
+    ) {
+      return undefined;
+    }
+    return {
+      target: `tile ${x}, ${y}`,
+      applyTick: simulation.view.tick,
+      category: composerTool === "obstacle" ? "Navigation" : "Resource availability",
+      mechanicalChange:
+        composerTool === "add-food"
+          ? `Add ${amount.toLocaleString()} food units at the target tile.`
+          : composerTool === "remove-food"
+            ? `Remove up to ${amount.toLocaleString()} food units from the target tile.`
+            : tile.blocked
+              ? "Open the target passage."
+              : "Close the target passage if the authoritative occupancy check permits it.",
+    };
+  }, [
+    composerTool,
+    quantity,
+    simulation.view.tick,
+    simulation.view.tiles,
+    targetX,
+    targetY,
+  ]);
   const composer: InterventionComposerProps = {
     tools: INTERVENTION_TOOLS,
     toolId: composerTool,
@@ -1693,6 +2356,7 @@ export function useExperimentWorkspace({
     targetY,
     quantity,
     status: composerStatus,
+    ...(interventionPreview ? { preview: interventionPreview } : {}),
     ...(composerValidation ? { validationMessage: composerValidation } : {}),
     disabled: workspaceBusy || simulation.busy || !simulation.initialized,
     onToolChange: setComposerTool,
@@ -1708,10 +2372,10 @@ export function useExperimentWorkspace({
     breadcrumbs: causalBreadcrumbs,
     ...(causalDetail ? { detail: causalDetail } : {}),
     ...(causalMessage ? { message: causalMessage } : {}),
-    onNavigate: (id) => focusCausalRef(parseRef(id)),
+    onNavigate: (id) => void focusCausalRef(parseRef(id)),
     onRetry: () => {
       const last = causalBreadcrumbs.at(-1);
-      if (last) focusCausalRef(parseRef(last.id), false);
+      if (last) void focusCausalRef(parseRef(last.id), false);
     },
   };
 
@@ -1739,13 +2403,18 @@ export function useExperimentWorkspace({
       onSectionChange: handleSectionChange,
       onClose: () => setDrawerOpen(false),
       onSelectIntervention: selectIntervention,
+      onNavigateIntervention: navigateIntervention,
       setup: setupProps,
       newExperimentDialog,
     },
     busy: workspaceBusy,
+    momentReplay,
     openDrawer,
     applyWorldIntervention: (tool, tile) => applyWorldIntervention(tool, tile),
     inspectTimelineEvent,
+    replayTimelineEvent,
+    selectMomentReplayBeat,
+    exitMomentReplay,
     recover: recoverExperiment,
   };
 }

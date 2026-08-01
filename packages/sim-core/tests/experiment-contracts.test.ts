@@ -9,6 +9,7 @@ import {
   createBranchReplay,
   createExperiment,
   createPendingIntervention,
+  createInterventionResponseTrace,
   createScenarioReference,
   createSimulation,
   createSimulationReplay,
@@ -24,8 +25,10 @@ import {
   serializeExperiment,
   serializeScenarioReference,
   serializeSimulationReplay,
+  setExperimentInterventionResponseTrace,
   setExperimentBranchResult,
   settleExperimentIntervention,
+  observeInterventionResponse,
   type ExperimentV1,
 } from "../src/index.js";
 
@@ -127,6 +130,81 @@ describe("versioned experiment contracts", () => {
       changed.branches.find((branch) => branch.id === "baseline")?.commandLog,
     ).toHaveLength(1);
     expect(changed.branches[0]).not.toBe(baseline.branches[0]);
+  });
+
+  it("persists deeply frozen response evidence through round trips and branch forks", () => {
+    const completed = buildExperiment();
+    const entry = completed.branches[0]?.commandLog[0];
+    if (!entry) throw new Error("Expected a recorded intervention.");
+    const opened = observeInterventionResponse(
+      createInterventionResponseTrace(entry.command, [1], { windowTicks: 20 }),
+      {
+        tick: 5,
+        width: 30,
+        creatures: [],
+        events: [
+          {
+            id: 2,
+            tick: 5,
+            type: "PLAYER_ADDED_FOOD",
+            actorIds: [],
+            targetIds: [90],
+            causedByEventIds: [],
+            locationTileIndex: entry.command.tileIndex,
+            commandId: entry.command.commandId,
+            commandOutcome: "APPLIED",
+          },
+        ],
+      },
+    );
+    const trace = observeInterventionResponse(opened, {
+      tick: 25,
+      width: 30,
+      creatures: [],
+      events: [],
+    });
+    const recorded = setExperimentInterventionResponseTrace(
+      completed,
+      "baseline",
+      entry.command.commandId,
+      trace,
+    );
+    const forked = forkExperimentBranch(
+      recorded,
+      "baseline",
+      "response-fork",
+      "Response fork",
+      10,
+    );
+    const loaded = deserializeExperiment(serializeExperiment(forked));
+    const baselineTrace = loaded.branches[0]?.commandLog[0]?.responseTrace;
+    const forkTrace = loaded.branches[1]?.commandLog[0]?.responseTrace;
+
+    expect(baselineTrace).toEqual(trace);
+    expect(forkTrace).toEqual(trace);
+    expect(baselineTrace).not.toBe(forkTrace);
+    expect(Object.isFrozen(baselineTrace)).toBe(true);
+    expect(Object.isFrozen(baselineTrace?.responses)).toBe(true);
+    expect(Object.isFrozen(baselineTrace?.responses[0]?.beats)).toBe(true);
+  });
+
+  it("rejects response traces that do not belong to their command", () => {
+    const completed = buildExperiment();
+    const entry = completed.branches[0]?.commandLog[0];
+    if (!entry) throw new Error("Expected a recorded intervention.");
+    const wrongTrace = createInterventionResponseTrace(
+      { ...entry.command, tileIndex: entry.command.tileIndex + 1 },
+      [],
+    );
+
+    expect(() =>
+      setExperimentInterventionResponseTrace(
+        completed,
+        "baseline",
+        entry.command.commandId,
+        wrongTrace,
+      ),
+    ).toThrow("responseTrace command must match");
   });
 
   it("invalidates stale results and rejects impossible command outcome horizons", () => {
@@ -247,6 +325,75 @@ describe("versioned experiment contracts", () => {
       (outcome as { resolvedTileIndex: number }).resolvedTileIndex += 1;
     }
     expect(() => migrateExperiment(corrupt)).toThrow("diverges before its fork tick");
+  });
+
+  it("migrates v1 experiments as unverified v2 branches without mutating input", () => {
+    const current = buildExperiment();
+    const legacy = JSON.parse(JSON.stringify(current)) as {
+      schemaVersion: number;
+      behaviorVersion: number;
+      stateSchemaVersion: number;
+      scenario: { behaviorVersion: number };
+      branches: Array<{
+        targetTick: number | null;
+        expectedHash: string | null;
+        commandLog: Array<{
+          outcome: { status: string };
+          responseTrace?: unknown;
+        }>;
+      }>;
+      checkpoints: unknown[];
+      bookmarks: unknown[];
+    };
+    legacy.schemaVersion = 1;
+    legacy.behaviorVersion = 1;
+    legacy.stateSchemaVersion = 1;
+    legacy.scenario.behaviorVersion = 1;
+    for (const branch of legacy.branches) {
+      for (const entry of branch.commandLog) delete entry.responseTrace;
+    }
+    const original = JSON.stringify(legacy);
+
+    const migrated = migrateExperiment(legacy);
+
+    expect(JSON.stringify(legacy)).toBe(original);
+    expect(migrated.behaviorVersion).toBe(SIMULATION_BEHAVIOR_VERSION);
+    expect(migrated.stateSchemaVersion).toBe(2);
+    expect(migrated.scenario.behaviorVersion).toBe(SIMULATION_BEHAVIOR_VERSION);
+    expect(migrated.bookmarks).toEqual(current.bookmarks);
+    expect(migrated.checkpoints).toEqual([]);
+    expect(migrated.branches[0]).toMatchObject({
+      targetTick: null,
+      expectedHash: null,
+      commandLog: [{ outcome: { status: "PENDING" } }],
+    });
+  });
+
+  it("migrates schema-v1 current experiments without discarding settled results", () => {
+    const current = buildExperiment();
+    const legacy = JSON.parse(JSON.stringify(current)) as {
+      schemaVersion: number;
+      branches: Array<{
+        targetTick: number | null;
+        expectedHash: string | null;
+        commandLog: Array<{ responseTrace?: unknown }>;
+      }>;
+    };
+    legacy.schemaVersion = 1;
+    for (const branch of legacy.branches) {
+      for (const entry of branch.commandLog) delete entry.responseTrace;
+    }
+
+    const migrated = migrateExperiment(legacy);
+
+    expect(migrated.schemaVersion).toBe(EXPERIMENT_SCHEMA_VERSION);
+    expect(migrated.branches[0]?.targetTick).toBe(current.branches[0]?.targetTick);
+    expect(migrated.branches[0]?.expectedHash).toBe(current.branches[0]?.expectedHash);
+    expect(migrated.branches[0]?.commandLog[0]?.outcome).toEqual(
+      current.branches[0]?.commandLog[0]?.outcome,
+    );
+    expect(migrated.branches[0]?.commandLog[0]?.responseTrace).toBeNull();
+    expect(migrated.checkpoints).toEqual(current.checkpoints);
   });
 
   it("fails early on invalid JSON and oversized serialized contracts", () => {

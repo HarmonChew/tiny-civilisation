@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
+import type { CausalEvidenceRef, EntityId } from "@tiny-civ/sim-core";
 import "../styles/experiment.css";
 
 export type OperationPhase = "idle" | "working" | "success" | "error";
@@ -80,15 +81,44 @@ export interface ExperimentActionProps {
 
 export type InterventionRecordStatus = "pending" | "applied" | "rejected";
 
+export type InterventionNavigationTarget =
+  | { readonly kind: "raw-evidence"; readonly ref: CausalEvidenceRef }
+  | { readonly kind: "location"; readonly tileIndex: number }
+  | { readonly kind: "responding-creature"; readonly creatureId: EntityId }
+  | { readonly kind: "linked-evidence"; readonly ref: CausalEvidenceRef }
+  | { readonly kind: "linked-moment"; readonly eventId: number }
+  | { readonly kind: "comparison"; readonly branchId: string }
+  | { readonly kind: "branch-replay"; readonly branchId: string };
+
+export interface InterventionNavigationAction {
+  readonly id: string;
+  readonly label: string;
+  readonly target: InterventionNavigationTarget;
+}
+
 export interface InterventionRecord {
   id: string;
   tick: number;
   label: string;
   target: string;
   status: InterventionRecordStatus;
+  selectable?: boolean;
   quantity?: number;
   detail?: string;
   reason?: string;
+  response?: {
+    phase: "waiting" | "observing" | "closed";
+    window: string;
+    summary: string;
+    participantLines: readonly string[];
+  };
+  navigationActions?: readonly InterventionNavigationAction[];
+}
+
+export interface InterventionLedgerProps {
+  interventions: readonly InterventionRecord[];
+  onSelect?: (interventionId: string) => void;
+  onNavigate?: (interventionId: string, action: InterventionNavigationAction) => void;
 }
 
 export interface ExperimentBookmark {
@@ -138,6 +168,12 @@ export interface InterventionComposerProps {
   quantity: string;
   status?: OperationStatus;
   validationMessage?: string;
+  preview?: {
+    target: string;
+    applyTick: number;
+    category: string;
+    mechanicalChange: string;
+  };
   disabled?: boolean;
   onToolChange: (toolId: string) => void;
   onCreatureChange: (creatureId: string) => void;
@@ -211,6 +247,8 @@ export interface CausalLink {
     | "group"
     | "structure"
     | "resource"
+    | "desire"
+    | "plan"
     | "tile";
   tick?: number;
   summary?: string;
@@ -280,6 +318,10 @@ export interface ExperimentDrawerProps {
   onSectionChange: (section: ExperimentSection) => void;
   onClose: () => void;
   onSelectIntervention?: (interventionId: string) => void;
+  onNavigateIntervention?: (
+    interventionId: string,
+    action: InterventionNavigationAction,
+  ) => void;
 }
 
 export interface ExperimentWorkspaceProps extends ExperimentDrawerProps {
@@ -705,13 +747,21 @@ function formatTick(tick: number) {
   return `tick ${tick.toLocaleString()}`;
 }
 
+const interventionNavigationLabels: Record<InterventionNavigationTarget["kind"], string> = {
+  "raw-evidence": "Raw evidence",
+  location: "Affected location",
+  "responding-creature": "Responding creature",
+  "linked-evidence": "Later evidence",
+  "linked-moment": "Later moment",
+  comparison: "Comparison",
+  "branch-replay": "Branch replay",
+};
+
 export function InterventionLedger({
   interventions,
   onSelect,
-}: {
-  interventions: readonly InterventionRecord[];
-  onSelect?: (interventionId: string) => void;
-}) {
+  onNavigate,
+}: InterventionLedgerProps) {
   return (
     <section className="experiment-sheet" aria-labelledby="intervention-ledger-heading">
       <div className="experiment-section-heading">
@@ -729,7 +779,8 @@ export function InterventionLedger({
         />
       ) : (
         <ol className="intervention-ledger">
-          {interventions.map((record) => {
+          {interventions.map((record, index) => {
+            const recordContext = `${record.label} at ${formatTick(record.tick)}`;
             const content = (
               <>
                 <span
@@ -745,19 +796,68 @@ export function InterventionLedger({
                   </span>
                   {record.detail ? <small>{record.detail}</small> : null}
                   {record.reason ? <small>Reason: {record.reason}</small> : null}
+                  {record.response ? (
+                    <span className="intervention-ledger__response">
+                      <small>
+                        <strong>Response window · {record.response.phase}</strong>{" "}
+                        {record.response.window}
+                      </small>
+                      <small>{record.response.summary}</small>
+                      {record.response.participantLines.length > 0 ? (
+                        <span className="intervention-ledger__responders">
+                          {record.response.participantLines.map((line) => (
+                            <span key={line}>{line}</span>
+                          ))}
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : null}
                 </span>
                 <time>{formatTick(record.tick)}</time>
               </>
             );
             return (
               <li key={record.id}>
-                {onSelect ? (
-                  <button type="button" onClick={() => onSelect(record.id)}>
+                {onSelect && record.status !== "pending" && record.selectable !== false ? (
+                  <button
+                    type="button"
+                    className="intervention-ledger__record"
+                    onClick={() => onSelect(record.id)}
+                  >
+                    <span className="experiment-visually-hidden">
+                      Open intervention record {index + 1}.{" "}
+                    </span>
                     {content}
                   </button>
                 ) : (
-                  <div>{content}</div>
+                  <div className="intervention-ledger__record">{content}</div>
                 )}
+                {onNavigate && record.navigationActions?.length ? (
+                  <div
+                    className="intervention-ledger__navigation"
+                    role="group"
+                    aria-label={`Linked views for ${recordContext}`}
+                  >
+                    <span className="intervention-ledger__navigation-label">
+                      Linked views
+                    </span>
+                    {record.navigationActions.map((action) => {
+                      const kindLabel = interventionNavigationLabels[action.target.kind];
+                      return (
+                        <button
+                          key={action.id}
+                          type="button"
+                          aria-label={`${action.label} (${kindLabel.toLowerCase()}) for ${recordContext}`}
+                          onClick={() => onNavigate(record.id, action)}
+                        >
+                          <span>{kindLabel}</span>
+                          <strong>{action.label}</strong>
+                          <ChevronRight aria-hidden="true" size={14} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </li>
             );
           })}
@@ -905,6 +1005,7 @@ export function InterventionComposer({
   quantity,
   status,
   validationMessage,
+  preview,
   disabled = false,
   onToolChange,
   onCreatureChange,
@@ -1029,6 +1130,34 @@ export function InterventionComposer({
             />
             <small>Enter a whole number greater than zero.</small>
           </div>
+        ) : null}
+
+        {preview ? (
+          <aside
+            className="intervention-preview"
+            aria-labelledby="intervention-preview-title"
+          >
+            <span className="experiment-eyebrow">Before you apply</span>
+            <strong id="intervention-preview-title">Intervention preview</strong>
+            <dl>
+              <div>
+                <dt>Target</dt>
+                <dd>{preview.target}</dd>
+              </div>
+              <div>
+                <dt>Apply tick</dt>
+                <dd>{preview.applyTick.toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Category</dt>
+                <dd>{preview.category}</dd>
+              </div>
+            </dl>
+            <p>{preview.mechanicalChange}</p>
+            <small>
+              Creatures remain autonomous; this preview does not forecast an outcome.
+            </small>
+          </aside>
         ) : null}
 
         {validationMessage ? (
@@ -1577,6 +1706,7 @@ export function ExperimentDrawer({
   onSectionChange,
   onClose,
   onSelectIntervention,
+  onNavigateIntervention,
 }: ExperimentDrawerProps) {
   const drawerRef = useRef<HTMLElement>(null);
 
@@ -1598,6 +1728,7 @@ export function ExperimentDrawer({
             <InterventionLedger
               interventions={interventions}
               {...(onSelectIntervention ? { onSelect: onSelectIntervention } : {})}
+              {...(onNavigateIntervention ? { onNavigate: onNavigateIntervention } : {})}
             />
             <BookmarkPanel {...bookmarks} />
           </>
@@ -1616,6 +1747,7 @@ export function ExperimentDrawer({
     comparison,
     composer,
     interventions,
+    onNavigateIntervention,
     onSelectIntervention,
     replay,
     section,

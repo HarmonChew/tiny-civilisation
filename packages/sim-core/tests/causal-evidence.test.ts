@@ -16,18 +16,41 @@ function evidenceState(): SimulationState {
     actorId: actor.id,
     previousAction: "EXPLORE",
     selectedAction: "SHARE",
+    selectedDesire: "RECIPROCATE_OR_REPAIR",
+    selectedPlan: "SHARE_WITH_OTHER",
     selectedTargetId: target.id,
+    strongestReason: null,
     switchReason: "NEW_OPTION_EXCEEDED_HYSTERESIS",
     candidates: [
       {
         action: "SHARE",
+        desire: "RECIPROCATE_OR_REPAIR",
+        plan: "SHARE_WITH_OTHER",
         targetEntityId: target.id,
         targetTileIndex: target.tileIndex,
         utility: 720,
-        factors: [{ key: "remembered-help", contribution: 300, evidenceEventIds: [1] }],
+        factors: [
+          {
+            key: "remembered-help",
+            contribution: 300,
+            evidenceEventIds: [1],
+            fact: {
+              kind: "MEMORY",
+              key: "remembered-help",
+              label: "Remembered help",
+              value: 1,
+              unit: "COUNT",
+              sourceEntityId: target.id,
+              sourceEventIds: [1],
+              capturedAtTick: 1,
+            },
+          },
+        ],
       },
       {
         action: "KEEP",
+        desire: "PRESERVE_PRIVATE_RESERVE",
+        plan: "BUILD_PRIVATE_RESERVE",
         targetEntityId: null,
         targetTileIndex: null,
         utility: 500,
@@ -48,6 +71,11 @@ function evidenceState(): SimulationState {
     causedByEventIds: [1],
     decisionRecordIds: [1],
     importance: 40,
+    attentionTier: "NOTABLE",
+    clusterKey: "test-share",
+    commandId: null,
+    commandOutcome: null,
+    commandRejectionReason: null,
     summary: `${actor.name} shared food with ${target.name}.`,
   });
   state.memories.push({
@@ -125,8 +153,10 @@ function evidenceState(): SimulationState {
 
 describe("causal evidence projection", () => {
   it("links an event to immediate causes, decisions, factors, actors, and targets", () => {
+    const state = evidenceState();
+    const target = state.creatures[1]!;
     const projection = createCausalEvidenceProjection(
-      evidenceState(),
+      state,
       { kind: "event", id: 2 },
       { maxDepth: 2 },
     );
@@ -170,12 +200,30 @@ describe("causal evidence projection", () => {
               key: "remembered-help",
               contribution: 300,
               evidence: [{ kind: "event", id: 1 }],
+              fact: {
+                kind: "MEMORY",
+                key: "remembered-help",
+                label: "Remembered help",
+                value: 1,
+                unit: "COUNT",
+                sourceEntityId: target.id,
+                sourceEventIds: [1],
+                capturedAtTick: 1,
+              },
             },
           ],
         }),
         expect.objectContaining({ action: "KEEP" }),
       ],
     });
+    if (decision?.detail.kind !== "decision") {
+      throw new Error("Missing decision evidence fixture.");
+    }
+    const projectedFact = decision.detail.candidates[0]?.factors[0]?.fact;
+    const capturedFact = state.decisionRecords.find((record) => record.id === 1)
+      ?.candidates[0]?.factors[0]?.fact;
+    expect(projectedFact).not.toBe(capturedFact);
+    expect(projectedFact?.sourceEventIds).not.toBe(capturedFact?.sourceEventIds);
   });
 
   it("provides reverse consequences and navigable memory/relationship evidence", () => {
@@ -184,6 +232,12 @@ describe("causal evidence projection", () => {
     expect(cause.laterConsequences).toEqual([{ kind: "event", id: 2 }]);
 
     const memory = createCausalEvidenceProjection(state, { kind: "memory", id: 1 });
+    const actor = state.creatures[0]!;
+    const target = state.creatures[1]!;
+    expect(memory.nodes.find((node) => node.ref.kind === "memory")).toMatchObject({
+      label: `${target.name} remembers receiving help involving ${actor.name}`,
+      summary: `This retained memory concerns ${actor.name}.`,
+    });
     expect(memory.edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ relation: "REMEMBERS", to: { kind: "event", id: 2 } }),
@@ -192,10 +246,30 @@ describe("causal evidence projection", () => {
       ]),
     );
 
+    const resource = state.resourceNodes[0]!;
+    const retainedMemory = state.memories.find((candidate) => candidate.id === 1)!;
+    retainedMemory.kind = "RESOURCE_FOUND";
+    retainedMemory.subjectEntityId = resource.id;
+    const resourceMemory = createCausalEvidenceProjection(state, {
+      kind: "memory",
+      id: 1,
+    });
+    const resourceLabel = createCausalEvidenceProjection(state, {
+      kind: "resource",
+      id: resource.id,
+    }).nodes.find((node) => node.ref.kind === "resource")?.label;
+    if (!resourceLabel) throw new Error("Missing resource evidence fixture.");
+    expect(resourceMemory.nodes.find((node) => node.ref.kind === "memory")?.label).toBe(
+      `${target.name} remembers finding a resource involving ${resourceLabel}`,
+    );
+
     const relationship = createCausalEvidenceProjection(
       state,
       { kind: "relationship", id: 1 },
       { maxDepth: 1 },
+    );
+    expect(relationship.nodes.find((node) => node.ref.kind === "relationship")?.label).toBe(
+      `Relationship from ${target.name} to ${actor.name}`,
     );
     expect(relationship.edges).toEqual(
       expect.arrayContaining([
@@ -223,6 +297,11 @@ describe("causal evidence projection", () => {
       causedByEventIds: [2],
       decisionRecordIds: [],
       importance: 20,
+      attentionTier: "NOTABLE",
+      clusterKey: "test-action",
+      commandId: null,
+      commandOutcome: null,
+      commandRejectionReason: null,
       summary: "Trust changed after the shared food.",
     });
     state.nextEventId = 4;
@@ -233,6 +312,31 @@ describe("causal evidence projection", () => {
     });
     expect(projection.immediateCauses).toEqual([{ kind: "event", id: 2 }]);
     expect(projection.laterConsequences).toEqual([{ kind: "event", id: 3 }]);
+  });
+
+  it("labels missing historical source events as explicit retention gaps", () => {
+    const state = evidenceState();
+    state.domainEvents = state.domainEvents.filter((event) => event.id !== 2);
+
+    const projection = createCausalEvidenceProjection(state, {
+      kind: "history",
+      id: 1,
+    });
+    expect(projection.missingRefs).toContainEqual({ kind: "event", id: 2 });
+    expect(projection.nodes).toContainEqual(
+      expect.objectContaining({
+        ref: { kind: "event", id: 2 },
+        label: "Source event no longer retained",
+        summary:
+          'A source event summarized by "Food was shared" is no longer retained in detail.',
+        detail: {
+          kind: "retention-gap",
+          missingKind: "event",
+          context: "HISTORY_SOURCE",
+          retainedHistoryId: 1,
+        },
+      }),
+    );
   });
 
   it("reports retained-reference gaps and bounded-query truncation factually", () => {
@@ -293,6 +397,25 @@ describe("causal evidence projection", () => {
         expect.objectContaining({ relation: "LOCATED_AT" }),
       ]),
     );
+    const structureNode = createCausalEvidenceProjection(state, {
+      kind: "structure",
+      id: structure.id,
+    }).nodes.find((node) => node.ref.kind === "structure");
+    expect(structureNode?.label).toBe("Evidence group's shared store");
+    expect(structureNode?.summary).not.toMatch(/group \d|tile \d+\./u);
+
+    const groupNode = createCausalEvidenceProjection(state, {
+      kind: "group",
+      id: 1,
+    }).nodes.find((node) => node.ref.kind === "group");
+    expect(groupNode?.label).toBe("Evidence group");
+    expect(groupNode?.summary).toContain(actor.name);
+
+    const resourceNode = createCausalEvidenceProjection(state, {
+      kind: "resource",
+      id: resource.id,
+    }).nodes.find((node) => node.ref.kind === "resource");
+    expect(resourceNode?.label).toMatch(/^Food patch at tile \d+, \d+$/u);
     expect(
       createCausalEvidenceProjection(state, { kind: "resource", id: resource.id }).edges,
     ).toEqual(

@@ -1,4 +1,13 @@
-import type { PlayerCommand } from "@tiny-civ/sim-core";
+import type {
+  CausalEvidenceProjectionV1,
+  CausalEvidenceQueryOptions,
+  CausalEvidenceRef,
+  ExperimentOutcomeComparisonV1,
+  ExperimentOutcomeV1,
+  PlayerCommand,
+  ScheduledPlayerCommand,
+  SimulationState,
+} from "@tiny-civ/sim-core";
 import type {
   RuntimeClientMessage,
   RuntimeOperation,
@@ -10,7 +19,12 @@ import type {
   LongRunningOperationOptions,
   ReplayResult,
   RunToTickResult,
+  RuntimeCanonicalHash,
+  RuntimeCheckpoint,
+  RuntimeEntityDetail,
+  RuntimeInterventionOutcomeProjection,
   RuntimeProgress,
+  RuntimeQueryOptions,
   RuntimeReplay,
   SimulationEngine,
   SimulationEngineListener,
@@ -181,6 +195,64 @@ export class WorkerSimulationEngine implements SimulationEngine {
     return this.request({ type: "get-frame" });
   }
 
+  getState(): Promise<SimulationState> {
+    return this.request({ type: "get-state" });
+  }
+
+  getCanonicalHash(options: RuntimeQueryOptions = {}): Promise<RuntimeCanonicalHash> {
+    return this.request<RuntimeCanonicalHash>({ type: "get-canonical-hash" }, options);
+  }
+
+  getCheckpoint(options: RuntimeQueryOptions = {}): Promise<RuntimeCheckpoint> {
+    return this.request<RuntimeCheckpoint>({ type: "get-checkpoint" }, options);
+  }
+
+  getCausalEvidence(
+    focus: CausalEvidenceRef,
+    query: CausalEvidenceQueryOptions = {},
+    options: RuntimeQueryOptions = {},
+  ): Promise<CausalEvidenceProjectionV1> {
+    return this.request<CausalEvidenceProjectionV1>(
+      {
+        type: "get-causal-evidence",
+        focus,
+        ...(Object.keys(query).length === 0 ? {} : { query }),
+      },
+      options,
+    );
+  }
+
+  getEntityDetail(
+    ref: CausalEvidenceRef,
+    options: RuntimeQueryOptions = {},
+  ): Promise<RuntimeEntityDetail> {
+    return this.request<RuntimeEntityDetail>({ type: "get-entity-detail", ref }, options);
+  }
+
+  getInterventionOutcomes(
+    commands: readonly ScheduledPlayerCommand[],
+    options: RuntimeQueryOptions = {},
+  ): Promise<readonly RuntimeInterventionOutcomeProjection[]> {
+    return this.request<readonly RuntimeInterventionOutcomeProjection[]>(
+      { type: "get-intervention-outcomes", commands: [...commands] },
+      options,
+    );
+  }
+
+  getOutcome(options: RuntimeQueryOptions = {}): Promise<ExperimentOutcomeV1> {
+    return this.request<ExperimentOutcomeV1>({ type: "get-outcome" }, options);
+  }
+
+  compareOutcome(
+    baseline: ExperimentOutcomeV1,
+    options: RuntimeQueryOptions = {},
+  ): Promise<ExperimentOutcomeComparisonV1> {
+    return this.request<ExperimentOutcomeComparisonV1>(
+      { type: "compare-outcome", baseline },
+      options,
+    );
+  }
+
   save(): Promise<string> {
     return this.request({ type: "save" });
   }
@@ -198,6 +270,9 @@ export class WorkerSimulationEngine implements SimulationEngine {
         type: "run-to-tick",
         targetTick,
         ...(options.chunkSize === undefined ? {} : { chunkSize: options.chunkSize }),
+        ...(options.captureTicks === undefined
+          ? {}
+          : { captureTicks: [...options.captureTicks] }),
       },
       options,
     );
@@ -212,6 +287,9 @@ export class WorkerSimulationEngine implements SimulationEngine {
         type: "replay",
         replay,
         ...(options.chunkSize === undefined ? {} : { chunkSize: options.chunkSize }),
+        ...(options.captureTicks === undefined
+          ? {}
+          : { captureTicks: [...options.captureTicks] }),
       },
       options,
     );

@@ -104,6 +104,8 @@ export function applyScheduledCommands(state: SimulationState): void {
         resourceKind: "FOOD",
         quantity: command.amount,
         importance: 55,
+        commandId: command.commandId,
+        commandOutcome: "APPLIED",
         summary: `The observer added ${command.amount} food units.`,
       });
       addHistory(
@@ -119,6 +121,7 @@ export function applyScheduledCommands(state: SimulationState): void {
     } else if (command.type === "REMOVE_FOOD") {
       let remaining = command.amount;
       let removed = 0;
+      const affectedNodeIds: number[] = [];
       for (const node of state.resourceNodes) {
         if (
           node.kind !== "FOOD" ||
@@ -131,13 +134,17 @@ export function applyScheduledCommands(state: SimulationState): void {
         node.currentStock -= quantity;
         remaining -= quantity;
         removed += quantity;
+        if (quantity > 0) affectedNodeIds.push(node.id);
       }
       const event = emitDomainEvent(state, {
         type: "PLAYER_REMOVED_FOOD",
+        targetIds: affectedNodeIds,
         locationTileIndex: command.tileIndex,
         resourceKind: "FOOD",
         quantity: removed,
         importance: 55,
+        commandId: command.commandId,
+        commandOutcome: "APPLIED",
         summary: `The observer removed ${removed} food units.`,
       });
       addHistory(
@@ -166,6 +173,9 @@ export function applyScheduledCommands(state: SimulationState): void {
           locationTileIndex: command.tileIndex,
           quantity: 0,
           importance: 20,
+          commandId: command.commandId,
+          commandOutcome: "REJECTED",
+          commandRejectionReason: "OCCUPIED_TILE",
           summary:
             "A barrier could not form on a tile occupied by a creature, resource, or structure.",
         });
@@ -191,6 +201,8 @@ export function applyScheduledCommands(state: SimulationState): void {
         locationTileIndex: command.tileIndex,
         quantity: nextBlocked ? 1 : 0,
         importance: 60,
+        commandId: command.commandId,
+        commandOutcome: "APPLIED",
         summary: `The observer ${nextBlocked ? "closed" : "opened"} a passage.`,
       });
       addHistory(

@@ -69,14 +69,71 @@ export type ActionKind =
 
 export type ActionPhase = "MOVING" | "WORKING";
 
+export type DesireKind =
+  | "RELIEVE_HUNGER"
+  | "RECOVER_ENERGY"
+  | "SECURE_PROVISIONS"
+  | "PRESERVE_PRIVATE_RESERVE"
+  | "BELONG"
+  | "RECIPROCATE_OR_REPAIR"
+  | "PROTECT_PERSON_OR_GROUP"
+  | "AVOID_THREAT"
+  | "COMPLETE_SHARED_WORK";
+
+export type PlanKind =
+  | "EAT_CARRIED_FOOD"
+  | "FORAGE_FOR_FOOD"
+  | "WITHDRAW_SHARED_FOOD"
+  | "REST_SAFELY"
+  | "BUILD_PRIVATE_RESERVE"
+  | "SHARE_WITH_OTHER"
+  | "CONTRIBUTE_TO_STORAGE"
+  | "JOIN_COMMUNITY"
+  | "GUARD_SHARED_ASSET"
+  | "CONFRONT_THREAT"
+  | "ESCAPE_THREAT"
+  | "COMPLETE_STORAGE"
+  | "EXPLORE_SURROUNDINGS"
+  | "TAKE_FOOD";
+
+export type ReasonFactKind =
+  | "NEED"
+  | "INVENTORY"
+  | "TRAIT"
+  | "ROLE"
+  | "GROUP"
+  | "MEMORY"
+  | "RELATIONSHIP"
+  | "RESOURCE"
+  | "STRUCTURE"
+  | "TRAVEL"
+  | "CROWDING"
+  | "INTERVENTION"
+  | "WORLD";
+
+/** A value captured at decision time. UI prose may format it but may not infer beyond it. */
+export interface ReasonFact {
+  kind: ReasonFactKind;
+  key: string;
+  label: string;
+  value: number | string | null;
+  unit: "UNIT" | "COUNT" | "TILES" | "TICKS" | "LABEL" | null;
+  sourceEntityId: EntityId | null;
+  sourceEventIds: number[];
+  capturedAtTick: Tick;
+}
+
 export interface UtilityFactor {
   key: string;
   contribution: number;
   evidenceEventIds: number[];
+  fact: ReasonFact | null;
 }
 
 export interface DecisionCandidate {
   action: ActionKind;
+  desire: DesireKind;
+  plan: PlanKind;
   targetEntityId: EntityId | null;
   targetTileIndex: number | null;
   utility: number;
@@ -97,9 +154,86 @@ export interface DecisionRecord {
   actorId: EntityId;
   previousAction: ActionKind | null;
   selectedAction: ActionKind;
+  selectedDesire: DesireKind;
+  selectedPlan: PlanKind;
   selectedTargetId: EntityId | null;
+  strongestReason: ReasonFact | null;
   switchReason: DecisionSwitchReason;
   candidates: DecisionCandidate[];
+}
+
+export interface ActiveDesire {
+  kind: DesireKind;
+  subjectEntityId: EntityId | null;
+  startedAtTick: Tick;
+  minimumCommitUntilTick: Tick;
+  nextReconsiderationTick: Tick;
+  strength: Unit;
+  selectedByDecisionId: number;
+}
+
+export type PlanStatus = "ACTIVE" | "BLOCKED" | "COMPLETED" | "ABANDONED";
+
+export type InteractionPurpose =
+  | "EXPLORE"
+  | "GATHER"
+  | "REST"
+  | "SOCIAL"
+  | "STORAGE_ACCESS"
+  | "CONSTRUCTION"
+  | "GUARD"
+  | "CONFLICT"
+  | "FLIGHT";
+
+export interface InteractionClaim {
+  anchorKind: "RESOURCE" | "STRUCTURE" | "GROUP_HOME" | "CREATURE" | "TILE";
+  anchorId: number;
+  purpose: InteractionPurpose;
+  slotIndex: number;
+  tileIndex: number;
+  targetX: FixedPosition;
+  targetY: FixedPosition;
+  claimedAtTick: Tick;
+}
+
+export interface ActivePlan {
+  kind: PlanKind;
+  desireKind: DesireKind;
+  targetEntityId: EntityId | null;
+  targetTileIndex: number | null;
+  startedAtTick: Tick;
+  status: PlanStatus;
+  selectedByDecisionId: number;
+  expectedUtility: number;
+  strongestReason: ReasonFact | null;
+  interactionClaim: InteractionClaim | null;
+}
+
+export interface IntentHistoryEntry {
+  tick: Tick;
+  desire: DesireKind;
+  plan: PlanKind;
+  status: PlanStatus;
+  reason: ReasonFact | null;
+}
+
+export interface RouteSample {
+  tick: Tick;
+  tileIndex: number;
+  x: FixedPosition;
+  y: FixedPosition;
+}
+
+export interface FactualSummaryClause {
+  text: string;
+  factRefs: ReasonFact[];
+}
+
+export interface CreatureObservationSummary {
+  desire: FactualSummaryClause;
+  plan: FactualSummaryClause;
+  action: FactualSummaryClause;
+  reason: FactualSummaryClause;
 }
 
 export interface ActiveGoal {
@@ -124,6 +258,7 @@ export interface ActiveAction {
   progress: Unit;
   workRequired: Unit;
   navigationRevision: number;
+  interactionClaim: InteractionClaim | null;
 }
 
 export type CreatureRole = "FORAGER" | "BUILDER" | "GUARD" | "LEADER" | "DRIFTER";
@@ -143,6 +278,8 @@ export interface CreatureState {
   inventory: Inventory;
   groupId: GroupId | null;
   role: CreatureRole;
+  activeDesire: ActiveDesire | null;
+  activePlan: ActivePlan | null;
   activeGoal: ActiveGoal | null;
   activeAction: ActiveAction | null;
   nextDecisionTick: Tick;
@@ -150,6 +287,8 @@ export interface CreatureState {
   lastActionTick: Tick;
   actionCounts: Record<ActionKind, number>;
   memoryIds: number[];
+  intentHistory: IntentHistoryEntry[];
+  recentRoute: RouteSample[];
 }
 
 export interface ResourceNode {
@@ -225,6 +364,9 @@ export type DomainEventType =
   | "PLAYER_ADDED_FOOD"
   | "PLAYER_REMOVED_FOOD"
   | "PLAYER_TOGGLED_OBSTACLE"
+  | "DESIRE_CHANGED"
+  | "PLAN_CHANGED"
+  | "PLAN_BLOCKED"
   | "ACTION_STARTED"
   | "FOOD_GATHERED"
   | "MATERIAL_GATHERED"
@@ -236,13 +378,23 @@ export type DomainEventType =
   | "FOOD_WITHDRAWN"
   | "MATERIAL_DEPOSITED"
   | "STORAGE_SITE_STARTED"
+  | "STORAGE_WORK_ADVANCED"
   | "STORAGE_COMPLETED"
+  | "THREAT_NOTICED"
+  | "CONFRONTATION_APPROACHED"
   | "CREATURE_ATTACKED"
+  | "CONFRONTATION_AFTERMATH"
   | "CREATURE_FLED"
   | "CREATURE_GUARDED"
   | "CREATURE_JOINED_GROUP"
   | "GROUP_FOUNDED"
   | "LEADER_SELECTED";
+
+export type AttentionTier = "ROUTINE" | "NOTABLE" | "SIGNIFICANT" | "CRITICAL";
+
+export type CommandOutcomeCode = "APPLIED" | "REJECTED";
+
+export type CommandRejectionReason = "OCCUPIED_TILE" | null;
 
 export interface DomainEvent {
   id: number;
@@ -257,6 +409,11 @@ export interface DomainEvent {
   causedByEventIds: number[];
   decisionRecordIds: number[];
   importance: number;
+  attentionTier: AttentionTier;
+  clusterKey: string;
+  commandId: number | null;
+  commandOutcome: CommandOutcomeCode | null;
+  commandRejectionReason: CommandRejectionReason;
   summary: string;
 }
 
@@ -291,6 +448,10 @@ export interface SimulationMetrics {
   storagesCompleted: number;
   playerInterventions: number;
   invalidPathFailures: number;
+  /** Claim attempts that encountered at least one occupied interaction slot. */
+  interactionContentions: number;
+  /** Required interaction claims that could not obtain any reachable slot. */
+  failedInteractionClaims: number;
 }
 
 export interface SimulationConfiguration {
@@ -300,6 +461,8 @@ export interface SimulationConfiguration {
   maxDecisionRecords: number;
   maxMemoriesPerCreature: number;
   maxRelationshipsPerCreature: number;
+  maxIntentHistoryPerCreature: number;
+  maxRouteSamplesPerCreature: number;
 }
 
 export interface SimulationState {
@@ -382,18 +545,30 @@ export interface RenderCreature {
   id: EntityId;
   name: string;
   color: number;
+  alive: boolean;
   x: number;
   y: number;
   tileIndex: number;
   health: Unit;
   hunger: Unit;
   fatigue: Unit;
-  food: number;
-  material: number;
   groupId: GroupId | null;
   role: CreatureRole;
+  traits: CreatureTraits;
+  skills: CreatureSkills;
+  inventory: Inventory;
+  desire: DesireKind | null;
+  plan: PlanKind | null;
   action: ActionKind | null;
+  actionPhase: ActionPhase | null;
   targetTileIndex: number | null;
+  destinationX: number | null;
+  destinationY: number | null;
+  recentRoute: Array<{ tick: Tick; x: number; y: number }>;
+  summary: CreatureObservationSummary;
+  latestDecision: DecisionRecord | null;
+  memories: EpisodicMemory[];
+  relationships: RelationshipEdge[];
 }
 
 export interface RenderResourceNode {
@@ -422,6 +597,7 @@ export interface RenderSnapshot {
   timeLabel: string;
   width: number;
   height: number;
+  navigationRevision: number;
   tiles: RenderTile[];
   creatures: RenderCreature[];
   resourceNodes: RenderResourceNode[];

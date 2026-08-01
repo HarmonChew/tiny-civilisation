@@ -656,6 +656,49 @@
   flex: 0 0 auto;
 }
 
+.intervention-preview {
+  display: grid;
+  gap: 7px;
+  padding: 11px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: rgba(255, 251, 239, 0.58);
+}
+
+.intervention-preview > strong {
+  font-family: var(--font-editorial);
+  font-size: 12px;
+}
+
+.intervention-preview dl,
+.intervention-preview p {
+  margin: 0;
+}
+
+.intervention-preview dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.intervention-preview dl > div {
+  display: grid;
+  gap: 2px;
+}
+
+.intervention-preview dt,
+.intervention-preview small {
+  color: var(--text-muted);
+  font-size: 8px;
+}
+
+.intervention-preview dd,
+.intervention-preview p {
+  margin: 0;
+  color: var(--text-default);
+  font-size: 9px;
+}
+
 .intervention-ledger,
 .bookmark-list,
 .causal-link-list,
@@ -670,12 +713,11 @@
   border-top: 1px solid var(--border-default);
 }
 
-.intervention-ledger li {
+.intervention-ledger > li {
   border-bottom: 1px solid var(--border-default);
 }
 
-.intervention-ledger li > button,
-.intervention-ledger li > div {
+.intervention-ledger__record {
   display: grid;
   width: 100%;
   grid-template-columns: 58px minmax(0, 1fr) auto;
@@ -687,7 +729,7 @@
   background: transparent;
 }
 
-.intervention-ledger li > button:hover {
+.intervention-ledger button.intervention-ledger__record:hover {
   background: rgba(255, 251, 239, 0.5);
 }
 
@@ -742,6 +784,82 @@
 
 .intervention-ledger__body small {
   white-space: normal;
+}
+
+.intervention-ledger__response,
+.intervention-ledger__responders {
+  display: grid;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.intervention-ledger__response {
+  padding-top: 5px;
+  border-top: 1px dotted var(--border-default);
+}
+
+.intervention-ledger__responders > span {
+  color: var(--text-default);
+  line-height: 1.35;
+}
+
+.intervention-ledger__navigation {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding: 0 0 9px 66px;
+}
+
+.intervention-ledger__navigation-label {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 7.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.intervention-ledger__navigation button {
+  display: grid;
+  min-width: 0;
+  grid-template-areas:
+    "kind icon"
+    "label icon";
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: center;
+  align-items: center;
+  gap: 2px 5px;
+  padding: 6px 8px;
+  text-align: left;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: rgba(255, 251, 239, 0.45);
+}
+
+.intervention-ledger__navigation button:hover {
+  border-color: var(--action-primary);
+  background: rgba(255, 251, 239, 0.8);
+}
+
+.intervention-ledger__navigation button > span {
+  grid-area: kind;
+  color: var(--text-muted);
+  font-size: 7px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.intervention-ledger__navigation button > strong {
+  overflow: hidden;
+  grid-area: label;
+  font-size: 8.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intervention-ledger__navigation button > svg {
+  grid-area: icon;
+  color: var(--action-primary);
 }
 
 .intervention-ledger time {
@@ -1370,13 +1488,16 @@
     padding: 15px 14px;
   }
 
-  .intervention-ledger li > button,
-  .intervention-ledger li > div {
+  .intervention-ledger__record {
     grid-template-columns: 58px minmax(0, 1fr);
   }
 
   .intervention-ledger time {
     grid-column: 2;
+  }
+
+  .intervention-ledger__navigation {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .comparison-table-wrap {
@@ -1458,6 +1579,7 @@
   }
 
   .coordinate-fields,
+  .intervention-preview dl,
   .decision-summary {
     grid-template-columns: 1fr;
   }
@@ -1482,10 +1604,12 @@
 @media (forced-colors: active) {
   .experiment-dialog,
   .experiment-drawer,
+  .intervention-preview,
   .experiment-button--primary,
   .experiment-button--danger,
   .experiment-section-nav button.is-active,
   .intervention-ledger__status,
+  .intervention-ledger__navigation button,
   .causal-link-list__kind,
   .factor-evidence-list__direction {
     border: 2px solid CanvasText;

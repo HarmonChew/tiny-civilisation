@@ -1,5 +1,12 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  INITIAL_WORLD_FOCUS_STATE,
+  creatureRef,
+  eventRef,
+  worldFocusReducer,
+  type WorldFocusState,
+} from "./focus";
 import type { WorldView } from "./model";
 
 const view = {
@@ -57,6 +64,8 @@ const view = {
       targetIds: [2],
       causedByEventIds: [4],
       importance: 0.5,
+      attentionTier: "ROUTINE",
+      clusterKey: "test-share",
       playerCaused: false,
       decisionActorId: 1,
     },
@@ -71,9 +80,20 @@ const view = {
       alive: true,
       groupId: 1,
       role: "Forager",
+      desire: "RECIPROCATE_OR_REPAIR",
+      plan: "SHARE_WITH_OTHER",
       goal: "SHARE",
       action: "MOVING",
+      actionPhase: "MOVING",
+      reason: "Recipient hunger",
+      summary: {
+        desire: "Iri wants to reciprocate or repair a bond.",
+        plan: "Iri plans to share with another creature.",
+        action: "Iri is sharing food.",
+        reason: "Iri is doing this because someone nearby is hungry.",
+      },
       goalTarget: { x: 2, y: 1 },
+      route: [],
       health: 92,
       hunger: 58,
       fatigue: 22,
@@ -85,6 +105,8 @@ const view = {
       candidates: [
         {
           action: "SHARE",
+          desire: "RECIPROCATE_OR_REPAIR",
+          plan: "SHARE_WITH_OTHER",
           targetId: 2,
           utility: 0.76,
           selected: true,
@@ -99,6 +121,8 @@ const view = {
         },
         {
           action: "KEEP",
+          desire: "PRESERVE_PRIVATE_RESERVE",
+          plan: "BUILD_PRIVATE_RESERVE",
           utility: 0.51,
           selected: false,
           factors: [],
@@ -136,8 +160,19 @@ const view = {
       alive: true,
       groupId: 1,
       role: "Drifter",
+      desire: "RELIEVE_HUNGER",
+      plan: "EAT_CARRIED_FOOD",
       goal: "EAT",
       action: "WORKING",
+      actionPhase: "WORKING",
+      reason: "Personal hunger",
+      summary: {
+        desire: "Nalo wants to find relief from hunger.",
+        plan: "Nalo plans to eat carried food.",
+        action: "Nalo is eating.",
+        reason: "Nalo is doing this because hunger is pressing.",
+      },
+      route: [],
       health: 84,
       hunger: 91,
       fatigue: 31,
@@ -153,6 +188,7 @@ const view = {
 vi.mock("./sim-adapter", () => ({
   ticksPerSecond: 10,
   makeWorldView: vi.fn(() => view),
+  makeWorldViewFromSnapshot: vi.fn(() => view),
 }));
 
 vi.mock("./components/PixiWorld", () => ({
@@ -182,7 +218,11 @@ vi.mock("./components/PixiWorld", () => ({
   ),
 }));
 
-import App from "./App";
+import App, {
+  replayCameraTargetForEvent,
+  restoreWorldFocusState,
+  worldFocusForCausalEvidence,
+} from "./App";
 
 describe("Tiny Civilisation workspace", () => {
   beforeEach(() => {
@@ -191,7 +231,7 @@ describe("Tiny Civilisation workspace", () => {
 
   it("shows a factual, inspectable simulation workspace", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
 
     expect(screen.getByText("Tiny Civilisation")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Living dish" })).toBeTruthy();
@@ -203,10 +243,24 @@ describe("Tiny Civilisation workspace", () => {
       }),
     );
     expect(screen.getByRole("heading", { name: "Iri" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Iri,/ }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
     expect(screen.getByText("Recipient hunger")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Food resource 30,/ }));
+    expect(
+      screen
+        .getByRole("button", { name: /^Food resource 30,/ })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(screen.getByText(/Food resource 30 at column 1, row 1/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Select Nalo in dish" }));
     expect(screen.getByRole("heading", { name: "Nalo" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /^Nalo,/ }).getAttribute("aria-pressed"),
+    ).toBe("true");
     fireEvent.click(
       screen.getByRole("button", {
         name: "A portion was shared. Inspect causal evidence.",
@@ -217,7 +271,7 @@ describe("Tiny Civilisation workspace", () => {
 
   it("supports stepping, selecting, following, and a condition-only intervention", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
     await screen.findByText("Observation paused");
 
     const stepButton = screen.getByRole("button", { name: /Advance one tick/ });
@@ -234,5 +288,91 @@ describe("Tiny Civilisation workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add food" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply active tool" }));
     expect(await screen.findByText(/Food addition of 12 units scheduled/)).toBeTruthy();
+  });
+
+  it("derives a stable replay camera target from factual event participants", () => {
+    expect(
+      replayCameraTargetForEvent({
+        ...view.events[0]!,
+        decisionActorId: 1,
+        actorIds: [1, 2],
+        targetIds: [30],
+        locationTileIndex: 5,
+      }),
+    ).toEqual({
+      eventId: 5,
+      subjectId: 1,
+      actorIds: [1, 2],
+      targetIds: [30],
+      locationTileIndex: 5,
+    });
+  });
+
+  it("restores selection, evidence, transient focus, and focus source exactly", () => {
+    const expected: WorldFocusState = {
+      selected: creatureRef(2),
+      evidenceFocus: eventRef(5),
+      hovered: creatureRef(1),
+      keyboardFocused: eventRef(4),
+      source: "CHRONICLE",
+    };
+    let restored: WorldFocusState = {
+      ...INITIAL_WORLD_FOCUS_STATE,
+      selected: creatureRef(8),
+      source: "MOMENT",
+    };
+
+    restoreWorldFocusState(expected, {
+      reset: () => {
+        restored = worldFocusReducer(restored, { type: "reset" });
+      },
+      select: (ref, source) => {
+        restored = worldFocusReducer(restored, { type: "select", ref, source });
+      },
+      inspectEvidence: (ref, subject, source) => {
+        restored = worldFocusReducer(restored, {
+          type: "inspect-evidence",
+          ref,
+          subject,
+          source,
+        });
+      },
+      setHovered: (ref, source) => {
+        restored = worldFocusReducer(restored, { type: "hover", ref, source });
+      },
+      setKeyboardFocused: (ref, source) => {
+        restored = worldFocusReducer(restored, {
+          type: "keyboard-focus",
+          ref,
+          source,
+        });
+      },
+    });
+
+    expect(restored).toEqual(expected);
+  });
+
+  it("synchronizes representable causal evidence with its spatial subject", () => {
+    expect(
+      worldFocusForCausalEvidence({ kind: "event", id: 5 }, view, creatureRef(2)),
+    ).toEqual({
+      evidenceFocus: eventRef(5),
+      selected: creatureRef(1),
+    });
+    expect(
+      worldFocusForCausalEvidence({ kind: "resource", id: 30 }, view, creatureRef(2)),
+    ).toEqual({
+      evidenceFocus: { kind: "resource", id: 30 },
+      selected: { kind: "resource", id: 30 },
+    });
+    expect(
+      worldFocusForCausalEvidence({ kind: "event", id: 999 }, view, creatureRef(2)),
+    ).toEqual({
+      evidenceFocus: eventRef(999),
+      selected: creatureRef(2),
+    });
+    expect(
+      worldFocusForCausalEvidence({ kind: "decision", id: 77 }, view, creatureRef(2)),
+    ).toBeNull();
   });
 });

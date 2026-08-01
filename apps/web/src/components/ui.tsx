@@ -76,6 +76,7 @@ export function Meter({
       <div
         className={`meter__track meter__track--${tone}`}
         role="progressbar"
+        aria-label={`${label}: ${Math.round(bounded)} percent`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(bounded)}

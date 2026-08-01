@@ -56,10 +56,14 @@ export interface UtilityFactorView {
   label: string;
   contribution: number;
   evidenceEventIds: number[];
+  factLabel?: string | undefined;
+  factValue?: number | string | undefined;
 }
 
 export interface CandidateView {
   action: string;
+  desire: string;
+  plan: string;
   targetId?: EntityId | undefined;
   utility: number;
   factors: UtilityFactorView[];
@@ -95,9 +99,21 @@ export interface CreatureView {
   alive: boolean;
   groupId?: EntityId | undefined;
   role: string;
+  desire: string;
+  plan: string;
   goal: string;
   action: string;
+  actionPhase: string;
+  reason: string;
+  summary: {
+    desire: string;
+    plan: string;
+    action: string;
+    reason: string;
+  };
   goalTarget?: Point | undefined;
+  route: Array<Point & { tick: number }>;
+  interactionSlot?: Point | undefined;
   health: number;
   hunger: number;
   fatigue: number;
@@ -127,10 +143,20 @@ export interface TimelineEventView {
   type: string;
   title: string;
   detail: string;
+  /** Plain factual reason retained with the linked authoritative decision. */
+  reason?: string | undefined;
   actorIds: EntityId[];
   targetIds: EntityId[];
   causedByEventIds: number[];
   importance: number;
+  attentionTier: "ROUTINE" | "NOTABLE" | "SIGNIFICANT" | "CRITICAL";
+  clusterKey: string;
+  locationTileIndex?: number | undefined;
+  commandId?: number | undefined;
+  /** Original domain-event ID when a command event is presented through history. */
+  commandSourceEventId?: number | undefined;
+  commandOutcome?: "APPLIED" | "REJECTED" | undefined;
+  commandRejectionReason?: "OCCUPIED_TILE" | undefined;
   playerCaused: boolean;
   decisionActorId?: EntityId | undefined;
   decisionCandidates?: CandidateView[] | undefined;
@@ -140,6 +166,8 @@ export interface WorldView {
   tick: number;
   timeLabel: string;
   hash: string;
+  /** Tick of the latest explicitly verified canonical hash. */
+  hashTick?: number | undefined;
   width: number;
   height: number;
   tiles: TileView[];

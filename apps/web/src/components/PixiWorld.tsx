@@ -1,5 +1,5 @@
 import { Application, Container } from "pixi.js";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   EntityId,
   InterventionTool,
@@ -8,18 +8,30 @@ import type {
   WorldAction,
   WorldView,
 } from "../model";
-import { screenToWorld, setTransform, tileAtPoint } from "./pixi/camera";
-import { drawWorld } from "./pixi/layers";
+import {
+  captureCameraViewport,
+  frameReplayCamera,
+  restoreCameraViewport,
+  screenToWorld,
+  setTransform,
+  tileAtPoint,
+  type CameraViewportSnapshot,
+  type ReplayCameraTarget,
+} from "./pixi/camera";
+import { drawInterventionPreview, drawWorld } from "./pixi/layers";
 import { createRenderLayers, type PixiRuntime } from "./pixi/runtime";
 
 interface PixiWorldProps {
   view: WorldView;
   selectedId: EntityId | null;
+  focusedId: EntityId | null;
   followedId: EntityId | null;
   tool: InterventionTool;
   overlays: OverlaySettings;
   mutationDisabled?: boolean;
+  replayCamera?: ReplayCameraTarget | null;
   onSelect: (id: EntityId | null) => void;
+  onHover: (id: EntityId | null) => void;
   onWorldAction: (action: WorldAction) => void;
 }
 
@@ -33,26 +45,38 @@ interface DragState {
   mayPan: boolean;
 }
 
+interface ReplayCameraSession {
+  readonly viewport: CameraViewportSnapshot;
+}
+
 export function PixiWorld({
   view,
   selectedId,
+  focusedId,
   followedId,
   tool,
   overlays,
   mutationDisabled = false,
+  replayCamera = null,
   onSelect,
+  onHover,
   onWorldAction,
 }: PixiWorldProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<PixiRuntime | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const replayCameraSessionRef = useRef<ReplayCameraSession | null>(null);
+  const hoveredCreatureIdRef = useRef<EntityId | null>(null);
   const propsRef = useRef({
     view,
     selectedId,
+    focusedId,
     followedId,
     tool,
     overlays,
+    replayCamera,
     onSelect,
+    onHover,
     onWorldAction,
   });
   const [hoveredTile, setHoveredTile] = useState<Point | null>(null);
@@ -61,12 +85,38 @@ export function PixiWorld({
   propsRef.current = {
     view,
     selectedId,
+    focusedId,
     followedId,
     tool,
     overlays,
+    replayCamera,
     onSelect,
+    onHover,
     onWorldAction,
   };
+
+  const updateCamera = useCallback(
+    (
+      runtime: PixiRuntime,
+      target: ReplayCameraTarget | null,
+      liveFollowedId: EntityId | null,
+    ) => {
+      if (target) {
+        replayCameraSessionRef.current ??= {
+          viewport: captureCameraViewport(runtime.viewport),
+        };
+        frameReplayCamera(runtime, target);
+        return;
+      }
+      const replaySession = replayCameraSessionRef.current;
+      replayCameraSessionRef.current = null;
+      if (replaySession) {
+        restoreCameraViewport(runtime.viewport, replaySession.viewport);
+      }
+      setTransform(runtime, liveFollowedId);
+    },
+    [],
+  );
 
   useEffect(() => {
     const host = hostRef.current;
@@ -102,6 +152,8 @@ export function PixiWorld({
           layers.intentions,
           layers.resources,
           layers.structures,
+          layers.interaction,
+          layers.interventionPreview,
           layers.creatures,
           layers.frame,
         );
@@ -123,14 +175,19 @@ export function PixiWorld({
           runtime,
           propsRef.current.selectedId,
           propsRef.current.followedId,
+          propsRef.current.focusedId,
           propsRef.current.overlays,
         );
-        setTransform(runtime, propsRef.current.followedId);
+        updateCamera(runtime, propsRef.current.replayCamera, propsRef.current.followedId);
 
         resizeObserver = new ResizeObserver(() => {
           requestAnimationFrame(() => {
             if (!runtimeRef.current) return;
-            setTransform(runtimeRef.current, propsRef.current.followedId);
+            updateCamera(
+              runtimeRef.current,
+              propsRef.current.replayCamera,
+              propsRef.current.followedId,
+            );
           });
         });
         resizeObserver.observe(host);
@@ -147,19 +204,48 @@ export function PixiWorld({
       resizeObserver?.disconnect();
       const runtime = runtimeRef.current;
       runtimeRef.current = null;
+      replayCameraSessionRef.current = null;
       runtime?.app.destroy(true, { children: true });
     };
-  }, []);
+  }, [updateCamera]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     runtime.view = view;
-    drawWorld(runtime, selectedId, followedId, overlays);
-    setTransform(runtime, followedId);
-  }, [view, selectedId, followedId, overlays]);
+    drawWorld(runtime, selectedId, followedId, focusedId, overlays);
+    updateCamera(runtime, replayCamera, followedId);
+  }, [view, selectedId, followedId, focusedId, overlays, replayCamera, updateCamera]);
+
+  useEffect(() => {
+    if (!replayCamera) return;
+    dragRef.current = null;
+    setHoveredTile(null);
+    if (hoveredCreatureIdRef.current !== null) {
+      hoveredCreatureIdRef.current = null;
+      onHover(null);
+    }
+  }, [onHover, replayCamera]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    const tile = hoveredTile
+      ? (runtime.view.tiles.find(
+          (candidate) => candidate.x === hoveredTile.x && candidate.y === hoveredTile.y,
+        ) ?? null)
+      : null;
+    drawInterventionPreview(runtime, tile ?? null, tool, mutationDisabled);
+  }, [hoveredTile, mutationDisabled, tool]);
+
+  const updateHoveredCreature = (id: EntityId | null) => {
+    if (hoveredCreatureIdRef.current === id) return;
+    hoveredCreatureIdRef.current = id;
+    onHover(id);
+  };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (replayCamera) return;
     if (event.button > 1) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = {
@@ -174,11 +260,29 @@ export function PixiWorld({
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (replayCamera) {
+      setHoveredTile(null);
+      updateHoveredCreature(null);
+      return;
+    }
     const runtime = runtimeRef.current;
     if (!runtime) return;
     const point = screenToWorld(runtime, event.clientX, event.clientY);
     const tile = tileAtPoint(runtime.view, point);
     setHoveredTile(tile ? { x: tile.x, y: tile.y } : null);
+    drawInterventionPreview(runtime, tile ?? null, tool, mutationDisabled);
+    if (tool === "inspect") {
+      const nearest = runtime.view.creatures
+        .filter((creature) => creature.alive)
+        .map((creature) => ({
+          id: creature.id,
+          distance: Math.hypot(creature.x - point.x, creature.y - point.y),
+        }))
+        .sort((left, right) => left.distance - right.distance || left.id - right.id)[0];
+      updateHoveredCreature(nearest && nearest.distance <= 0.9 ? nearest.id : null);
+    } else {
+      updateHoveredCreature(null);
+    }
 
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId || !drag.mayPan) return;
@@ -196,6 +300,10 @@ export function PixiWorld({
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (replayCamera) {
+      dragRef.current = null;
+      return;
+    }
     const runtime = runtimeRef.current;
     const drag = dragRef.current;
     dragRef.current = null;
@@ -217,11 +325,12 @@ export function PixiWorld({
         id: creature.id,
         distance: Math.hypot(creature.x - point.x, creature.y - point.y),
       }))
-      .sort((a, b) => a.distance - b.distance)[0];
+      .sort((a, b) => a.distance - b.distance || a.id - b.id)[0];
     onSelect(nearest && nearest.distance <= 0.9 ? nearest.id : null);
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (replayCamera) return;
     event.preventDefault();
     const runtime = runtimeRef.current;
     if (!runtime) return;
@@ -240,6 +349,7 @@ export function PixiWorld({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (replayCamera) return;
     const runtime = runtimeRef.current;
     if (!runtime) return;
     const panStep = 28;
@@ -279,18 +389,33 @@ export function PixiWorld({
   return (
     <div
       ref={hostRef}
-      className={`pixi-world pixi-world--${tool}`}
+      className={`pixi-world pixi-world--${tool}${replayCamera ? " is-replay-framed" : ""}`}
       role="application"
-      tabIndex={0}
-      aria-disabled={mutationDisabled && tool !== "inspect"}
-      aria-label="Living dish map. Click a creature to inspect it. Drag to pan, use the mouse wheel to zoom, or use arrow and plus or minus keys."
+      tabIndex={replayCamera ? -1 : 0}
+      aria-disabled={replayCamera !== null || (mutationDisabled && tool !== "inspect")}
+      aria-label={
+        replayCamera
+          ? "Living dish replay frame. Camera controls are locked until you return to the live world."
+          : "Living dish map. Click a creature to inspect it. Drag to pan, use the mouse wheel to zoom, or use arrow and plus or minus keys."
+      }
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={() => {
         dragRef.current = null;
+        if (runtimeRef.current) {
+          drawInterventionPreview(runtimeRef.current, null, tool, mutationDisabled);
+        }
+        setHoveredTile(null);
+        updateHoveredCreature(null);
       }}
-      onPointerLeave={() => setHoveredTile(null)}
+      onPointerLeave={() => {
+        if (runtimeRef.current) {
+          drawInterventionPreview(runtimeRef.current, null, tool, mutationDisabled);
+        }
+        setHoveredTile(null);
+        updateHoveredCreature(null);
+      }}
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
       onContextMenu={(event) => event.preventDefault()}

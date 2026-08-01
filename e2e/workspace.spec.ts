@@ -1,4 +1,100 @@
 import { expect, test, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+
+const STORY_SEED = 4_182;
+
+const STORY_SCENES = [
+  {
+    name: "tick-0",
+    tick: 0,
+    expectedHash: "36cba3187551d1ec",
+    subject: "Iri",
+    narrative: "The Petri world began with seed 4182.",
+    subjectState: "Iri is deciding what matters next.",
+  },
+  {
+    name: "settlement",
+    tick: 101,
+    expectedHash: "984779412c9b8214",
+    subject: "Iri",
+    narrative:
+      "Iri, Nalo, Aro, Meka, Pela, Sori formed the Riverhollow group around repeated sharing and sustained proximity.",
+    subjectState: "Iri wants to keep a private reserve.",
+  },
+  {
+    name: "construction",
+    tick: 198,
+    expectedHash: "3e1d0db353d3902b",
+    subject: "Iri",
+    narrative: "The Riverhollow group began a shared store.",
+    subjectState: "Iri is building the shared store.",
+  },
+  {
+    name: "theft",
+    tick: 392,
+    expectedHash: "3475da6616a31e6b",
+    subject: "Taro",
+    narrative: "Taro took food without permission.",
+    subjectState: "Taro plans to take food under pressure.",
+  },
+  {
+    name: "conflict",
+    tick: 486,
+    expectedHash: "24ed53b61eedad41",
+    subject: "Iri",
+    narrative: "Iri confronted Taro, but the blow missed.",
+    subjectState: "Iri plans to confront a threat.",
+  },
+  {
+    name: "aftermath",
+    tick: 817,
+    expectedHash: "45fa06a5e4c81fe1",
+    subject: "Taro",
+    narrative: "Pela replaced Iri as leader of Riverhollow.",
+    subjectState: "Taro plans to rest somewhere safe.",
+  },
+] as const;
+
+const STORY_VIEWPORTS = [
+  { name: "narrow", width: 390, height: 844 },
+  { name: "medium", width: 1024, height: 768 },
+  { name: "wide", width: 1440, height: 960 },
+] as const;
+
+type StoryScene = (typeof STORY_SCENES)[number];
+
+function storyExperimentBuffer(scene: StoryScene): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      kind: "tiny-civilisation/experiment",
+      schemaVersion: 2,
+      behaviorVersion: 2,
+      stateSchemaVersion: 2,
+      scenario: {
+        kind: "tiny-civilisation/scenario",
+        schemaVersion: 1,
+        behaviorVersion: 2,
+        scenarioId: "petri-world",
+        scenarioVersion: 1,
+        seed: STORY_SEED,
+      },
+      rootBranchId: "baseline",
+      branches: [
+        {
+          id: "baseline",
+          label: "Baseline",
+          parentBranchId: null,
+          forkTick: 0,
+          targetTick: scene.tick,
+          expectedHash: scene.expectedHash,
+          commandLog: [],
+        },
+      ],
+      bookmarks: [],
+      checkpoints: [],
+    }),
+  );
+}
 
 function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
@@ -9,7 +105,7 @@ function collectBrowserErrors(page: Page): string[] {
   return errors;
 }
 
-async function openPausedWorkspace(page: Page): Promise<void> {
+async function openPausedWorkspace(page: Page, useTouch = false): Promise<void> {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Living dish" })).toBeVisible();
 
@@ -18,13 +114,14 @@ async function openPausedWorkspace(page: Page): Promise<void> {
     await expect(setup.getByText(/opens paused at tick 0/i)).toBeVisible();
     const openPaused = setup.getByRole("button", { name: "Open paused at tick 0" });
     await expect(openPaused).toBeEnabled();
-    await openPaused.click();
+    if (useTouch) await openPaused.tap();
+    else await openPaused.click();
     await expect(setup).toBeHidden();
   }
 
   await expect(page.getByRole("button", { name: /Play simulation/ })).toBeVisible();
   await expect(page.getByRole("application", { name: /Living dish map/ })).toBeVisible();
-  await expect(page.locator(".status-rail__hash")).not.toContainText("pending");
+  await expect(page.getByLabel("Simulation status")).toContainText("Observation paused");
 }
 
 async function openNotebook(page: Page): Promise<void> {
@@ -37,11 +134,100 @@ async function closeNotebook(page: Page): Promise<void> {
   await expect(page.locator("aside.experiment-drawer")).toBeHidden();
 }
 
+async function expectNoPageOverflow(page: Page): Promise<void> {
+  const geometry = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth + 1);
+}
+
+async function waitForRenderedDish(page: Page): Promise<void> {
+  const canvas = page.locator("canvas.world-canvas");
+  await expect(canvas).toBeVisible();
+  await expect
+    .poll(async () =>
+      canvas.evaluate((element) => {
+        const rendered = element as HTMLCanvasElement;
+        return rendered.width > 0 && rendered.height > 0;
+      }),
+    )
+    .toBe(true);
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+  });
+}
+
+async function showRegion(page: Page, name: "Chronicle" | "Dish" | "Subject") {
+  const tab = page.getByRole("button", { name, exact: true });
+  if (await tab.isVisible()) await tab.click();
+}
+
+async function selectStorySubject(
+  page: Page,
+  subject: StoryScene["subject"],
+): Promise<void> {
+  const navigator = page.getByRole("list", { name: "All in spatial order" });
+  if (!(await navigator.isVisible())) await showRegion(page, "Chronicle");
+  await expect(navigator).toBeVisible();
+  const subjectButton = navigator.getByRole("button", {
+    name: new RegExp(`^${subject},`),
+  });
+  await expect(subjectButton).toBeVisible();
+  await subjectButton.click();
+  await showRegion(page, "Dish");
+  await expect(page.getByRole("application", { name: /Living dish map/ })).toBeVisible();
+  await expect(page.locator(".dish-subject-label strong")).toHaveText(subject);
+}
+
+async function loadStoryScene(page: Page, scene: StoryScene): Promise<void> {
+  await openPausedWorkspace(page);
+  if (scene.tick > 0) {
+    await openNotebook(page);
+    await page.getByLabel("Import experiment file").setInputFiles({
+      name: `phase-2.5-${scene.name}.tinyciv.json`,
+      mimeType: "application/json",
+      buffer: storyExperimentBuffer(scene),
+    });
+    await expect(
+      page.getByText(`Imported seed ${STORY_SEED} at tick ${scene.tick}.`),
+    ).toBeVisible({ timeout: 15_000 });
+    await closeNotebook(page);
+  }
+
+  await expect(page.getByLabel("Simulation status")).toContainText("Observation paused");
+  await expect(page.getByText(scene.narrative, { exact: true }).first()).toBeAttached();
+  await selectStorySubject(page, scene.subject);
+  await expect(page.getByText(scene.subjectState, { exact: false }).first()).toBeAttached();
+  await waitForRenderedDish(page);
+}
+
+async function applyTextResize(page: Page, scale: number): Promise<void> {
+  await page.evaluate((requestedScale) => {
+    const candidates = [...document.body.querySelectorAll("*")].reverse();
+    for (const candidate of candidates) {
+      if (!(candidate instanceof HTMLElement)) continue;
+      const hasDirectText = [...candidate.childNodes].some(
+        (node) => node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim()),
+      );
+      const isTextControl = candidate.matches("input, select, textarea");
+      if (!hasDirectText && !isTextControl) continue;
+      const size = Number.parseFloat(getComputedStyle(candidate).fontSize);
+      if (!Number.isFinite(size) || size <= 0) continue;
+      candidate.style.setProperty("font-size", `${size * requestedScale}px`, "important");
+    }
+  }, scale);
+}
+
 async function replayCurrentBranch(
   page: Page,
   expectedStatusHash: string,
 ): Promise<string> {
-  await page.getByRole("button", { name: "Replay", exact: true }).click();
+  const experimentDrawer = page.locator("aside.experiment-drawer");
+  await experimentDrawer.getByRole("button", { name: "Replay", exact: true }).click();
   const replayPanel = page.locator("section.replay-sheet");
   await replayPanel.getByRole("button", { name: "Replay to target" }).click();
   await expect(replayPanel.getByText("Hash matches expected replay")).toBeVisible();
@@ -60,10 +246,10 @@ test("runs the real Worker, renderer, observation controls, and causal trail", a
   const browserErrors = collectBrowserErrors(page);
   await openPausedWorkspace(page);
 
-  const hash = page.locator(".status-rail__hash");
-  const openingHash = await hash.innerText();
   await page.getByRole("button", { name: /Advance one tick/ }).click();
-  await expect.poll(() => hash.innerText()).not.toBe(openingHash);
+  await openNotebook(page);
+  await expect(page.locator(".experiment-drawer__header p")).toContainText("tick 1");
+  await closeNotebook(page);
 
   await page.getByRole("button", { name: "Add food" }).click();
   const dish = page.getByRole("application", { name: /Living dish map/ });
@@ -76,13 +262,16 @@ test("runs the real Worker, renderer, observation controls, and causal trail", a
   await expect(page.getByText(/Food addition of 12 units scheduled at/)).toBeVisible();
   await page.getByRole("button", { name: /Advance one tick/ }).click();
   await page.getByRole("button", { name: "You", exact: true }).click();
-  await expect(page.getByText("Food appeared", { exact: true })).toBeVisible();
+  const foodEvent = page.getByRole("button", {
+    name: /Food appeared\. Inspect causal evidence\./,
+  });
+  await expect(foodEvent).toBeVisible();
 
   await dish.focus();
   await dish.press("ArrowRight");
   await dish.press("+");
   await dish.press("Home");
-  await page.getByText("Food appeared", { exact: true }).click();
+  await foodEvent.click();
   await expect(page.getByRole("heading", { name: "Causal explorer" })).toBeVisible();
   await expect(page.getByText(/Food appeared/).first()).toBeVisible();
 
@@ -96,12 +285,13 @@ test("creates, preserves, replays, compares, exports, imports, and explains an e
   const browserErrors = collectBrowserErrors(page);
   await openPausedWorkspace(page);
   await expect(page.getByLabel("Simulation status")).toContainText("Observation paused");
-  const openingHash = await page.locator(".status-rail__hash").innerText();
   await openNotebook(page);
 
   await page.getByPlaceholder("Before food condition").fill("Opening baseline");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByText("Opening baseline", { exact: true })).toBeVisible();
+  const openingHash = await page.locator(".status-rail__hash").innerText();
+  expect(openingHash).not.toContain("pending");
   await expect(
     page.getByText("Baseline bookmarked and an intervention branch opened."),
   ).toBeVisible();
@@ -128,10 +318,8 @@ test("creates, preserves, replays, compares, exports, imports, and explains an e
 
   await closeNotebook(page);
   await page.getByRole("button", { name: /Advance one tick/ }).click();
-  await expect
-    .poll(() => page.locator(".status-rail__hash").innerText())
-    .not.toBe(savedHash);
   await openNotebook(page);
+  await expect(page.locator(".experiment-drawer__header p")).toContainText("tick 3");
   await expect(page.locator(".experiment-save-state")).toHaveText("Unsaved");
   await page.getByRole("button", { name: "Load saved" }).click();
   const loadConfirmation = page.getByRole("dialog", {
@@ -210,21 +398,190 @@ test("rejects a malformed experiment without changing the active run", async ({ 
   expect(browserErrors).toEqual([]);
 });
 
-for (const viewport of [
-  { name: "narrow", width: 390, height: 844 },
-  { name: "medium", width: 1024, height: 768 },
-  { name: "wide", width: 1440, height: 960 },
-] as const) {
-  test(`${viewport.name} workspace visual`, async ({ page }) => {
-    const browserErrors = collectBrowserErrors(page);
-    await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await openPausedWorkspace(page);
-    if (viewport.name === "narrow") {
-      await page.getByRole("button", { name: "Dish", exact: true }).click();
-    }
-    await expect(page).toHaveScreenshot(`${viewport.name}-workspace.png`, {
-      fullPage: true,
-    });
-    expect(browserErrors).toEqual([]);
+test("has no automatically detectable accessibility violations in the primary flow", async ({
+  page,
+}) => {
+  const browserErrors = collectBrowserErrors(page);
+  await openPausedWorkspace(page);
+
+  const navigator = page.getByRole("list", { name: "All in spatial order" });
+  const firstSubject = navigator.getByRole("button").first();
+  await firstSubject.focus();
+  await firstSubject.press("ArrowDown");
+  await page.locator(".world-navigator__item:focus").press("Enter");
+  await expect(page.getByRole("heading", { name: /.+/ }).last()).toBeVisible();
+
+  const accessibility = await new AxeBuilder({ page }).analyze();
+  expect(
+    accessibility.violations.map((violation) => ({
+      id: violation.id,
+      impact: violation.impact,
+      help: violation.help,
+      targets: violation.nodes.flatMap((node) => node.target),
+    })),
+  ).toEqual([]);
+  expect(browserErrors).toEqual([]);
+});
+
+test("keeps controls and textual state available with reduced motion and forced colors", async ({
+  page,
+}) => {
+  const browserErrors = collectBrowserErrors(page);
+  await page.emulateMedia({ reducedMotion: "reduce", forcedColors: "active" });
+  await page.setViewportSize({ width: 512, height: 768 });
+  await openPausedWorkspace(page);
+
+  await expect(page.getByRole("button", { name: "Dish", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Chronicle", exact: true }).click();
+  await expect(page.getByRole("list", { name: "All in spatial order" })).toBeVisible();
+  await page.getByRole("button", { name: "Dish", exact: true }).click();
+  await expect(page.getByRole("application", { name: /Living dish map/ })).toBeVisible();
+  await expect(page.locator(".world-attention-announcer")).toHaveCount(1);
+  expect(browserErrors).toEqual([]);
+});
+
+test("supports the primary flow with true touch input", async ({ browser }, testInfo) => {
+  const context = await browser.newContext({
+    baseURL: testInfo.project.use.baseURL,
+    viewport: { width: 390, height: 844 },
+    screen: { width: 390, height: 844 },
+    deviceScaleFactor: 1,
+    hasTouch: true,
+    isMobile: true,
   });
+  const page = await context.newPage();
+  const browserErrors = collectBrowserErrors(page);
+
+  try {
+    await openPausedWorkspace(page, true);
+    expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+
+    await page.getByRole("button", { name: "Chronicle", exact: true }).tap();
+    const navigator = page.getByRole("list", { name: "All in spatial order" });
+    await expect(navigator).toBeVisible();
+    await navigator.getByRole("button", { name: /^Iri,/ }).tap();
+    await page.getByRole("button", { name: "Subject", exact: true }).tap();
+    await expect(
+      page.locator(".workspace-panel--inspector.is-mobile-active"),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Dish", exact: true }).tap();
+    await page.getByRole("button", { name: "Add food" }).tap();
+    const dish = page.getByRole("application", { name: /Living dish map/ });
+    const bounds = await dish.boundingBox();
+    expect(bounds).not.toBeNull();
+    if (!bounds) throw new Error("The touch dish had no rendered bounds.");
+    const target = {
+      x: bounds.x + bounds.width * 0.35,
+      y: bounds.y + bounds.height * 0.4,
+    };
+    const feedback = page.locator(".feedback-line");
+    const feedbackBeforeCancel = await feedback.innerText();
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ ...target, id: 1, radiusX: 5, radiusY: 5, force: 1 }],
+    });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [
+        { x: target.x + 24, y: target.y + 12, id: 1, radiusX: 5, radiusY: 5, force: 1 },
+      ],
+    });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchCancel",
+      touchPoints: [],
+    });
+    await cdp.detach();
+    await expect(feedback).toHaveText(feedbackBeforeCancel);
+    await expect(page.getByText(/Food addition of 12 units scheduled at/)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Add food" })).toBeEnabled();
+
+    await page.touchscreen.tap(target.x, target.y);
+    await expect(page.getByText(/Food addition of 12 units scheduled at/)).toBeVisible();
+    await page.getByRole("button", { name: /Advance one tick/ }).tap();
+
+    await page.getByRole("button", { name: "Chronicle", exact: true }).tap();
+    await page.getByRole("button", { name: "You", exact: true }).tap();
+    await page
+      .getByRole("button", { name: /Food appeared\. Inspect causal evidence\./ })
+      .tap();
+    await expect(page.getByRole("heading", { name: "Causal explorer" })).toBeVisible();
+    await expectNoPageOverflow(page);
+    expect(browserErrors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test("keeps the region workflow usable with text resized to 200%", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await openPausedWorkspace(page);
+  await applyTextResize(page, 2);
+
+  const regionTab = page.getByRole("button", { name: "Chronicle", exact: true });
+  await expect(regionTab).toBeVisible();
+  expect(
+    await regionTab.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).fontSize),
+    ),
+  ).toBeGreaterThanOrEqual(20);
+  await expectNoPageOverflow(page);
+
+  const navigator = page.getByRole("list", { name: "All in spatial order" });
+  await navigator.getByRole("button", { name: /^Iri,/ }).click();
+  await showRegion(page, "Subject");
+  await expect(page.locator(".workspace-panel--inspector.is-mobile-active")).toBeVisible();
+  await showRegion(page, "Dish");
+  await waitForRenderedDish(page);
+  await page.getByRole("button", { name: "Open experiment notebook" }).click();
+  await expect(page.locator("aside.experiment-drawer")).toBeVisible();
+  await closeNotebook(page);
+  await expectNoPageOverflow(page);
+  expect(browserErrors).toEqual([]);
+});
+
+test("keeps the primary regions usable at 400% effective zoom", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  // A 360 CSS-pixel viewport is the reflow width of a 1440-pixel viewport at 400%.
+  await page.setViewportSize({ width: 360, height: 640 });
+  await openPausedWorkspace(page);
+  expect(await page.evaluate(() => matchMedia("(max-width: 900px)").matches)).toBe(true);
+  await expectNoPageOverflow(page);
+
+  await showRegion(page, "Chronicle");
+  const navigator = page.getByRole("list", { name: "All in spatial order" });
+  await expect(navigator).toBeVisible();
+  await navigator.getByRole("button", { name: /^Iri,/ }).click();
+  await showRegion(page, "Subject");
+  await expect(page.locator(".workspace-panel--inspector.is-mobile-active")).toBeVisible();
+  await showRegion(page, "Dish");
+  await waitForRenderedDish(page);
+  await page.getByRole("button", { name: "Open experiment notebook" }).click();
+  await expect(page.locator("aside.experiment-drawer")).toBeVisible();
+  await closeNotebook(page);
+  await expectNoPageOverflow(page);
+  expect(browserErrors).toEqual([]);
+});
+
+for (const scene of STORY_SCENES) {
+  for (const viewport of STORY_VIEWPORTS) {
+    test(`${scene.name} story at ${viewport.name} viewport`, async ({ page }) => {
+      const browserErrors = collectBrowserErrors(page);
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await loadStoryScene(page, scene);
+      await expectNoPageOverflow(page);
+
+      const dishBounds = await page
+        .getByRole("application", { name: /Living dish map/ })
+        .boundingBox();
+      expect(dishBounds?.width).toBeGreaterThan(240);
+      await expect(page).toHaveScreenshot(`${scene.name}-${viewport.name}.png`, {
+        fullPage: true,
+      });
+      expect(browserErrors).toEqual([]);
+    });
+  }
 }

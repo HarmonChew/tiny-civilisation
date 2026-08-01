@@ -1,5 +1,6 @@
 import { applyScheduledCommands } from "./commands.js";
 import { executeActiveActions, runScheduledDecisions } from "./actions/runtime.js";
+import { beginEventRetentionContext, endEventRetentionContext } from "./events.js";
 import { updateGroups } from "./groups.js";
 import { updateProximityRelationships } from "./social.js";
 import {
@@ -25,9 +26,11 @@ export const AUTHORITATIVE_TICK_PIPELINE = [
 
 export function advanceSimulation(state: SimulationState, ticks = 1): SimulationState {
   const tickCount = Math.max(0, Math.floor(ticks));
-  for (let iteration = 0; iteration < tickCount; iteration += 1) {
-    beginTickContext(state);
-    try {
+  if (tickCount === 0) return state;
+  beginTickContext(state);
+  beginEventRetentionContext(state);
+  try {
+    for (let iteration = 0; iteration < tickCount; iteration += 1) {
       applyScheduledCommands(state);
       updateNeeds(state);
       regenerateResources(state);
@@ -38,9 +41,10 @@ export function advanceSimulation(state: SimulationState, ticks = 1): Simulation
       maintainBoundedSocialState(state);
       validateAuthoritativeInvariants(state);
       state.tick += 1;
-    } finally {
-      endTickContext(state);
     }
+  } finally {
+    endEventRetentionContext(state);
+    endTickContext(state);
   }
   return state;
 }

@@ -6,8 +6,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "start": "tsx src/index.ts",
     "batch": "tsx src/index.ts batch",
+    "profile": "tsx src/index.ts profile",
     "benchmark": "tsx src/benchmark.ts"
   },
   "dependencies": {

@@ -1,0 +1,217 @@
+.creature-roster {
+  padding: 18px;
+  border-bottom: 1px solid var(--border-strong);
+  background:
+    linear-gradient(rgba(255, 250, 235, 0.22), rgba(255, 250, 235, 0.06)),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 27px,
+      rgba(55, 63, 53, 0.035) 28px
+    );
+}
+
+.creature-roster__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.creature-roster__heading h2 {
+  margin: 3px 0 0;
+  font-family: var(--font-editorial);
+  font-size: 19px;
+  line-height: 1.2;
+}
+
+.creature-roster__count {
+  display: grid;
+  min-width: 30px;
+  height: 30px;
+  place-items: center;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 50%;
+  font-family: var(--font-number);
+  font-size: 9px;
+}
+
+.creature-roster__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border-default);
+  list-style: none;
+}
+
+.creature-roster__list li {
+  min-width: 0;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.creature-roster__item {
+  display: grid;
+  width: 100%;
+  min-height: 66px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 8px 6px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+
+.creature-roster__item:hover,
+.creature-roster__item:focus-visible {
+  background: rgba(255, 251, 239, 0.52);
+}
+
+.creature-roster__item.is-selected {
+  background: rgba(79, 103, 70, 0.1);
+  box-shadow: inset 3px 0 var(--action-primary);
+}
+
+.creature-roster__identity {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: var(--text-primary);
+  border: 3px double var(--border-strong);
+  border-radius: 50% 44% 50% 42%;
+  background: var(--surface-paper-strong);
+  font-family: var(--font-editorial);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.creature-roster__body,
+.creature-roster__intent,
+.creature-roster__facts {
+  display: grid;
+  min-width: 0;
+}
+
+.creature-roster__body {
+  gap: 4px;
+}
+
+.creature-roster__name-line {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.creature-roster__name-line strong {
+  overflow: hidden;
+  font-family: var(--font-editorial);
+  font-size: 12.5px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.creature-roster__name-line > span {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 7.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.creature-roster__intent {
+  gap: 1px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.creature-roster__intent b {
+  display: inline-block;
+  min-width: 28px;
+  color: var(--text-muted);
+  font-size: 7px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.creature-roster__facts {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  color: var(--text-muted);
+  font-size: 8px;
+}
+
+.creature-roster__facts > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.creature-roster__facts svg {
+  flex: 0 0 auto;
+}
+
+.creature-roster__alert {
+  width: fit-content;
+  margin-top: 2px;
+  padding: 2px 5px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  font-weight: 750;
+}
+
+.creature-roster__alert.is-danger,
+.creature-roster__alert.is-warning {
+  color: #7a4436;
+  border-color: rgba(189, 96, 76, 0.58);
+}
+
+.creature-roster__alert.is-watch {
+  color: #72582e;
+  border-color: rgba(169, 130, 67, 0.62);
+}
+
+.creature-roster__help {
+  margin: 9px 0 0;
+  color: var(--text-muted);
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+@media (max-width: 1180px) {
+  .creature-roster {
+    padding: 15px;
+  }
+}
+
+@media (min-width: 521px) and (max-width: 900px) {
+  .creature-roster__list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-left: 1px solid var(--border-default);
+  }
+
+  .creature-roster__list li {
+    border-right: 1px solid var(--border-default);
+  }
+}
+
+@media (forced-colors: active) {
+  .creature-roster__item.is-selected,
+  .creature-roster__identity,
+  .creature-roster__alert {
+    border: 2px solid CanvasText;
+  }
+
+  .creature-roster__item.is-selected {
+    box-shadow: inset 4px 0 CanvasText;
+  }
+}

@@ -6,6 +6,7 @@ import {
   ExperimentDrawer,
   ExperimentSetupDialog,
   InterventionComposer,
+  InterventionLedger,
   NewExperimentDialog,
   ReplayPanel,
 } from "./ExperimentWorkspace";
@@ -14,6 +15,7 @@ import type {
   ComparisonState,
   ExperimentDrawerProps,
   InterventionComposerProps,
+  InterventionNavigationAction,
   ReplayState,
 } from "./ExperimentWorkspace";
 
@@ -219,6 +221,7 @@ describe("experiment workspace components", () => {
     const onVisit = vi.fn();
     const onRemove = vi.fn();
     const onSelectIntervention = vi.fn();
+    const onNavigateIntervention = vi.fn();
     const composer = composerProps();
 
     const props: ExperimentDrawerProps = {
@@ -247,6 +250,13 @@ describe("experiment workspace components", () => {
           quantity: 3,
           status: "applied",
           detail: "Resolved as food patch #72.",
+          navigationActions: [
+            {
+              id: "condition-1-evidence",
+              label: "Command outcome event",
+              target: { kind: "raw-evidence", ref: { kind: "event", id: 72 } },
+            },
+          ],
         },
         {
           id: "condition-2",
@@ -288,6 +298,7 @@ describe("experiment workspace components", () => {
       onSectionChange: vi.fn(),
       onClose,
       onSelectIntervention,
+      onNavigateIntervention,
     };
 
     const { rerender } = render(<ExperimentDrawer {...props} />);
@@ -312,6 +323,15 @@ describe("experiment workspace components", () => {
     expect(screen.getByText(/blocked at the apply tick/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Add material/i }));
     expect(onSelectIntervention).toHaveBeenCalledWith("condition-2");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Command outcome event \(raw evidence\) for Add food at tick 180/,
+      }),
+    );
+    expect(onNavigateIntervention).toHaveBeenCalledWith(
+      "condition-1",
+      props.interventions[0]?.navigationActions?.[0],
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     fireEvent.click(screen.getByRole("button", { name: "Visit bookmark Before food" }));
@@ -376,6 +396,177 @@ describe("experiment workspace components", () => {
     const submit = screen.getByRole("button", { name: "Apply Mark tile" });
     expect(submit.getAttribute("disabled")).not.toBeNull();
     expect(screen.getByRole("alert").textContent).toContain("inside the dish");
+  });
+
+  it("previews the exact intervention mechanics without forecasting behavior", () => {
+    render(
+      <InterventionComposer
+        {...composerProps()}
+        toolId="mark-tile"
+        preview={{
+          target: "tile 2, 1",
+          applyTick: 84,
+          category: "Navigation",
+          mechanicalChange: "Close the target passage if the occupancy check permits it.",
+        }}
+      />,
+    );
+
+    const preview = screen.getByRole("complementary", {
+      name: "Intervention preview",
+    });
+    expect(preview.textContent).toContain("tile 2, 1");
+    expect(preview.textContent).toContain("84");
+    expect(preview.textContent).toContain("Navigation");
+    expect(preview.textContent).toContain("does not forecast an outcome");
+  });
+
+  it("shows bounded, factual participant response evidence in the ledger", () => {
+    render(
+      <InterventionLedger
+        interventions={[
+          {
+            id: "branch-command-1",
+            tick: 10,
+            label: "Food added",
+            target: "tile 2, 1",
+            status: "applied",
+            response: {
+              phase: "closed",
+              window: "Ticks 10–130; observed through 130.",
+              summary:
+                "1 participant has recorded response evidence; 1 has no recorded response in this window.",
+              participantLines: [
+                "Iri: noticed, acted — A completed event was linked to the command event.",
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/Response window/).textContent).toContain("closed");
+    expect(screen.getByText(/Ticks 10/).textContent).toContain("130");
+    expect(screen.getByText(/Iri: noticed, acted/)).toBeTruthy();
+  });
+
+  it("offers typed linked views without nesting actions or changing record selection", () => {
+    const navigationActions: readonly InterventionNavigationAction[] = [
+      {
+        id: "raw-command-event",
+        label: "Command outcome event",
+        target: { kind: "raw-evidence", ref: { kind: "event", id: 91 } },
+      },
+      {
+        id: "affected-tile",
+        label: "Tile 2, 1",
+        target: { kind: "location", tileIndex: 50 },
+      },
+      {
+        id: "responder-iri",
+        label: "Iri",
+        target: { kind: "responding-creature", creatureId: 1 },
+      },
+      {
+        id: "later-decision",
+        label: "Iri reconsidered sharing",
+        target: { kind: "linked-evidence", ref: { kind: "decision", id: 120 } },
+      },
+      {
+        id: "later-moment",
+        label: "Food was shared",
+        target: { kind: "linked-moment", eventId: 124 },
+      },
+      {
+        id: "comparison",
+        label: "Compare outcomes",
+        target: { kind: "comparison", branchId: "food-branch" },
+      },
+      {
+        id: "branch-replay",
+        label: "Replay food branch",
+        target: { kind: "branch-replay", branchId: "food-branch" },
+      },
+    ];
+    const onSelect = vi.fn();
+    const onNavigate = vi.fn();
+    const { container } = render(
+      <InterventionLedger
+        interventions={[
+          {
+            id: "branch-command-1",
+            tick: 10,
+            label: "Food added",
+            target: "tile 2, 1",
+            status: "applied",
+            navigationActions,
+          },
+        ]}
+        onSelect={onSelect}
+        onNavigate={onNavigate}
+      />,
+    );
+
+    const linkedViews = screen.getByRole("group", {
+      name: "Linked views for Food added at tick 10",
+    });
+    expect(within(linkedViews).getAllByRole("button")).toHaveLength(7);
+    expect(container.querySelector("button button")).toBeNull();
+
+    for (const action of navigationActions) {
+      const button = within(linkedViews).getByText(action.label).closest("button");
+      if (!button) throw new Error(`Navigation action ${action.id} is not a button.`);
+      fireEvent.click(button);
+    }
+    expect(onNavigate.mock.calls).toEqual(
+      navigationActions.map((action) => ["branch-command-1", action]),
+    );
+    expect(onSelect).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Open intervention record 1.*applied.*Food added.*tile 2, 1.*tick 10/i,
+      }),
+    );
+    expect(onSelect).toHaveBeenCalledWith("branch-command-1");
+    expect(within(linkedViews).getByText("Affected location")).toBeTruthy();
+    expect(within(linkedViews).getByText("Responding creature")).toBeTruthy();
+    expect(within(linkedViews).getByText("Later evidence")).toBeTruthy();
+    expect(within(linkedViews).getByText("Later moment")).toBeTruthy();
+    expect(within(linkedViews).getByText("Comparison")).toBeTruthy();
+    expect(within(linkedViews).getByText("Branch replay")).toBeTruthy();
+  });
+
+  it("keeps pending and evidence-free records factual but non-interactive", () => {
+    const onSelect = vi.fn();
+    render(
+      <InterventionLedger
+        interventions={[
+          {
+            id: "branch-command-1",
+            tick: 10,
+            label: "Food added",
+            target: "tile 2, 1",
+            status: "pending",
+          },
+          {
+            id: "branch-command-2",
+            tick: 11,
+            label: "Passage opened",
+            target: "tile 4, 3",
+            status: "applied",
+            selectable: false,
+            detail: "Applied without retained command evidence.",
+          },
+        ]}
+        onSelect={onSelect}
+      />,
+    );
+
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByText("pending")).toBeTruthy();
+    expect(screen.getByText("Applied without retained command evidence.")).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it("announces replay progress and a hash mismatch with a safe cancel path", () => {

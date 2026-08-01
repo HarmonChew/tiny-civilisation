@@ -1,5 +1,13 @@
 import { Graphics } from "pixi.js";
-import type { EntityId, OverlaySettings, TileView } from "../../model";
+import type {
+  CreatureView,
+  EntityId,
+  InterventionTool,
+  OverlaySettings,
+  Point,
+  TileView,
+} from "../../model";
+import { drawCreatureMark } from "./creature-marks";
 import {
   GROUP_COLORS,
   PALETTE,
@@ -7,6 +15,8 @@ import {
   safeCreatureColor,
   type PixiRuntime,
 } from "./runtime";
+import { actionFamily } from "./visual-grammar";
+import { drawResourceMark, drawStructureMark } from "./world-marks";
 
 const terrainColor = (tile: TileView): number => {
   if (/WATER/i.test(tile.terrain)) return PALETTE.shallowWater;
@@ -14,10 +24,109 @@ const terrainColor = (tile: TileView): number => {
   return (tile.x + tile.y) % 2 === 0 ? PALETTE.ground : PALETTE.groundAlternate;
 };
 
+const drawRoute = (graphics: Graphics, creature: CreatureView): void => {
+  const samples = creature.route;
+  if (samples.length === 0) return;
+  const first = samples[0];
+  if (!first) return;
+
+  graphics.moveTo(first.x, first.y);
+  for (let index = 1; index < samples.length; index += 1) {
+    const sample = samples[index];
+    if (sample) graphics.lineTo(sample.x, sample.y);
+  }
+  graphics.lineTo(creature.x, creature.y).stroke({
+    color: PALETTE.selected,
+    width: 0.095,
+    alpha: 0.72,
+  });
+
+  const sampleStep = Math.max(1, Math.ceil(samples.length / 6));
+  for (let index = 0; index < samples.length; index += sampleStep) {
+    const sample = samples[index];
+    if (sample)
+      graphics
+        .circle(sample.x, sample.y, 0.065)
+        .fill({ color: PALETTE.paper, alpha: 0.72 });
+  }
+};
+
+const drawDestination = (graphics: Graphics, point: Point): void => {
+  graphics
+    .circle(point.x, point.y, 0.31)
+    .stroke({ color: PALETTE.selected, width: 0.085, alpha: 0.95 })
+    .moveTo(point.x - 0.43, point.y)
+    .lineTo(point.x - 0.18, point.y)
+    .moveTo(point.x + 0.18, point.y)
+    .lineTo(point.x + 0.43, point.y)
+    .moveTo(point.x, point.y - 0.43)
+    .lineTo(point.x, point.y - 0.18)
+    .moveTo(point.x, point.y + 0.18)
+    .lineTo(point.x, point.y + 0.43)
+    .stroke({ color: PALETTE.selected, width: 0.065, alpha: 0.88 });
+};
+
+const drawInteractionSlot = (graphics: Graphics, point: Point): void => {
+  graphics
+    .rect(point.x - 0.25, point.y - 0.25, 0.5, 0.5)
+    .stroke({ color: PALETTE.action, width: 0.07, alpha: 0.98 })
+    .moveTo(point.x - 0.34, point.y - 0.34)
+    .lineTo(point.x - 0.18, point.y - 0.34)
+    .moveTo(point.x - 0.34, point.y - 0.34)
+    .lineTo(point.x - 0.34, point.y - 0.18)
+    .moveTo(point.x + 0.34, point.y + 0.34)
+    .lineTo(point.x + 0.18, point.y + 0.34)
+    .moveTo(point.x + 0.34, point.y + 0.34)
+    .lineTo(point.x + 0.34, point.y + 0.18)
+    .stroke({ color: PALETTE.action, width: 0.055, alpha: 0.82 });
+};
+
+export function drawInterventionPreview(
+  runtime: PixiRuntime,
+  tile: TileView | null,
+  tool: InterventionTool,
+  disabled: boolean,
+): void {
+  const graphics = runtime.layers.interventionPreview;
+  graphics.clear();
+  if (!tile || tool === "inspect") return;
+  const color =
+    disabled || tool === "remove-food" || (tool === "obstacle" && !tile.blocked)
+      ? PALETTE.danger
+      : PALETTE.action;
+  graphics
+    .rect(tile.x + 0.08, tile.y + 0.08, 0.84, 0.84)
+    .fill({ color, alpha: disabled ? 0.08 : 0.2 })
+    .stroke({ color, width: 0.1, alpha: 1 });
+  if (tool === "obstacle") {
+    graphics
+      .moveTo(tile.x + 0.24, tile.y + 0.24)
+      .lineTo(tile.x + 0.76, tile.y + 0.76)
+      .moveTo(tile.x + 0.76, tile.y + 0.24)
+      .lineTo(tile.x + 0.24, tile.y + 0.76)
+      .stroke({ color, width: 0.09, alpha: 1 });
+  }
+}
+
+const drawGuardPost = (graphics: Graphics, point: Point): void => {
+  graphics
+    .circle(point.x, point.y, 0.43)
+    .stroke({ color: PALETTE.action, width: 0.055, alpha: 0.52 })
+    .moveTo(point.x, point.y - 0.2)
+    .lineTo(point.x + 0.15, point.y - 0.11)
+    .lineTo(point.x + 0.11, point.y + 0.11)
+    .lineTo(point.x, point.y + 0.21)
+    .lineTo(point.x - 0.11, point.y + 0.11)
+    .lineTo(point.x - 0.15, point.y - 0.11)
+    .closePath()
+    .stroke({ color: PALETTE.paper, width: 0.05, alpha: 0.72 });
+};
+
 export const drawWorld = (
   runtime: PixiRuntime,
   selectedId: EntityId | null,
   followedId: EntityId | null,
+  focusedId: EntityId | null,
   overlays: OverlaySettings,
 ) => {
   const { layers, view } = runtime;
@@ -68,18 +177,7 @@ export const drawWorld = (
       runtime.resourceMarks.set(resource.id, mark);
       layers.resources.addChild(mark);
     }
-    const ratio = resource.capacity > 0 ? resource.stock / resource.capacity : 0;
-    const color = /FOOD/i.test(resource.kind) ? PALETTE.food : PALETTE.material;
-    mark
-      .clear()
-      .circle(0, 0, 0.2 + Math.max(0, Math.min(1, ratio)) * 0.18)
-      .fill({ color, alpha: overlays.resources ? 0.98 : 0.58 })
-      .circle(-0.18, -0.12, 0.11)
-      .fill({ color, alpha: overlays.resources ? 0.76 : 0.34 })
-      .circle(0.17, -0.15, 0.1)
-      .fill({ color, alpha: overlays.resources ? 0.76 : 0.34 });
-    mark.position.set(resource.x + 0.5, resource.y + 0.5);
-    mark.visible = resource.stock > 0;
+    drawResourceMark(mark, resource, overlays.resources);
   }
   removeMissingMarks(runtime.resourceMarks, resourceIds);
 
@@ -92,43 +190,49 @@ export const drawWorld = (
       runtime.structureMarks.set(structure.id, mark);
       layers.structures.addChild(mark);
     }
-    const completed = structure.progress >= 99;
-    mark
-      .clear()
-      .rect(-0.46, -0.4, 0.92, 0.8)
-      .fill({ color: completed ? PALETTE.storage : PALETTE.material, alpha: 0.95 })
-      .stroke({ color: PALETTE.ink, width: 0.1 })
-      .moveTo(-0.33, -0.4)
-      .lineTo(0, -0.64)
-      .lineTo(0.33, -0.4)
-      .stroke({ color: PALETTE.ink, width: 0.12 });
-    if (!completed) {
-      mark
-        .rect(-0.42, 0.48, 0.84, 0.09)
-        .fill({ color: PALETTE.ink, alpha: 0.55 })
-        .rect(-0.42, 0.48, 0.84 * (structure.progress / 100), 0.09)
-        .fill({ color: PALETTE.storage });
-    }
-    mark.position.set(structure.x + 0.5, structure.y + 0.5);
+    drawStructureMark(mark, structure);
   }
   removeMissingMarks(runtime.structureMarks, structureIds);
 
   layers.intentions.clear();
-  if (overlays.intentions) {
-    for (const creature of view.creatures) {
-      if (!creature.alive || !creature.goalTarget) continue;
-      const selected = creature.id === selectedId;
-      layers.intentions
-        .moveTo(creature.x, creature.y)
-        .lineTo(creature.goalTarget.x, creature.goalTarget.y)
-        .stroke({
-          color: selected
+  for (const creature of view.creatures) {
+    if (!creature.alive) continue;
+    const selected = creature.id === selectedId;
+    const focused = creature.id === focusedId;
+
+    if (selected) drawRoute(layers.intentions, creature);
+    if (!creature.goalTarget || (!overlays.intentions && !selected)) continue;
+    layers.intentions
+      .moveTo(creature.x, creature.y)
+      .lineTo(creature.goalTarget.x, creature.goalTarget.y)
+      .stroke({
+        color:
+          selected || focused
             ? PALETTE.selected
             : safeCreatureColor(creature.color, creature.groupId),
-          width: selected ? 0.13 : 0.055,
-          alpha: selected ? 0.9 : 0.28,
-        });
+        width: selected ? 0.12 : focused ? 0.09 : 0.055,
+        alpha: selected ? 0.86 : focused ? 0.68 : 0.28,
+      });
+  }
+
+  layers.interaction.clear();
+  for (const creature of view.creatures) {
+    if (
+      creature.alive &&
+      creature.interactionSlot &&
+      actionFamily(creature.action, creature.actionPhase) === "guard"
+    ) {
+      drawGuardPost(layers.interaction, creature.interactionSlot);
     }
+  }
+  const selectedCreature = view.creatures.find(
+    (creature) => creature.id === selectedId && creature.alive,
+  );
+  if (selectedCreature?.goalTarget) {
+    drawDestination(layers.interaction, selectedCreature.goalTarget);
+  }
+  if (selectedCreature?.interactionSlot) {
+    drawInteractionSlot(layers.interaction, selectedCreature.interactionSlot);
   }
 
   const creatureIds = new Set<number>();
@@ -140,41 +244,11 @@ export const drawWorld = (
       runtime.creatureMarks.set(creature.id, mark);
       layers.creatures.addChild(mark);
     }
-    const color = safeCreatureColor(creature.color, creature.groupId);
-    const selected = creature.id === selectedId;
-    const followed = creature.id === followedId;
-    const health = Math.max(0, Math.min(1, creature.health / 100));
-    mark.clear();
-    if (followed) {
-      mark.circle(0, 0, 0.67).stroke({
-        color: PALETTE.selected,
-        width: 0.08,
-        alpha: 0.45,
-      });
-    }
-    if (selected) {
-      mark
-        .circle(0, 0, 0.52)
-        .fill({ color: PALETTE.selected, alpha: 0.18 })
-        .stroke({ color: PALETTE.selected, width: 0.12 });
-    }
-    mark
-      .circle(0, 0, 0.33)
-      .fill({ color, alpha: creature.alive ? 1 : 0.35 })
-      .stroke({ color: PALETTE.ink, width: 0.09 })
-      .arc(0, 0, 0.4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * health)
-      .stroke({
-        color: health < 0.35 ? PALETTE.danger : PALETTE.frame,
-        width: 0.07,
-        alpha: 0.9,
-      });
-    if (creature.groupId !== undefined) {
-      mark.circle(0.25, -0.25, 0.1).fill({
-        color: GROUP_COLORS[creature.groupId % GROUP_COLORS.length] ?? GROUP_COLORS[0]!,
-      });
-    }
-    mark.position.set(creature.x, creature.y);
-    mark.visible = creature.alive;
+    drawCreatureMark(mark, creature, {
+      selected: creature.id === selectedId,
+      focused: creature.id === focusedId,
+      followed: creature.id === followedId,
+    });
   }
   removeMissingMarks(runtime.creatureMarks, creatureIds);
 };

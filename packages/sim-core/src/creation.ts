@@ -40,6 +40,8 @@ export function createSimulation(seed = 4_182): SimulationState {
       storagesCompleted: 0,
       playerInterventions: 0,
       invalidPathFailures: 0,
+      interactionContentions: 0,
+      failedInteractionClaims: 0,
     },
     configuration: {
       ticksPerSecond: TICKS_PER_SECOND,
@@ -48,6 +50,8 @@ export function createSimulation(seed = 4_182): SimulationState {
       maxDecisionRecords: 512,
       maxMemoriesPerCreature: 48,
       maxRelationshipsPerCreature: 32,
+      maxIntentHistoryPerCreature: 32,
+      maxRouteSamplesPerCreature: 24,
     },
   };
   populateInitialWorld(state);

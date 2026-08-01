@@ -27,7 +27,10 @@ function CandidateRow({ candidate, rank }: { candidate: CandidateView; rank: num
       <summary>
         <span className="candidate__rank">{rank + 1}</span>
         <span className="candidate__name">
-          {humanize(candidate.action)}
+          <strong>{humanize(candidate.action)}</strong>
+          <small>
+            {humanize(candidate.desire)} → {humanize(candidate.plan)}
+          </small>
           {candidate.selected ? <em>chosen</em> : null}
         </span>
         <span className="candidate__score number">{formatScore(candidate.utility)}</span>
@@ -42,7 +45,12 @@ function CandidateRow({ candidate, rank }: { candidate: CandidateView; rank: num
             {positives.map((factor, index) => (
               <div className="factor factor--positive" key={`${factor.key}-p-${index}`}>
                 <span aria-hidden="true">+</span>
-                <span>{factor.label}</span>
+                <span>
+                  {factor.factLabel ?? factor.label}
+                  {factor.factValue === undefined ? null : (
+                    <small>retained value {factor.factValue}</small>
+                  )}
+                </span>
                 <strong className="number">
                   {formatScore(Math.abs(factor.contribution))}
                 </strong>
@@ -51,7 +59,12 @@ function CandidateRow({ candidate, rank }: { candidate: CandidateView; rank: num
             {negatives.map((factor, index) => (
               <div className="factor factor--negative" key={`${factor.key}-n-${index}`}>
                 <span aria-hidden="true">−</span>
-                <span>{factor.label}</span>
+                <span>
+                  {factor.factLabel ?? factor.label}
+                  {factor.factValue === undefined ? null : (
+                    <small>retained value {factor.factValue}</small>
+                  )}
+                </span>
                 <strong className="number">
                   {formatScore(Math.abs(factor.contribution))}
                 </strong>
@@ -183,10 +196,24 @@ export function InspectorPanel({
             onClick={onFollow}
           />
         </div>
-        <div className="current-intention">
-          <span>Current intention</span>
-          <strong>{humanize(creature.goal)}</strong>
-          <em>{humanize(creature.action)}</em>
+        <div className="subject-summary" aria-label={`${creature.name} current summary`}>
+          <span className="eyebrow">Current intent</span>
+          <dl>
+            <div>
+              <dt>Desire</dt>
+              <dd>{creature.summary.desire}</dd>
+            </div>
+            <div>
+              <dt>Plan / action</dt>
+              <dd>
+                {creature.summary.plan} {creature.summary.action}
+              </dd>
+            </div>
+            <div>
+              <dt>Reason</dt>
+              <dd>{creature.summary.reason}</dd>
+            </div>
+          </dl>
         </div>
         <div className="vitals-grid">
           <Meter label="Health" value={creature.health} tone="moss" />

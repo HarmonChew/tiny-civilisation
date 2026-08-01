@@ -23,6 +23,20 @@ function serializeError(error: unknown): SerializedRuntimeError {
   return { name: "Error", message: String(error) };
 }
 
+function isCancellableOperation(operation: RuntimeOperation): boolean {
+  return (
+    operation.type === "run-to-tick" ||
+    operation.type === "replay" ||
+    operation.type === "get-canonical-hash" ||
+    operation.type === "get-checkpoint" ||
+    operation.type === "get-causal-evidence" ||
+    operation.type === "get-entity-detail" ||
+    operation.type === "get-intervention-outcomes" ||
+    operation.type === "get-outcome" ||
+    operation.type === "compare-outcome"
+  );
+}
+
 export class SimulationWorkerServer {
   private readonly activeOperations = new Map<number, AbortController>();
   private readonly cancelledRequests = new Set<number>();
@@ -52,7 +66,7 @@ export class SimulationWorkerServer {
       this.runtime.noteRequest(requestId);
     }
     const controller = new AbortController();
-    if (operation.type === "run-to-tick" || operation.type === "replay") {
+    if (isCancellableOperation(operation)) {
       this.activeOperations.set(requestId, controller);
       if (this.cancelledRequests.has(requestId)) controller.abort();
     }
@@ -97,6 +111,24 @@ export class SimulationWorkerServer {
         return this.runtime.intervene(operation.command);
       case "get-frame":
         return this.runtime.getFrame();
+      case "get-state":
+        return this.runtime.getState();
+      case "get-canonical-hash":
+        return this.runtime.getCanonicalHash({ signal });
+      case "get-checkpoint":
+        return this.runtime.getCheckpoint({ signal });
+      case "get-causal-evidence":
+        return this.runtime.getCausalEvidence(operation.focus, operation.query, {
+          signal,
+        });
+      case "get-entity-detail":
+        return this.runtime.getEntityDetail(operation.ref, { signal });
+      case "get-intervention-outcomes":
+        return this.runtime.getInterventionOutcomes(operation.commands, { signal });
+      case "get-outcome":
+        return this.runtime.getOutcome({ signal });
+      case "compare-outcome":
+        return this.runtime.compareOutcome(operation.baseline, { signal });
       case "save":
         return this.runtime.save();
       case "load":
@@ -105,6 +137,9 @@ export class SimulationWorkerServer {
         return this.runtime.runToTick(operation.targetTick, {
           signal,
           ...(operation.chunkSize === undefined ? {} : { chunkSize: operation.chunkSize }),
+          ...(operation.captureTicks === undefined
+            ? {}
+            : { captureTicks: operation.captureTicks }),
           onProgress: (progress) =>
             this.port.postMessage({
               kind: "tiny-civilisation/runtime-progress",
@@ -116,6 +151,9 @@ export class SimulationWorkerServer {
         return this.runtime.replay(operation.replay, {
           signal,
           ...(operation.chunkSize === undefined ? {} : { chunkSize: operation.chunkSize }),
+          ...(operation.captureTicks === undefined
+            ? {}
+            : { captureTicks: operation.captureTicks }),
           onProgress: (progress) =>
             this.port.postMessage({
               kind: "tiny-civilisation/runtime-progress",

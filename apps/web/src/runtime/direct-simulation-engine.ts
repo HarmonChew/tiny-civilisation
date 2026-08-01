@@ -1,10 +1,23 @@
-import type { PlayerCommand } from "@tiny-civ/sim-core";
+import type {
+  CausalEvidenceQueryOptions,
+  CausalEvidenceRef,
+  ExperimentOutcomeComparisonV1,
+  ExperimentOutcomeV1,
+  PlayerCommand,
+  ScheduledPlayerCommand,
+  SimulationState,
+} from "@tiny-civ/sim-core";
 import { CoreSimulationRuntime } from "./core-simulation-runtime";
 import type {
   InterventionAcknowledgement,
   LongRunningOperationOptions,
   ReplayResult,
   RunToTickResult,
+  RuntimeCanonicalHash,
+  RuntimeCheckpoint,
+  RuntimeEntityDetail,
+  RuntimeInterventionOutcomeProjection,
+  RuntimeQueryOptions,
   RuntimeReplay,
   SimulationEngine,
   SimulationEngineListener,
@@ -65,6 +78,51 @@ export class DirectSimulationEngine implements SimulationEngine {
 
   getFrame(): Promise<SimulationFrame> {
     return this.perform(() => this.runtime.getFrame());
+  }
+
+  getState(): Promise<SimulationState> {
+    return this.perform(() => this.runtime.getState());
+  }
+
+  getCanonicalHash(options: RuntimeQueryOptions = {}): Promise<RuntimeCanonicalHash> {
+    return this.perform(() => this.runtime.getCanonicalHash(options));
+  }
+
+  getCheckpoint(options: RuntimeQueryOptions = {}): Promise<RuntimeCheckpoint> {
+    return this.perform(() => this.runtime.getCheckpoint(options));
+  }
+
+  getCausalEvidence(
+    focus: CausalEvidenceRef,
+    query: CausalEvidenceQueryOptions = {},
+    options: RuntimeQueryOptions = {},
+  ) {
+    return this.perform(() => this.runtime.getCausalEvidence(focus, query, options));
+  }
+
+  getEntityDetail(
+    ref: CausalEvidenceRef,
+    options: RuntimeQueryOptions = {},
+  ): Promise<RuntimeEntityDetail> {
+    return this.perform(() => this.runtime.getEntityDetail(ref, options));
+  }
+
+  getInterventionOutcomes(
+    commands: readonly ScheduledPlayerCommand[],
+    options: RuntimeQueryOptions = {},
+  ): Promise<readonly RuntimeInterventionOutcomeProjection[]> {
+    return this.perform(() => this.runtime.getInterventionOutcomes(commands, options));
+  }
+
+  getOutcome(options: RuntimeQueryOptions = {}): Promise<ExperimentOutcomeV1> {
+    return this.perform(() => this.runtime.getOutcome(options));
+  }
+
+  compareOutcome(
+    baseline: ExperimentOutcomeV1,
+    options: RuntimeQueryOptions = {},
+  ): Promise<ExperimentOutcomeComparisonV1> {
+    return this.perform(() => this.runtime.compareOutcome(baseline, options));
   }
 
   save(): Promise<string> {

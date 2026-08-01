@@ -1,4 +1,13 @@
-import type { SimulationReplayV1, SimulationState } from "@tiny-civ/sim-core";
+import type {
+  CausalEvidenceProjectionV1,
+  CausalEvidenceQueryOptions,
+  CausalEvidenceRef,
+  ExperimentOutcomeComparisonV1,
+  ExperimentOutcomeV1,
+  ScheduledPlayerCommand,
+  SimulationReplayV1,
+  SimulationState,
+} from "@tiny-civ/sim-core";
 import {
   useCallback,
   useEffect,
@@ -14,10 +23,15 @@ import {
   type LongRunningOperationOptions,
   type ReplayResult,
   type RunToTickResult,
+  type RuntimeCanonicalHash,
+  type RuntimeCheckpoint,
+  type RuntimeEntityDetail,
+  type RuntimeInterventionOutcomeProjection,
+  type RuntimeQueryOptions,
   type SimulationEngine,
   type SimulationFrame,
 } from "../runtime";
-import { makeWorldView, ticksPerSecond } from "../sim-adapter";
+import { makeWorldViewFromSnapshot, ticksPerSecond } from "../sim-adapter";
 
 export type SimulationSpeed = 1 | 2 | 4;
 
@@ -48,6 +62,7 @@ export interface SimulationController {
   speed: SimulationSpeed;
   setSpeed: Dispatch<SetStateAction<SimulationSpeed>>;
   feedback: string;
+  pause: () => Promise<WorldView | null>;
   advance: (ticks: number) => Promise<WorldView | null>;
   restart: (seed?: number) => Promise<WorldView | null>;
   applyIntervention: (
@@ -55,7 +70,27 @@ export interface SimulationController {
     tile: TileView,
     amount?: number,
   ) => Promise<InterventionAcknowledgement | null>;
-  getState: () => SimulationState | null;
+  getState: () => Promise<SimulationState | null>;
+  getCanonicalHash: (options?: RuntimeQueryOptions) => Promise<RuntimeCanonicalHash | null>;
+  getCheckpoint: (options?: RuntimeQueryOptions) => Promise<RuntimeCheckpoint | null>;
+  getCausalEvidence: (
+    focus: CausalEvidenceRef,
+    query?: CausalEvidenceQueryOptions,
+    options?: RuntimeQueryOptions,
+  ) => Promise<CausalEvidenceProjectionV1 | null>;
+  getEntityDetail: (
+    ref: CausalEvidenceRef,
+    options?: RuntimeQueryOptions,
+  ) => Promise<RuntimeEntityDetail | null>;
+  getInterventionOutcomes: (
+    commands: readonly ScheduledPlayerCommand[],
+    options?: RuntimeQueryOptions,
+  ) => Promise<readonly RuntimeInterventionOutcomeProjection[] | null>;
+  getOutcome: (options?: RuntimeQueryOptions) => Promise<ExperimentOutcomeV1 | null>;
+  compareOutcome: (
+    baseline: ExperimentOutcomeV1,
+    options?: RuntimeQueryOptions,
+  ) => Promise<ExperimentOutcomeComparisonV1 | null>;
   save: () => Promise<string>;
   load: (serialized: string) => Promise<WorldView>;
   runToTick: (
@@ -72,16 +107,13 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-function stateFromFrame(frame: SimulationFrame): SimulationState {
-  return frame.state as unknown as SimulationState;
-}
-
 export function useSimulationController(initialSeed = 4_182): SimulationController {
   const engineRef = useRef<SimulationEngine | null>(null);
   if (!engineRef.current) engineRef.current = createSimulationEngine();
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
-  const frameRef = useRef<SimulationFrame | null>(null);
+  const retainedTilesRef = useRef<readonly TileView[]>([]);
+  const verifiedHashRef = useRef<RuntimeCanonicalHash | null>(null);
   const mountedRef = useRef(true);
   const advanceInFlightRef = useRef(false);
   const [view, setView] = useState<WorldView>(EMPTY_VIEW);
@@ -96,8 +128,17 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
   );
 
   const applyFrame = useCallback((frame: SimulationFrame): WorldView => {
-    frameRef.current = frame;
-    const nextView = makeWorldView(stateFromFrame(frame));
+    if (frame.hash !== null) {
+      verifiedHashRef.current = { tick: frame.tick, hash: frame.hash };
+    }
+    const verifiedHash = verifiedHashRef.current;
+    const nextView = makeWorldViewFromSnapshot(
+      frame.snapshot,
+      verifiedHash?.hash ?? null,
+      retainedTilesRef.current,
+      verifiedHash?.tick ?? null,
+    );
+    if (frame.snapshot.tiles.length > 0) retainedTilesRef.current = nextView.tiles;
     if (mountedRef.current) {
       setView(nextView);
       setSeed(frame.seed);
@@ -206,6 +247,19 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
     [applyFrame, fail],
   );
 
+  const pause = useCallback(async (): Promise<WorldView | null> => {
+    const engine = engineRef.current;
+    if (!engine) return null;
+    setPlaying(false);
+    try {
+      const frame = await engine.pause();
+      return applyFrame(frame);
+    } catch (error) {
+      fail(error, "Pause failed.");
+      return null;
+    }
+  }, [applyFrame, fail]);
+
   const restart = useCallback(
     async (nextSeed = seed): Promise<WorldView | null> => {
       let engine = engineRef.current;
@@ -226,6 +280,7 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
         setBusy(true);
         setPlaying(false);
         const frame = await engine.create(nextSeed >>> 0);
+        verifiedHashRef.current = null;
         const nextView = applyFrame(frame);
         setFeedback(
           `Seed ${frame.seed} is ready at tick 0. No interventions carried forward.`,
@@ -291,9 +346,97 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
     [applyFrame, fail, playing, view.tick],
   );
 
-  const getState = useCallback(
-    (): SimulationState | null =>
-      frameRef.current ? stateFromFrame(frameRef.current) : null,
+  const getState = useCallback(async (): Promise<SimulationState | null> => {
+    const engine = engineRef.current;
+    return engine ? engine.getState() : null;
+  }, []);
+
+  const getCanonicalHash = useCallback(
+    async (options?: RuntimeQueryOptions): Promise<RuntimeCanonicalHash | null> => {
+      const engine = engineRef.current;
+      if (!engine) return null;
+      const canonical = await engine.getCanonicalHash(options);
+      verifiedHashRef.current = canonical;
+      if (mountedRef.current) {
+        setView((current) =>
+          current.tick === canonical.tick
+            ? { ...current, hash: canonical.hash, hashTick: canonical.tick }
+            : current,
+        );
+      }
+      return canonical;
+    },
+    [],
+  );
+
+  const getCheckpoint = useCallback(
+    async (options?: RuntimeQueryOptions): Promise<RuntimeCheckpoint | null> => {
+      const engine = engineRef.current;
+      if (!engine) return null;
+      const checkpoint = await engine.getCheckpoint(options);
+      verifiedHashRef.current = { tick: checkpoint.tick, hash: checkpoint.hash };
+      if (mountedRef.current) {
+        setView((current) =>
+          current.tick === checkpoint.tick
+            ? { ...current, hash: checkpoint.hash, hashTick: checkpoint.tick }
+            : current,
+        );
+      }
+      return checkpoint;
+    },
+    [],
+  );
+
+  const getCausalEvidence = useCallback(
+    async (
+      focus: CausalEvidenceRef,
+      query?: CausalEvidenceQueryOptions,
+      options?: RuntimeQueryOptions,
+    ): Promise<CausalEvidenceProjectionV1 | null> => {
+      const engine = engineRef.current;
+      return engine ? engine.getCausalEvidence(focus, query, options) : null;
+    },
+    [],
+  );
+
+  const getEntityDetail = useCallback(
+    async (
+      ref: CausalEvidenceRef,
+      options?: RuntimeQueryOptions,
+    ): Promise<RuntimeEntityDetail | null> => {
+      const engine = engineRef.current;
+      return engine ? engine.getEntityDetail(ref, options) : null;
+    },
+    [],
+  );
+
+  const getInterventionOutcomes = useCallback(
+    async (
+      commands: readonly ScheduledPlayerCommand[],
+      options?: RuntimeQueryOptions,
+    ): Promise<readonly RuntimeInterventionOutcomeProjection[] | null> => {
+      const engine = engineRef.current;
+      return engine ? engine.getInterventionOutcomes(commands, options) : null;
+    },
+    [],
+  );
+
+  const getOutcome = useCallback(
+    async (options?: RuntimeQueryOptions): Promise<ExperimentOutcomeV1 | null> => {
+      const engine = engineRef.current;
+      return engine ? engine.getOutcome(options) : null;
+    },
+    [],
+  );
+
+  const compareOutcome = useCallback(
+    async (
+      baseline: ExperimentOutcomeV1,
+      options?: RuntimeQueryOptions,
+    ): Promise<ExperimentOutcomeComparisonV1 | null> => {
+      const engine = engineRef.current;
+      return engine ? engine.compareOutcome(baseline, options) : null;
+    },
     [],
   );
 
@@ -376,10 +519,18 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
     speed,
     setSpeed,
     feedback,
+    pause,
     advance,
     restart,
     applyIntervention,
     getState,
+    getCanonicalHash,
+    getCheckpoint,
+    getCausalEvidence,
+    getEntityDetail,
+    getInterventionOutcomes,
+    getOutcome,
+    compareOutcome,
     save,
     load,
     runToTick,

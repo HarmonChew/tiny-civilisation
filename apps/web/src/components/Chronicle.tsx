@@ -96,21 +96,27 @@ const filterOptions: Array<{ id: TimelineCategory; label: string }> = [
 export function TimelinePanel({
   view,
   filter,
+  selectedEventId,
   onFilter,
   onSelect,
   onSelectEvent,
+  onFocusEvent,
+  onHoverEvent,
 }: {
   view: WorldView;
   filter: TimelineCategory;
+  selectedEventId: number | null;
   onFilter: (filter: TimelineCategory) => void;
   onSelect: (id: EntityId) => void;
   onSelectEvent: (event: TimelineEventView) => void;
+  onFocusEvent: (event: TimelineEventView | null) => void;
+  onHoverEvent: (event: TimelineEventView | null) => void;
 }) {
   const events = view.events.filter(
     (event) => filter === "all" || event.category === filter,
   );
   return (
-    <div className="chronicle-scroll">
+    <>
       <GroupLedger view={view} onSelect={onSelect} />
       <section className="chronicle" aria-labelledby="chronicle-heading">
         <div className="section-heading-row">
@@ -147,25 +153,38 @@ export function TimelinePanel({
               <TimelineEntry
                 key={`${event.id}-${event.tick}`}
                 event={event}
+                selected={event.id === selectedEventId}
                 onSelectEvent={onSelectEvent}
+                onFocusEvent={onFocusEvent}
+                onHoverEvent={onHoverEvent}
               />
             ))}
           </ol>
         )}
       </section>
-    </div>
+    </>
   );
 }
 
 function TimelineEntry({
   event,
+  selected,
   onSelectEvent,
+  onFocusEvent,
+  onHoverEvent,
 }: {
   event: TimelineEventView;
+  selected: boolean;
   onSelectEvent: (event: TimelineEventView) => void;
+  onFocusEvent: (event: TimelineEventView | null) => void;
+  onHoverEvent: (event: TimelineEventView | null) => void;
 }) {
   return (
-    <li className={`timeline-entry timeline-entry--${event.category}`}>
+    <li
+      className={`timeline-entry timeline-entry--${event.category} ${selected ? "is-selected" : ""}`}
+      onPointerEnter={() => onHoverEvent(event)}
+      onPointerLeave={() => onHoverEvent(null)}
+    >
       <span className="timeline-entry__pin" aria-hidden="true" />
       <article>
         <div className="timeline-entry__meta">
@@ -176,6 +195,9 @@ function TimelineEntry({
           type="button"
           className="timeline-entry__body"
           onClick={() => onSelectEvent(event)}
+          onFocus={() => onFocusEvent(event)}
+          onBlur={() => onFocusEvent(null)}
+          aria-current={selected ? "true" : undefined}
           aria-label={`${event.title}. Inspect causal evidence.`}
         >
           <strong>{event.title}</strong>

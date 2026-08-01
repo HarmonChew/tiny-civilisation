@@ -1,4 +1,15 @@
-import { emitDomainEvent, historicallyProtectedEventIds } from "../events.js";
+import { emitDomainEvent, historicallyProtectedDecisionIds } from "../events.js";
+import {
+  desireForAction,
+  desireStrength,
+  desireSupportsAction,
+  planForAction,
+} from "../desires.js";
+import {
+  attemptInteractionSlotClaim,
+  interactionCrowding,
+  requiresInteractionClaim,
+} from "../interaction-slots.js";
 import { findNearestWalkable } from "../navigation.js";
 import {
   findPath,
@@ -6,7 +17,9 @@ import {
   tileCoordinates,
   tileIndexAt,
 } from "../pathfinding.js";
+import { rankHierarchicalCandidates, recordPlanTransition } from "../plans.js";
 import { keyedRandomU32, keyedRandomUnit } from "../rng.js";
+import { captureReasonFact, selectStrongestReason } from "../reason-facts.js";
 import { relationshipFrom } from "../social.js";
 import { entityTile, getCreature, getGroup, getStructure } from "../tick-context.js";
 import type {
@@ -39,6 +52,7 @@ function factor(
     key,
     contribution: Math.round(contribution),
     evidenceEventIds: [...evidenceEventIds],
+    fact: null,
   };
 }
 
@@ -60,9 +74,32 @@ function scoredCandidate(
     ) %
       161) -
     80;
-  const allFactors = [...factors, factor("bounded decision variation", noise)];
+  const crowding =
+    targetTileIndex === null
+      ? null
+      : interactionCrowding(state, action, targetEntityId, targetTileIndex);
+  const crowdingPenalty = crowding
+    ? Math.round((crowding.claimed * 900) / Math.max(1, crowding.capacity))
+    : 0;
+  const allFactors = [
+    ...factors,
+    ...(crowdingPenalty > 0 ? [factor("crowded interaction", -crowdingPenalty)] : []),
+    factor("bounded decision variation", noise),
+  ].map((item) => ({
+    ...item,
+    fact: captureReasonFact(
+      state,
+      creature,
+      item.key,
+      item.contribution,
+      item.evidenceEventIds,
+      targetEntityId,
+    ),
+  }));
   return {
     action,
+    desire: desireForAction(state, creature, action, targetEntityId),
+    plan: planForAction(action),
     targetEntityId,
     targetTileIndex,
     utility: allFactors.reduce(
@@ -94,6 +131,22 @@ function recentEvidence(edge: RelationshipEdge | null): number[] {
     return [];
   }
   return edge.significantEventIds.slice(-2);
+}
+
+function recentInterventionEvidence(
+  state: SimulationState,
+  targetEntityId: number,
+): number[] {
+  const earliestTick = state.tick - 120;
+  for (let index = state.domainEvents.length - 1; index >= 0; index -= 1) {
+    const event = state.domainEvents[index];
+    if (!event) continue;
+    if (event.tick < earliestTick) break;
+    if (event.commandOutcome === "APPLIED" && event.targetIds.includes(targetEntityId)) {
+      return [event.id];
+    }
+  }
+  return [];
 }
 
 function findFleeTile(
@@ -162,7 +215,11 @@ function generateCandidates(
           factor("personal hunger", (hunger * 4) / 5),
           factor("empty food reserve", creature.inventory.food === 0 ? 1_300 : 0),
           factor("foraging confidence", creature.skills.foraging / 5),
-          factor("known stock", Math.min(1_000, node.currentStock * 35)),
+          factor(
+            "known stock",
+            Math.min(1_000, node.currentStock * 35),
+            recentInterventionEvidence(state, node.id),
+          ),
           factor("travel cost", -distance * 52),
         ]),
       );
@@ -214,14 +271,17 @@ function generateCandidates(
         ]),
       );
     }
-    candidates.push(
-      scoredCandidate(state, creature, "KEEP", null, creature.tileIndex, [
-        factor("keep a reserve", 550),
-        factor("personal hunger", hunger / 2),
-        factor("private preference", (UNIT_MAX - creature.traits.generosity) / 4),
-        factor("communal expectation", -(ownGroup?.sharingNorm ?? 0) / 6),
-      ]),
-    );
+    const recentlyKept =
+      creature.lastActionKind === "KEEP" && state.tick - creature.lastActionTick < 180;
+    if (creature.inventory.food >= 2 && hunger < 4_200 && !recentlyKept) {
+      candidates.push(
+        scoredCandidate(state, creature, "KEEP", null, creature.tileIndex, [
+          factor("keep a reserve", 400),
+          factor("private preference", (UNIT_MAX - creature.traits.generosity) / 5),
+          factor("communal expectation", -(ownGroup?.sharingNorm ?? 0) / 5),
+        ]),
+      );
+    }
   }
 
   const storageComplete = ownStorage?.kind === "STORAGE" ? ownStorage : null;
@@ -427,11 +487,18 @@ function generateCandidates(
     }
     const attackCoolingDown =
       ticksSinceActorEvent(state, "CREATURE_ATTACKED", creature.id, target.id) < 90;
+    const grievanceSettling =
+      ticksSinceActorEvent(state, "THEFT_WITNESSED", creature.id, target.id) < 30;
     const distance = manhattanDistance(state.world, creature.tileIndex, target.tileIndex);
     if (distance > 8) {
       continue;
     }
-    if (!attackCoolingDown && creature.health > 3_000 && target.health > 2_500) {
+    if (
+      !attackCoolingDown &&
+      !grievanceSettling &&
+      creature.health > 3_000 &&
+      target.health > 2_500
+    ) {
       candidates.push(
         scoredCandidate(state, creature, "ATTACK", target.id, target.tileIndex, [
           factor("aggressive disposition", (creature.traits.aggression * 2) / 5),
@@ -523,6 +590,18 @@ function generateCandidates(
       }
     }
   }
+  if (creature.activePlan) {
+    for (const candidate of candidates) {
+      if (
+        candidate.plan === creature.activePlan.kind &&
+        candidate.targetEntityId === creature.activePlan.targetEntityId
+      ) {
+        const continuation = 650;
+        candidate.factors.push(factor("plan continuity", continuation));
+        candidate.utility += continuation;
+      }
+    }
+  }
 
   return candidates
     .sort(
@@ -556,12 +635,113 @@ function beginAction(
   candidate: DecisionCandidate,
   decisionId: number,
 ): boolean {
-  const targetTile = targetTileForCandidate(state, candidate) ?? creature.tileIndex;
+  const previousDesire = creature.activeDesire?.kind ?? null;
+  const shouldRetainDesire =
+    creature.activeDesire !== null &&
+    creature.activeDesire.kind === candidate.desire &&
+    desireSupportsAction(creature.activeDesire.kind, candidate.action);
+  if (!shouldRetainDesire) {
+    creature.activeDesire = {
+      kind: candidate.desire,
+      subjectEntityId: candidate.targetEntityId,
+      startedAtTick: state.tick,
+      minimumCommitUntilTick: state.tick + 36,
+      nextReconsiderationTick: state.tick + 72,
+      strength: desireStrength(creature, candidate.desire),
+      selectedByDecisionId: decisionId,
+    };
+    emitDomainEvent(state, {
+      type: "DESIRE_CHANGED",
+      actorIds: [creature.id],
+      targetIds: candidate.targetEntityId === null ? [] : [candidate.targetEntityId],
+      locationTileIndex: creature.tileIndex,
+      decisionRecordIds: [decisionId],
+      importance: previousDesire === null ? 18 : 24,
+      summary: `${creature.name} now wants to ${candidate.desire.toLowerCase().replaceAll("_", " ")}.`,
+    });
+  } else if (creature.activeDesire) {
+    if (state.tick >= creature.activeDesire.nextReconsiderationTick) {
+      creature.activeDesire.nextReconsiderationTick = state.tick + 72;
+    }
+    creature.activeDesire.strength = desireStrength(creature, candidate.desire);
+  }
+
+  const previousPlan = creature.activePlan;
+  const shouldRetainPlan =
+    previousPlan !== null &&
+    previousPlan.kind === candidate.plan &&
+    previousPlan.desireKind === candidate.desire &&
+    previousPlan.status !== "BLOCKED";
+  if (!shouldRetainPlan && previousPlan?.status === "ACTIVE") {
+    recordPlanTransition(state, creature, "ABANDONED");
+  }
+
+  const anchorTile = targetTileForCandidate(state, candidate) ?? creature.tileIndex;
+  const claimAttempt = attemptInteractionSlotClaim(
+    state,
+    creature,
+    candidate.action,
+    candidate.targetEntityId,
+    anchorTile,
+  );
+  const claim = claimAttempt.claim;
+  const needsClaim = requiresInteractionClaim(candidate.action);
+  if (claimAttempt.contended) state.metrics.interactionContentions += 1;
+  if (claimAttempt.failed) state.metrics.failedInteractionClaims += 1;
+  if (needsClaim && !claim) {
+    creature.activePlan = {
+      kind: candidate.plan,
+      desireKind: candidate.desire,
+      targetEntityId: candidate.targetEntityId,
+      targetTileIndex: anchorTile,
+      startedAtTick: state.tick,
+      status: "BLOCKED",
+      selectedByDecisionId: decisionId,
+      expectedUtility: candidate.utility,
+      strongestReason: selectStrongestReason(candidate.factors),
+      interactionClaim: null,
+    };
+    recordPlanTransition(state, creature, "BLOCKED");
+    emitDomainEvent(state, {
+      type: "PLAN_BLOCKED",
+      actorIds: [creature.id],
+      targetIds: candidate.targetEntityId === null ? [] : [candidate.targetEntityId],
+      locationTileIndex: anchorTile,
+      decisionRecordIds: [decisionId],
+      importance: 24,
+      summary: `${creature.name}'s approach was blocked because every safe position was occupied.`,
+    });
+    creature.nextDecisionTick = state.tick + 4;
+    return false;
+  }
+  const targetTile = claim?.tileIndex ?? anchorTile;
   const path = findPath(state.world, creature.tileIndex, targetTile);
   if (path.length === 0) {
     state.metrics.invalidPathFailures += 1;
     creature.activeGoal = null;
     creature.activeAction = null;
+    creature.activePlan = {
+      kind: candidate.plan,
+      desireKind: candidate.desire,
+      targetEntityId: candidate.targetEntityId,
+      targetTileIndex: targetTile,
+      startedAtTick: shouldRetainPlan ? previousPlan.startedAtTick : state.tick,
+      status: "BLOCKED",
+      selectedByDecisionId: decisionId,
+      expectedUtility: candidate.utility,
+      strongestReason: selectStrongestReason(candidate.factors),
+      interactionClaim: null,
+    };
+    recordPlanTransition(state, creature, "BLOCKED");
+    emitDomainEvent(state, {
+      type: "PLAN_BLOCKED",
+      actorIds: [creature.id],
+      targetIds: candidate.targetEntityId === null ? [] : [candidate.targetEntityId],
+      locationTileIndex: anchorTile,
+      decisionRecordIds: [decisionId],
+      importance: 24,
+      summary: `${creature.name}'s plan was blocked because no safe route remained.`,
+    });
     creature.nextDecisionTick = state.tick + 3;
     return false;
   }
@@ -585,6 +765,33 @@ function beginAction(
     expectedUtility: candidate.utility,
     decisionRecordId: decisionId,
   };
+  const strongestReason = selectStrongestReason(candidate.factors);
+  creature.activePlan = {
+    kind: candidate.plan,
+    desireKind: candidate.desire,
+    targetEntityId: candidate.targetEntityId,
+    targetTileIndex: targetTile,
+    startedAtTick: shouldRetainPlan ? previousPlan.startedAtTick : state.tick,
+    status: "ACTIVE",
+    selectedByDecisionId: decisionId,
+    expectedUtility: candidate.utility,
+    strongestReason,
+    interactionClaim: claim,
+  };
+  if (!shouldRetainPlan || previousPlan.status !== "ACTIVE") {
+    recordPlanTransition(state, creature, "ACTIVE");
+  }
+  if (!shouldRetainPlan) {
+    emitDomainEvent(state, {
+      type: "PLAN_CHANGED",
+      actorIds: [creature.id],
+      targetIds: candidate.targetEntityId === null ? [] : [candidate.targetEntityId],
+      locationTileIndex: creature.tileIndex,
+      decisionRecordIds: [decisionId],
+      importance: 18,
+      summary: `${creature.name} plans to ${candidate.plan.toLowerCase().replaceAll("_", " ")}.`,
+    });
+  }
   const phase = path.length <= 1 ? "WORKING" : "MOVING";
   creature.activeAction = {
     kind: candidate.action,
@@ -597,6 +804,7 @@ function beginAction(
     progress: 0,
     workRequired: UNIT_MAX,
     navigationRevision: state.world.navigationRevision,
+    interactionClaim: claim,
   };
   if (candidate.action === "GUARD" && candidate.targetEntityId !== null) {
     const structure = getStructure(state, candidate.targetEntityId);
@@ -604,6 +812,10 @@ function beginAction(
       if (structure.guardIds.length >= 2) {
         creature.activeAction = null;
         creature.activeGoal = null;
+        if (creature.activePlan) {
+          creature.activePlan.interactionClaim = null;
+          recordPlanTransition(state, creature, "BLOCKED");
+        }
         creature.nextDecisionTick = state.tick + 4;
         return false;
       }
@@ -622,6 +834,31 @@ function beginAction(
     importance: 2,
     summary: `${creature.name} began ${candidate.action.toLowerCase().replaceAll("_", " ")}.`,
   });
+  if (candidate.action === "FLEE") {
+    const threat = state.creatures.find((other) => other.id === candidate.targetEntityId);
+    emitDomainEvent(state, {
+      type: "THREAT_NOTICED",
+      actorIds: [creature.id],
+      targetIds: threat ? [threat.id] : [],
+      groupIds: creature.groupId === null ? [] : [creature.groupId],
+      locationTileIndex: creature.tileIndex,
+      decisionRecordIds: [decisionId],
+      importance: 34,
+      summary: `${creature.name} recognised${threat ? ` ${threat.name}` : " a nearby creature"} as a threat and began moving away.`,
+    });
+  } else if (candidate.action === "ATTACK") {
+    const target = state.creatures.find((other) => other.id === candidate.targetEntityId);
+    emitDomainEvent(state, {
+      type: "CONFRONTATION_APPROACHED",
+      actorIds: [creature.id],
+      targetIds: target ? [target.id] : [],
+      groupIds: creature.groupId === null ? [] : [creature.groupId],
+      locationTileIndex: creature.tileIndex,
+      decisionRecordIds: [decisionId],
+      importance: 38,
+      summary: `${creature.name} began closing in${target ? ` on ${target.name}` : " for a confrontation"}.`,
+    });
+  }
   return true;
 }
 
@@ -641,10 +878,15 @@ function recordDecision(
     actorId: creature.id,
     previousAction: creature.activeGoal?.kind ?? null,
     selectedAction: selected.action,
+    selectedDesire: selected.desire,
+    selectedPlan: selected.plan,
     selectedTargetId: selected.targetEntityId,
+    strongestReason: selectStrongestReason(selected.factors),
     switchReason,
     candidates: candidates.slice(0, 5).map((candidate) => ({
       action: candidate.action,
+      desire: candidate.desire,
+      plan: candidate.plan,
       targetEntityId: candidate.targetEntityId,
       targetTileIndex: candidate.targetTileIndex,
       utility: candidate.utility,
@@ -652,20 +894,15 @@ function recordDecision(
         key: item.key,
         contribution: item.contribution,
         evidenceEventIds: [...item.evidenceEventIds],
+        fact: item.fact
+          ? { ...item.fact, sourceEventIds: [...item.fact.sourceEventIds] }
+          : null,
       })),
     })),
   };
   state.decisionRecords.push(record);
   while (state.decisionRecords.length > state.configuration.maxDecisionRecords) {
-    const protectedEventIds = historicallyProtectedEventIds(state);
-    const protectedDecisionIds = new Set<number>();
-    for (const event of state.domainEvents) {
-      if (protectedEventIds.has(event.id)) {
-        for (const decisionId of event.decisionRecordIds) {
-          protectedDecisionIds.add(decisionId);
-        }
-      }
-    }
+    const protectedDecisionIds = historicallyProtectedDecisionIds(state);
     const removableIndex = state.decisionRecords.findIndex(
       (candidate) => !protectedDecisionIds.has(candidate.id),
     );
@@ -700,7 +937,13 @@ function decideCreature(state: SimulationState, creature: CreatureState): void {
     creature.nextDecisionTick = creature.activeGoal.minimumCommitUntilTick;
     return;
   }
-  const candidates = generateCandidates(state, creature);
+  const candidates = rankHierarchicalCandidates(
+    generateCandidates(state, creature),
+    creature.activeDesire,
+    creature.activePlan,
+    state.tick,
+    emergency,
+  );
   const selected = candidates[0];
   if (!selected) {
     creature.nextDecisionTick = state.tick + 10;

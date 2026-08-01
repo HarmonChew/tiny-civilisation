@@ -1,0 +1,865 @@
+{
+  "artifactKind": "tiny-civilisation/activity-profile-reference",
+  "artifactVersion": 1,
+  "sourceProfileSchemaVersion": 1,
+  "simulationBehaviorVersion": 2,
+  "command": "profile",
+  "configuration": {
+    "seeds": [4182, 921, 23],
+    "ticksPerRun": 10000,
+    "sampleEveryTicks": 1,
+    "significantEventTiers": ["SIGNIFICANT", "CRITICAL"]
+  },
+  "runs": [
+    {
+      "seed": 4182,
+      "requestedTicks": 10000,
+      "finalHash": "6573a425e063691d",
+      "profile": {
+        "window": {
+          "startTick": 0,
+          "endTick": 10000,
+          "observedTicks": 10000,
+          "sampledStates": 10001,
+          "sampleEveryTicks": 1,
+          "ticksPerSecond": 10
+        },
+        "actions": {
+          "completedActions": 3171,
+          "byKind": [
+            { "kind": "EXPLORE", "count": 1676, "share": 0.52854 },
+            { "kind": "GATHER_FOOD", "count": 113, "share": 0.035635 },
+            { "kind": "GATHER_MATERIAL", "count": 11, "share": 0.003469 },
+            { "kind": "EAT", "count": 154, "share": 0.048565 },
+            { "kind": "REST", "count": 94, "share": 0.029644 },
+            { "kind": "SHARE", "count": 33, "share": 0.010407 },
+            { "kind": "KEEP", "count": 527, "share": 0.166194 },
+            { "kind": "STEAL", "count": 5, "share": 0.001577 },
+            { "kind": "DEPOSIT", "count": 41, "share": 0.01293 },
+            { "kind": "WITHDRAW", "count": 0, "share": 0 },
+            { "kind": "BUILD_STORAGE", "count": 8, "share": 0.002523 },
+            { "kind": "GUARD", "count": 429, "share": 0.135289 },
+            { "kind": "ATTACK", "count": 28, "share": 0.00883 },
+            { "kind": "FLEE", "count": 51, "share": 0.016083 },
+            { "kind": "JOIN_GROUP", "count": 1, "share": 0.000315 }
+          ]
+        },
+        "movement": {
+          "distanceFixedUnits": 4103608,
+          "distanceTiles": 16029.71875,
+          "fixedUnitsPerSimulatedMinute": 246216.48
+        },
+        "spatial": {
+          "occupiedTiles": {
+            "samples": 10001,
+            "min": 6,
+            "p10": 8,
+            "median": 8,
+            "p90": 8,
+            "max": 8,
+            "mean": 7.908609
+          },
+          "crowding": {
+            "creaturesPerMostCrowdedTile": {
+              "samples": 10001,
+              "min": 1,
+              "p10": 1,
+              "median": 1,
+              "p90": 1,
+              "max": 2,
+              "mean": 1.088391
+            },
+            "maximumCreaturesPerTile": 2,
+            "creaturesPerMostCrowdedInteractionAnchor": {
+              "samples": 10001,
+              "min": 0,
+              "p10": 2,
+              "median": 2,
+              "p90": 2,
+              "max": 6,
+              "mean": 2.028397
+            },
+            "maximumCreaturesPerInteractionAnchor": 6
+          },
+          "exactOverlap": {
+            "overlappingCreatureTicks": 30,
+            "livingCreatureTicks": 80008,
+            "rate": 0.000375,
+            "overlapGroups": 15,
+            "maximumConsecutiveTicks": 1
+          },
+          "slots": {
+            "sampledAnchorPurposeTicks": 23983,
+            "claimedSlotTicks": 35182,
+            "availableSlotTicks": 35168,
+            "capacitySlotTicks": 70350,
+            "saturatedAnchorPurposeTicks": 8553,
+            "utilisation": 0.5001,
+            "byPurpose": [
+              {
+                "purpose": "EXPLORE",
+                "sampledAnchorPurposeTicks": 0,
+                "claimedSlotTicks": 0,
+                "availableSlotTicks": 0,
+                "capacitySlotTicks": 0,
+                "saturatedAnchorPurposeTicks": 0,
+                "utilisation": 0
+              },
+              {
+                "purpose": "GATHER",
+                "sampledAnchorPurposeTicks": 2787,
+                "claimedSlotTicks": 3577,
+                "availableSlotTicks": 11540,
+                "capacitySlotTicks": 15117,
+                "saturatedAnchorPurposeTicks": 79,
+                "utilisation": 0.236621
+              },
+              {
+                "purpose": "REST",
+                "sampledAnchorPurposeTicks": 9478,
+                "claimedSlotTicks": 9893,
+                "availableSlotTicks": 7145,
+                "capacitySlotTicks": 17038,
+                "saturatedAnchorPurposeTicks": 6837,
+                "utilisation": 0.580643
+              },
+              {
+                "purpose": "SOCIAL",
+                "sampledAnchorPurposeTicks": 203,
+                "claimedSlotTicks": 275,
+                "availableSlotTicks": 143,
+                "capacitySlotTicks": 418,
+                "saturatedAnchorPurposeTicks": 111,
+                "utilisation": 0.657895
+              },
+              {
+                "purpose": "STORAGE_ACCESS",
+                "sampledAnchorPurposeTicks": 1159,
+                "claimedSlotTicks": 1367,
+                "availableSlotTicks": 648,
+                "capacitySlotTicks": 2015,
+                "saturatedAnchorPurposeTicks": 514,
+                "utilisation": 0.678412
+              },
+              {
+                "purpose": "CONSTRUCTION",
+                "sampledAnchorPurposeTicks": 117,
+                "claimedSlotTicks": 344,
+                "availableSlotTicks": 149,
+                "capacitySlotTicks": 493,
+                "saturatedAnchorPurposeTicks": 46,
+                "utilisation": 0.697769
+              },
+              {
+                "purpose": "GUARD",
+                "sampledAnchorPurposeTicks": 9753,
+                "claimedSlotTicks": 19227,
+                "availableSlotTicks": 15257,
+                "capacitySlotTicks": 34484,
+                "saturatedAnchorPurposeTicks": 766,
+                "utilisation": 0.557563
+              },
+              {
+                "purpose": "CONFLICT",
+                "sampledAnchorPurposeTicks": 486,
+                "claimedSlotTicks": 499,
+                "availableSlotTicks": 286,
+                "capacitySlotTicks": 785,
+                "saturatedAnchorPurposeTicks": 200,
+                "utilisation": 0.635669
+              },
+              {
+                "purpose": "FLIGHT",
+                "sampledAnchorPurposeTicks": 0,
+                "claimedSlotTicks": 0,
+                "availableSlotTicks": 0,
+                "capacitySlotTicks": 0,
+                "saturatedAnchorPurposeTicks": 0,
+                "utilisation": 0
+              }
+            ],
+            "contentionCount": null,
+            "failedClaimCount": null
+          }
+        },
+        "interactions": {
+          "count": 543,
+          "per1_000Ticks": 54.3,
+          "byType": [
+            { "eventType": "FOOD_SHARED", "count": 12, "per1_000Ticks": 1.2 },
+            { "eventType": "MATERIAL_DEPOSITED", "count": 5, "per1_000Ticks": 0.5 },
+            { "eventType": "STORAGE_SITE_STARTED", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "STORAGE_COMPLETED", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "CREATURE_GUARDED", "count": 429, "per1_000Ticks": 42.9 },
+            { "eventType": "THEFT_COMMITTED", "count": 5, "per1_000Ticks": 0.5 },
+            { "eventType": "THEFT_WITNESSED", "count": 5, "per1_000Ticks": 0.5 },
+            { "eventType": "CREATURE_ATTACKED", "count": 28, "per1_000Ticks": 2.8 },
+            { "eventType": "CREATURE_FLED", "count": 51, "per1_000Ticks": 5.1 },
+            { "eventType": "CREATURE_JOINED_GROUP", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "GROUP_FOUNDED", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "LEADER_SELECTED", "count": 4, "per1_000Ticks": 0.4 }
+          ]
+        },
+        "significantEvents": {
+          "tiers": ["SIGNIFICANT", "CRITICAL"],
+          "count": 44,
+          "per1_000Ticks": 4.4,
+          "intervals": {
+            "samples": 43,
+            "min": 0,
+            "p10": 0,
+            "median": 50,
+            "p90": 628,
+            "max": 1861,
+            "mean": 211
+          },
+          "trailingSilenceTicks": 827,
+          "byType": [
+            { "type": "CREATURE_ATTACKED", "count": 28 },
+            { "type": "GROUP_FOUNDED", "count": 1 },
+            { "type": "LEADER_SELECTED", "count": 4 },
+            { "type": "STORAGE_COMPLETED", "count": 1 },
+            { "type": "THEFT_COMMITTED", "count": 5 },
+            { "type": "THEFT_WITNESSED", "count": 5 }
+          ]
+        },
+        "interventionResponses": {
+          "windowTicks": 120,
+          "changes": 0,
+          "respondingCreatures": 0,
+          "firstResponseTick": null,
+          "byKind": [
+            { "kind": "RECONSIDERED_DESIRE", "count": 0 },
+            { "kind": "RECONSIDERED_PLAN", "count": 0 },
+            { "kind": "CHANGED_ACTION", "count": 0 },
+            { "kind": "CHANGED_DESTINATION", "count": 0 },
+            { "kind": "REROUTED", "count": 0 }
+          ]
+        },
+        "milestones": {
+          "firstGroupTick": 100,
+          "firstStorageSiteTick": 197,
+          "firstStorageTick": 239,
+          "firstTheftTick": 391,
+          "firstConflictTick": 485,
+          "firstRecoveryTick": 817,
+          "firstInterventionTick": null,
+          "firstInterventionResponseTick": null
+        }
+      }
+    },
+    {
+      "seed": 921,
+      "requestedTicks": 10000,
+      "finalHash": "dbc7e17146900713",
+      "profile": {
+        "window": {
+          "startTick": 0,
+          "endTick": 10000,
+          "observedTicks": 10000,
+          "sampledStates": 10001,
+          "sampleEveryTicks": 1,
+          "ticksPerSecond": 10
+        },
+        "actions": {
+          "completedActions": 3573,
+          "byKind": [
+            { "kind": "EXPLORE", "count": 2193, "share": 0.61377 },
+            { "kind": "GATHER_FOOD", "count": 110, "share": 0.030786 },
+            { "kind": "GATHER_MATERIAL", "count": 14, "share": 0.003918 },
+            { "kind": "EAT", "count": 154, "share": 0.043101 },
+            { "kind": "REST", "count": 99, "share": 0.027708 },
+            { "kind": "SHARE", "count": 7, "share": 0.001959 },
+            { "kind": "KEEP", "count": 507, "share": 0.141898 },
+            { "kind": "STEAL", "count": 0, "share": 0 },
+            { "kind": "DEPOSIT", "count": 51, "share": 0.014274 },
+            { "kind": "WITHDRAW", "count": 0, "share": 0 },
+            { "kind": "BUILD_STORAGE", "count": 7, "share": 0.001959 },
+            { "kind": "GUARD", "count": 430, "share": 0.120347 },
+            { "kind": "ATTACK", "count": 0, "share": 0 },
+            { "kind": "FLEE", "count": 0, "share": 0 },
+            { "kind": "JOIN_GROUP", "count": 1, "share": 0.00028 }
+          ]
+        },
+        "movement": {
+          "distanceFixedUnits": 4928384,
+          "distanceTiles": 19251.5,
+          "fixedUnitsPerSimulatedMinute": 295703.04
+        },
+        "spatial": {
+          "occupiedTiles": {
+            "samples": 10001,
+            "min": 6,
+            "p10": 8,
+            "median": 8,
+            "p90": 8,
+            "max": 8,
+            "mean": 7.907709
+          },
+          "crowding": {
+            "creaturesPerMostCrowdedTile": {
+              "samples": 10001,
+              "min": 1,
+              "p10": 1,
+              "median": 1,
+              "p90": 1,
+              "max": 3,
+              "mean": 1.090591
+            },
+            "maximumCreaturesPerTile": 3,
+            "creaturesPerMostCrowdedInteractionAnchor": {
+              "samples": 10001,
+              "min": 0,
+              "p10": 2,
+              "median": 2,
+              "p90": 2,
+              "max": 6,
+              "mean": 2.034497
+            },
+            "maximumCreaturesPerInteractionAnchor": 6
+          },
+          "exactOverlap": {
+            "overlappingCreatureTicks": 26,
+            "livingCreatureTicks": 80008,
+            "rate": 0.000325,
+            "overlapGroups": 13,
+            "maximumConsecutiveTicks": 1
+          },
+          "slots": {
+            "sampledAnchorPurposeTicks": 22696,
+            "claimedSlotTicks": 33709,
+            "availableSlotTicks": 33650,
+            "capacitySlotTicks": 67359,
+            "saturatedAnchorPurposeTicks": 7524,
+            "utilisation": 0.500438,
+            "byPurpose": [
+              {
+                "purpose": "EXPLORE",
+                "sampledAnchorPurposeTicks": 0,
+                "claimedSlotTicks": 0,
+                "availableSlotTicks": 0,
+                "capacitySlotTicks": 0,
+                "saturatedAnchorPurposeTicks": 0,
+                "utilisation": 0
+              },
+              {
+                "purpose": "GATHER",
+                "sampledAnchorPurposeTicks": 2606,
+                "claimedSlotTicks": 3330,
+                "availableSlotTicks": 9884,
+                "capacitySlotTicks": 13214,
+                "saturatedAnchorPurposeTicks": 87,
+                "utilisation": 0.252005
+              },
+              {
+                "purpose": "REST",
+                "sampledAnchorPurposeTicks": 9298,
+                "claimedSlotTicks": 9834,
+                "availableSlotTicks": 7404,
+                "capacitySlotTicks": 17238,
+                "saturatedAnchorPurposeTicks": 6551,
+                "utilisation": 0.570484
+              },
+              {
+                "purpose": "SOCIAL",
+                "sampledAnchorPurposeTicks": 115,
+                "claimedSlotTicks": 139,
+                "availableSlotTicks": 201,
+                "capacitySlotTicks": 340,
+                "saturatedAnchorPurposeTicks": 34,
+                "utilisation": 0.408824
+              },
+              {
+                "purpose": "STORAGE_ACCESS",
+                "sampledAnchorPurposeTicks": 784,
+                "claimedSlotTicks": 864,
+                "availableSlotTicks": 501,
+                "capacitySlotTicks": 1365,
+                "saturatedAnchorPurposeTicks": 283,
+                "utilisation": 0.632967
+              },
+              {
+                "purpose": "CONSTRUCTION",
+                "sampledAnchorPurposeTicks": 138,
+                "claimedSlotTicks": 325,
+                "availableSlotTicks": 232,
+                "capacitySlotTicks": 557,
+                "saturatedAnchorPurposeTicks": 22,
+                "utilisation": 0.583483
+              },
+              {
+                "purpose": "GUARD",
+                "sampledAnchorPurposeTicks": 9755,
+                "claimedSlotTicks": 19217,
+                "availableSlotTicks": 15428,
+                "capacitySlotTicks": 34645,
+                "saturatedAnchorPurposeTicks": 547,
+                "utilisation": 0.554683
+              },
+              {
+                "purpose": "CONFLICT",
+                "sampledAnchorPurposeTicks": 0,
+                "claimedSlotTicks": 0,
+                "availableSlotTicks": 0,
+                "capacitySlotTicks": 0,
+                "saturatedAnchorPurposeTicks": 0,
+                "utilisation": 0
+              },
+              {
+                "purpose": "FLIGHT",
+                "sampledAnchorPurposeTicks": 0,
+                "claimedSlotTicks": 0,
+                "availableSlotTicks": 0,
+                "capacitySlotTicks": 0,
+                "saturatedAnchorPurposeTicks": 0,
+                "utilisation": 0
+              }
+            ],
+            "contentionCount": null,
+            "failedClaimCount": null
+          }
+        },
+        "interactions": {
+          "count": 451,
+          "per1_000Ticks": 45.1,
+          "byType": [
+            { "eventType": "FOOD_SHARED", "count": 7, "per1_000Ticks": 0.7 },
+            { "eventType": "MATERIAL_DEPOSITED", "count": 6, "per1_000Ticks": 0.6 },
+            { "eventType": "STORAGE_SITE_STARTED", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "STORAGE_COMPLETED", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "CREATURE_GUARDED", "count": 430, "per1_000Ticks": 43 },
+            { "eventType": "THEFT_COMMITTED", "count": 0, "per1_000Ticks": 0 },
+            { "eventType": "THEFT_WITNESSED", "count": 0, "per1_000Ticks": 0 },
+            { "eventType": "CREATURE_ATTACKED", "count": 0, "per1_000Ticks": 0 },
+            { "eventType": "CREATURE_FLED", "count": 0, "per1_000Ticks": 0 },
+            { "eventType": "CREATURE_JOINED_GROUP", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "GROUP_FOUNDED", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "LEADER_SELECTED", "count": 4, "per1_000Ticks": 0.4 }
+          ]
+        },
+        "significantEvents": {
+          "tiers": ["SIGNIFICANT", "CRITICAL"],
+          "count": 6,
+          "per1_000Ticks": 0.6,
+          "intervals": {
+            "samples": 5,
+            "min": 0,
+            "p10": 0,
+            "median": 164,
+            "p90": 600,
+            "max": 600,
+            "mean": 220
+          },
+          "trailingSilenceTicks": 8800,
+          "byType": [
+            { "type": "GROUP_FOUNDED", "count": 1 },
+            { "type": "LEADER_SELECTED", "count": 4 },
+            { "type": "STORAGE_COMPLETED", "count": 1 }
+          ]
+        },
+        "interventionResponses": {
+          "windowTicks": 120,
+          "changes": 0,
+          "respondingCreatures": 0,
+          "firstResponseTick": null,
+          "byKind": [
+            { "kind": "RECONSIDERED_DESIRE", "count": 0 },
+            { "kind": "RECONSIDERED_PLAN", "count": 0 },
+            { "kind": "CHANGED_ACTION", "count": 0 },
+            { "kind": "CHANGED_DESTINATION", "count": 0 },
+            { "kind": "REROUTED", "count": 0 }
+          ]
+        },
+        "milestones": {
+          "firstGroupTick": 100,
+          "firstStorageSiteTick": 191,
+          "firstStorageTick": 236,
+          "firstTheftTick": null,
+          "firstConflictTick": null,
+          "firstRecoveryTick": null,
+          "firstInterventionTick": null,
+          "firstInterventionResponseTick": null
+        }
+      }
+    },
+    {
+      "seed": 23,
+      "requestedTicks": 10000,
+      "finalHash": "1e70197fe9f8e90e",
+      "profile": {
+        "window": {
+          "startTick": 0,
+          "endTick": 10000,
+          "observedTicks": 10000,
+          "sampledStates": 10001,
+          "sampleEveryTicks": 1,
+          "ticksPerSecond": 10
+        },
+        "actions": {
+          "completedActions": 3350,
+          "byKind": [
+            { "kind": "EXPLORE", "count": 1934, "share": 0.577313 },
+            { "kind": "GATHER_FOOD", "count": 112, "share": 0.033433 },
+            { "kind": "GATHER_MATERIAL", "count": 14, "share": 0.004179 },
+            { "kind": "EAT", "count": 155, "share": 0.046269 },
+            { "kind": "REST", "count": 98, "share": 0.029254 },
+            { "kind": "SHARE", "count": 10, "share": 0.002985 },
+            { "kind": "KEEP", "count": 460, "share": 0.137313 },
+            { "kind": "STEAL", "count": 5, "share": 0.001493 },
+            { "kind": "DEPOSIT", "count": 53, "share": 0.015821 },
+            { "kind": "WITHDRAW", "count": 0, "share": 0 },
+            { "kind": "BUILD_STORAGE", "count": 8, "share": 0.002388 },
+            { "kind": "GUARD", "count": 429, "share": 0.12806 },
+            { "kind": "ATTACK", "count": 28, "share": 0.008358 },
+            { "kind": "FLEE", "count": 43, "share": 0.012836 },
+            { "kind": "JOIN_GROUP", "count": 1, "share": 0.000299 }
+          ]
+        },
+        "movement": {
+          "distanceFixedUnits": 4566138,
+          "distanceTiles": 17836.476563,
+          "fixedUnitsPerSimulatedMinute": 273968.28
+        },
+        "spatial": {
+          "occupiedTiles": {
+            "samples": 10001,
+            "min": 6,
+            "p10": 8,
+            "median": 8,
+            "p90": 8,
+            "max": 8,
+            "mean": 7.909009
+          },
+          "crowding": {
+            "creaturesPerMostCrowdedTile": {
+              "samples": 10001,
+              "min": 1,
+              "p10": 1,
+              "median": 1,
+              "p90": 1,
+              "max": 3,
+              "mean": 1.088791
+            },
+            "maximumCreaturesPerTile": 3,
+            "creaturesPerMostCrowdedInteractionAnchor": {
+              "samples": 10001,
+              "min": 0,
+              "p10": 2,
+              "median": 2,
+              "p90": 2,
+              "max": 6,
+              "mean": 2.025197
+            },
+            "maximumCreaturesPerInteractionAnchor": 6
+          },
+          "exactOverlap": {
+            "overlappingCreatureTicks": 14,
+            "livingCreatureTicks": 80008,
+            "rate": 0.000175,
+            "overlapGroups": 7,
+            "maximumConsecutiveTicks": 1
+          },
+          "slots": {
+            "sampledAnchorPurposeTicks": 23292,
+            "claimedSlotTicks": 34461,
+            "availableSlotTicks": 36886,
+            "capacitySlotTicks": 71347,
+            "saturatedAnchorPurposeTicks": 7241,
+            "utilisation": 0.483006,
+            "byPurpose": [
+              {
+                "purpose": "EXPLORE",
+                "sampledAnchorPurposeTicks": 0,
+                "claimedSlotTicks": 0,
+                "availableSlotTicks": 0,
+                "capacitySlotTicks": 0,
+                "saturatedAnchorPurposeTicks": 0,
+                "utilisation": 0
+              },
+              {
+                "purpose": "GATHER",
+                "sampledAnchorPurposeTicks": 2776,
+                "claimedSlotTicks": 3627,
+                "availableSlotTicks": 12474,
+                "capacitySlotTicks": 16101,
+                "saturatedAnchorPurposeTicks": 60,
+                "utilisation": 0.225266
+              },
+              {
+                "purpose": "REST",
+                "sampledAnchorPurposeTicks": 8988,
+                "claimedSlotTicks": 9471,
+                "availableSlotTicks": 7690,
+                "capacitySlotTicks": 17161,
+                "saturatedAnchorPurposeTicks": 6026,
+                "utilisation": 0.551891
+              },
+              {
+                "purpose": "SOCIAL",
+                "sampledAnchorPurposeTicks": 96,
+                "claimedSlotTicks": 132,
+                "availableSlotTicks": 66,
+                "capacitySlotTicks": 198,
+                "saturatedAnchorPurposeTicks": 60,
+                "utilisation": 0.666667
+              },
+              {
+                "purpose": "STORAGE_ACCESS",
+                "sampledAnchorPurposeTicks": 1033,
+                "claimedSlotTicks": 1148,
+                "availableSlotTicks": 738,
+                "capacitySlotTicks": 1886,
+                "saturatedAnchorPurposeTicks": 295,
+                "utilisation": 0.608696
+              },
+              {
+                "purpose": "CONSTRUCTION",
+                "sampledAnchorPurposeTicks": 171,
+                "claimedSlotTicks": 400,
+                "availableSlotTicks": 292,
+                "capacitySlotTicks": 692,
+                "saturatedAnchorPurposeTicks": 21,
+                "utilisation": 0.578035
+              },
+              {
+                "purpose": "GUARD",
+                "sampledAnchorPurposeTicks": 9713,
+                "claimedSlotTicks": 19142,
+                "availableSlotTicks": 15300,
+                "capacitySlotTicks": 34442,
+                "saturatedAnchorPurposeTicks": 590,
+                "utilisation": 0.555775
+              },
+              {
+                "purpose": "CONFLICT",
+                "sampledAnchorPurposeTicks": 515,
+                "claimedSlotTicks": 541,
+                "availableSlotTicks": 326,
+                "capacitySlotTicks": 867,
+                "saturatedAnchorPurposeTicks": 189,
+                "utilisation": 0.623991
+              },
+              {
+                "purpose": "FLIGHT",
+                "sampledAnchorPurposeTicks": 0,
+                "claimedSlotTicks": 0,
+                "availableSlotTicks": 0,
+                "capacitySlotTicks": 0,
+                "saturatedAnchorPurposeTicks": 0,
+                "utilisation": 0
+              }
+            ],
+            "contentionCount": null,
+            "failedClaimCount": null
+          }
+        },
+        "interactions": {
+          "count": 535,
+          "per1_000Ticks": 53.5,
+          "byType": [
+            { "eventType": "FOOD_SHARED", "count": 7, "per1_000Ticks": 0.7 },
+            { "eventType": "MATERIAL_DEPOSITED", "count": 6, "per1_000Ticks": 0.6 },
+            { "eventType": "STORAGE_SITE_STARTED", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "STORAGE_COMPLETED", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "CREATURE_GUARDED", "count": 429, "per1_000Ticks": 42.9 },
+            { "eventType": "THEFT_COMMITTED", "count": 5, "per1_000Ticks": 0.5 },
+            { "eventType": "THEFT_WITNESSED", "count": 5, "per1_000Ticks": 0.5 },
+            { "eventType": "CREATURE_ATTACKED", "count": 28, "per1_000Ticks": 2.8 },
+            { "eventType": "CREATURE_FLED", "count": 43, "per1_000Ticks": 4.3 },
+            { "eventType": "CREATURE_JOINED_GROUP", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "GROUP_FOUNDED", "count": 1, "per1_000Ticks": 0.1 },
+            { "eventType": "LEADER_SELECTED", "count": 8, "per1_000Ticks": 0.8 }
+          ]
+        },
+        "significantEvents": {
+          "tiers": ["SIGNIFICANT", "CRITICAL"],
+          "count": 48,
+          "per1_000Ticks": 4.8,
+          "intervals": {
+            "samples": 47,
+            "min": 0,
+            "p10": 0,
+            "median": 36,
+            "p90": 328,
+            "max": 2070,
+            "mean": 209
+          },
+          "trailingSilenceTicks": 77,
+          "byType": [
+            { "type": "CREATURE_ATTACKED", "count": 28 },
+            { "type": "GROUP_FOUNDED", "count": 1 },
+            { "type": "LEADER_SELECTED", "count": 8 },
+            { "type": "STORAGE_COMPLETED", "count": 1 },
+            { "type": "THEFT_COMMITTED", "count": 5 },
+            { "type": "THEFT_WITNESSED", "count": 5 }
+          ]
+        },
+        "interventionResponses": {
+          "windowTicks": 120,
+          "changes": 0,
+          "respondingCreatures": 0,
+          "firstResponseTick": null,
+          "byKind": [
+            { "kind": "RECONSIDERED_DESIRE", "count": 0 },
+            { "kind": "RECONSIDERED_PLAN", "count": 0 },
+            { "kind": "CHANGED_ACTION", "count": 0 },
+            { "kind": "CHANGED_DESTINATION", "count": 0 },
+            { "kind": "REROUTED", "count": 0 }
+          ]
+        },
+        "milestones": {
+          "firstGroupTick": 100,
+          "firstStorageSiteTick": 189,
+          "firstStorageTick": 258,
+          "firstTheftTick": 562,
+          "firstConflictTick": 619,
+          "firstRecoveryTick": 740,
+          "firstInterventionTick": null,
+          "firstInterventionResponseTick": null
+        }
+      }
+    }
+  ],
+  "aggregate": {
+    "runCount": 3,
+    "totalObservedTicks": 30000,
+    "completedActions": 10094,
+    "actionShares": [
+      { "kind": "EXPLORE", "count": 5803, "share": 0.574896 },
+      { "kind": "GATHER_FOOD", "count": 335, "share": 0.033188 },
+      { "kind": "GATHER_MATERIAL", "count": 39, "share": 0.003864 },
+      { "kind": "EAT", "count": 463, "share": 0.045869 },
+      { "kind": "REST", "count": 291, "share": 0.028829 },
+      { "kind": "SHARE", "count": 50, "share": 0.004953 },
+      { "kind": "KEEP", "count": 1494, "share": 0.148009 },
+      { "kind": "STEAL", "count": 10, "share": 0.000991 },
+      { "kind": "DEPOSIT", "count": 145, "share": 0.014365 },
+      { "kind": "WITHDRAW", "count": 0, "share": 0 },
+      { "kind": "BUILD_STORAGE", "count": 23, "share": 0.002279 },
+      { "kind": "GUARD", "count": 1288, "share": 0.127601 },
+      { "kind": "ATTACK", "count": 56, "share": 0.005548 },
+      { "kind": "FLEE", "count": 94, "share": 0.009312 },
+      { "kind": "JOIN_GROUP", "count": 3, "share": 0.000297 }
+    ],
+    "movementDistanceFixedUnits": 13598130,
+    "interactionCount": 1529,
+    "significantEventCount": 98,
+    "claimedSlotTicks": 103352,
+    "capacitySlotTicks": 209056,
+    "slotUtilisation": 0.494375,
+    "contentionCount": null,
+    "failedClaimCount": null,
+    "interventionResponseChanges": 0,
+    "seedDistributions": {
+      "keepShare": {
+        "samples": 3,
+        "min": 0.137313,
+        "p10": 0.137313,
+        "median": 0.141898,
+        "p90": 0.166194,
+        "max": 0.166194,
+        "mean": 0.148468
+      },
+      "occupiedTileMedian": {
+        "samples": 3,
+        "min": 8,
+        "p10": 8,
+        "median": 8,
+        "p90": 8,
+        "max": 8,
+        "mean": 8
+      },
+      "exactOverlapRate": {
+        "samples": 3,
+        "min": 0.000175,
+        "p10": 0.000175,
+        "median": 0.000325,
+        "p90": 0.000375,
+        "max": 0.000375,
+        "mean": 0.000292
+      },
+      "maximumTileCrowding": {
+        "samples": 3,
+        "min": 2,
+        "p10": 2,
+        "median": 3,
+        "p90": 3,
+        "max": 3,
+        "mean": 2.666667
+      },
+      "maximumInteractionAnchorCrowding": {
+        "samples": 3,
+        "min": 6,
+        "p10": 6,
+        "median": 6,
+        "p90": 6,
+        "max": 6,
+        "mean": 6
+      },
+      "movementPerSimulatedMinute": {
+        "samples": 3,
+        "min": 246216.48,
+        "p10": 246216.48,
+        "median": 273968.28,
+        "p90": 295703.04,
+        "max": 295703.04,
+        "mean": 271962.6
+      },
+      "interactionsPer1_000Ticks": {
+        "samples": 3,
+        "min": 45.1,
+        "p10": 45.1,
+        "median": 53.5,
+        "p90": 54.3,
+        "max": 54.3,
+        "mean": 50.966667
+      },
+      "significantEventsPer1_000Ticks": {
+        "samples": 3,
+        "min": 0.6,
+        "p10": 0.6,
+        "median": 4.4,
+        "p90": 4.8,
+        "max": 4.8,
+        "mean": 3.266667
+      },
+      "trailingSilenceTicks": {
+        "samples": 3,
+        "min": 77,
+        "p10": 77,
+        "median": 827,
+        "p90": 8800,
+        "max": 8800,
+        "mean": 3234.666667
+      },
+      "slotUtilisation": {
+        "samples": 3,
+        "min": 0.483006,
+        "p10": 0.483006,
+        "median": 0.5001,
+        "p90": 0.500438,
+        "max": 0.500438,
+        "mean": 0.494515
+      },
+      "saturatedAnchorPurposeTicks": {
+        "samples": 3,
+        "min": 7241,
+        "p10": 7241,
+        "median": 7524,
+        "p90": 8553,
+        "max": 8553,
+        "mean": 7772.666667
+      },
+      "interventionResponseChanges": {
+        "samples": 3,
+        "min": 0,
+        "p10": 0,
+        "median": 0,
+        "p90": 0,
+        "max": 0,
+        "mean": 0
+      }
+    },
+    "warnings": []
+  }
+}

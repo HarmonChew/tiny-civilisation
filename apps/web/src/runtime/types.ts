@@ -1,7 +1,14 @@
 import type {
+  CausalEvidenceNodeV1,
+  CausalEvidenceProjectionV1,
+  CausalEvidenceQueryOptions,
+  CausalEvidenceRef,
+  ExperimentOutcomeComparisonV1,
+  ExperimentOutcomeV1,
   PlayerCommand,
   RenderSnapshot,
   ScheduledPlayerCommand,
+  SettledInterventionOutcomeV1,
   SimulationReplayV1,
   SimulationState,
 } from "@tiny-civ/sim-core";
@@ -22,15 +29,38 @@ export interface SimulationFrame {
   readonly revision: number;
   readonly seed: number;
   readonly tick: number;
-  readonly hash: string;
+  /** Present only when this exact authoritative boundary was explicitly hashed. */
+  readonly hash: string | null;
   readonly playing: boolean;
-  readonly snapshot: Immutable<RenderSnapshot>;
-  /**
-   * Transitional compatibility projection for the existing web adapter. It is
-   * always a detached clone; mutating it cannot affect the simulation runtime.
-   */
-  readonly state: Immutable<SimulationState>;
+  readonly snapshot: RenderSnapshot;
 }
+
+export interface RuntimeCanonicalHash {
+  readonly tick: number;
+  readonly hash: string;
+}
+
+export interface RuntimeCheckpoint extends RuntimeCanonicalHash {
+  /** Detached authoritative state for explicit save/export/branch workflows. */
+  readonly state: SimulationState;
+}
+
+export interface RuntimeEntityDetail {
+  readonly stateTick: number;
+  readonly ref: CausalEvidenceRef;
+  readonly node: CausalEvidenceNodeV1 | null;
+}
+
+export interface RuntimeInterventionOutcomeProjection {
+  readonly commandId: number;
+  readonly outcome: SettledInterventionOutcomeV1 | null;
+}
+
+export interface RuntimeQueryOptions {
+  readonly signal?: AbortSignal;
+}
+
+export const MAX_CAPTURE_TICKS = 256;
 
 export interface SimulationRuntimeStatus {
   readonly phase: SimulationRuntimePhase;
@@ -69,10 +99,12 @@ export interface RuntimeProgress {
 export interface RunToTickResult {
   readonly cancelled: boolean;
   readonly frame: SimulationFrame;
+  readonly capturedFrames?: readonly SimulationFrame[];
 }
 
 export interface ReplayResult extends RunToTickResult {
   readonly expectedHash: string | null;
+  readonly actualHash: string;
   readonly hashMatches: boolean | null;
 }
 
@@ -80,6 +112,7 @@ export interface LongRunningOperationOptions {
   readonly signal?: AbortSignal;
   readonly onProgress?: (progress: RuntimeProgress) => void;
   readonly chunkSize?: number;
+  readonly captureTicks?: readonly number[];
 }
 
 export type RuntimeReplay = SimulationReplayV1;
@@ -94,6 +127,28 @@ export interface SimulationRuntime {
   step(ticks?: number): SimulationFrame;
   intervene(command: PlayerCommand): InterventionAcknowledgement;
   getFrame(): SimulationFrame;
+  /** Returns a detached authoritative checkpoint for an explicit workflow. */
+  getState(): SimulationState;
+  getCanonicalHash(options?: RuntimeQueryOptions): RuntimeCanonicalHash;
+  getCheckpoint(options?: RuntimeQueryOptions): RuntimeCheckpoint;
+  getCausalEvidence(
+    focus: CausalEvidenceRef,
+    query?: CausalEvidenceQueryOptions,
+    options?: RuntimeQueryOptions,
+  ): CausalEvidenceProjectionV1;
+  getEntityDetail(
+    ref: CausalEvidenceRef,
+    options?: RuntimeQueryOptions,
+  ): RuntimeEntityDetail;
+  getInterventionOutcomes(
+    commands: readonly ScheduledPlayerCommand[],
+    options?: RuntimeQueryOptions,
+  ): readonly RuntimeInterventionOutcomeProjection[];
+  getOutcome(options?: RuntimeQueryOptions): ExperimentOutcomeV1;
+  compareOutcome(
+    baseline: ExperimentOutcomeV1,
+    options?: RuntimeQueryOptions,
+  ): ExperimentOutcomeComparisonV1;
   save(): string;
   load(serialized: string): SimulationFrame;
   runToTick(
@@ -122,6 +177,28 @@ export interface SimulationEngine {
   step(ticks?: number): Promise<SimulationFrame>;
   intervene(command: PlayerCommand): Promise<InterventionAcknowledgement>;
   getFrame(): Promise<SimulationFrame>;
+  /** Returns a detached authoritative checkpoint for an explicit workflow. */
+  getState(): Promise<SimulationState>;
+  getCanonicalHash(options?: RuntimeQueryOptions): Promise<RuntimeCanonicalHash>;
+  getCheckpoint(options?: RuntimeQueryOptions): Promise<RuntimeCheckpoint>;
+  getCausalEvidence(
+    focus: CausalEvidenceRef,
+    query?: CausalEvidenceQueryOptions,
+    options?: RuntimeQueryOptions,
+  ): Promise<CausalEvidenceProjectionV1>;
+  getEntityDetail(
+    ref: CausalEvidenceRef,
+    options?: RuntimeQueryOptions,
+  ): Promise<RuntimeEntityDetail>;
+  getInterventionOutcomes(
+    commands: readonly ScheduledPlayerCommand[],
+    options?: RuntimeQueryOptions,
+  ): Promise<readonly RuntimeInterventionOutcomeProjection[]>;
+  getOutcome(options?: RuntimeQueryOptions): Promise<ExperimentOutcomeV1>;
+  compareOutcome(
+    baseline: ExperimentOutcomeV1,
+    options?: RuntimeQueryOptions,
+  ): Promise<ExperimentOutcomeComparisonV1>;
   save(): Promise<string>;
   load(serialized: string): Promise<SimulationFrame>;
   runToTick(
@@ -139,4 +216,5 @@ export interface RuntimeExecutionContext {
   readonly signal?: AbortSignal;
   readonly onProgress?: (progress: RuntimeProgress) => void;
   readonly chunkSize?: number;
+  readonly captureTicks?: readonly number[];
 }

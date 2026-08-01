@@ -54,6 +54,23 @@ describe("pathfinding", () => {
     ).toEqual([]);
     expect(state.world.navigationRevision).toBe(4);
   });
+
+  it("does not count unreachable interaction slots as invalid paths", () => {
+    const state = createSimulation(23);
+    for (const y of [14, 15, 16, 17]) {
+      queuePlayerCommand(state, {
+        type: "TOGGLE_OBSTACLE",
+        applyAtTick: 0,
+        x: 24,
+        y,
+        blocked: true,
+      });
+    }
+
+    advanceSimulation(state, 120);
+
+    expect(state.metrics.invalidPathFailures).toBe(0);
+  });
 });
 
 describe("player command queue", () => {

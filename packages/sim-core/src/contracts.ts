@@ -1,6 +1,7 @@
 import { advanceSimulation } from "./tick.js";
 import { createSimulation } from "./creation.js";
 import { hashSimulationState } from "./state-hash.js";
+import { migrateSimulationState } from "./state-migrations.js";
 import {
   assertCompatibleSimulationState,
   assertSerializedSize,
@@ -270,6 +271,24 @@ export function serializeSimulationReplay(replay: SimulationReplayV1): string {
 }
 
 export function migrateSimulationReplay(value: unknown): SimulationReplayV1 {
+  if (
+    isRecord(value) &&
+    value.kind === "tiny-civilisation/replay" &&
+    readVersion(value, "schemaVersion") === REPLAY_SCHEMA_VERSION &&
+    readVersion(value, "behaviorVersion") === 1 &&
+    readVersion(value, "stateSchemaVersion") === 1
+  ) {
+    const migrated = {
+      kind: "tiny-civilisation/replay" as const,
+      schemaVersion: REPLAY_SCHEMA_VERSION,
+      behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
+      stateSchemaVersion: SIMULATION_STATE_VERSION,
+      seed: value.seed,
+      commands: value.commands,
+    };
+    assertSimulationReplay(migrated);
+    return migrated;
+  }
   assertSimulationReplay(value);
   return value;
 }
@@ -368,12 +387,23 @@ export function migrateSimulationSave(value: unknown): SimulationSaveV1 {
     );
   }
   const behaviorVersion = readVersion(value, "behaviorVersion");
+  const stateSchemaVersion = readVersion(value, "stateSchemaVersion");
+  if (behaviorVersion === 1 && stateSchemaVersion === 1) {
+    const state = migrateSimulationState(value.state);
+    assertCompatibleSimulationState(state);
+    return {
+      kind: "tiny-civilisation/save",
+      schemaVersion: SAVE_SCHEMA_VERSION,
+      behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
+      stateSchemaVersion: SIMULATION_STATE_VERSION,
+      state,
+    };
+  }
   if (behaviorVersion !== SIMULATION_BEHAVIOR_VERSION) {
     throw new Error(
       `Save behavior version ${String(behaviorVersion)} is incompatible with ${SIMULATION_BEHAVIOR_VERSION}.`,
     );
   }
-  const stateSchemaVersion = readVersion(value, "stateSchemaVersion");
   if (stateSchemaVersion !== SIMULATION_STATE_VERSION) {
     throw new Error(
       `Save state version ${String(stateSchemaVersion)} is incompatible with ${SIMULATION_STATE_VERSION}.`,

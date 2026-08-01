@@ -4,6 +4,7 @@ import {
   createSimulation,
   hashSimulationState,
   queuePlayerCommand,
+  SIMULATION_BEHAVIOR_VERSION,
   type AddFoodCommand,
   type RemoveFoodCommand,
   type ScheduledPlayerCommand,
@@ -50,6 +51,7 @@ interface GoldenReplayResult {
 interface GoldenReplayCorpus {
   readonly replaySchemaVersion: 1;
   readonly simulationSchemaVersion: number;
+  readonly simulationBehaviorVersion: number;
   readonly scenarios: GoldenReplayResult[];
 }
 
@@ -295,11 +297,12 @@ describe("golden deterministic replays", () => {
     const corpus: GoldenReplayCorpus = {
       replaySchemaVersion: 1,
       simulationSchemaVersion,
+      simulationBehaviorVersion: SIMULATION_BEHAVIOR_VERSION,
       scenarios,
     };
 
     await expect(`${JSON.stringify(corpus, null, 2)}\n`).toMatchFileSnapshot(
-      "./fixtures/golden-replays.v1.json",
+      "./fixtures/golden-replays.v2.json",
     );
   }, 15_000);
 });

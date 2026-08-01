@@ -14,10 +14,19 @@ import {
   readPopulation,
   type SimulationMetrics,
 } from "./metrics.js";
+import {
+  ACTIVITY_PROFILE_SCHEMA_VERSION,
+  ACTIVITY_SAMPLE_EVERY_TICKS,
+  SIGNIFICANT_EVENT_TIERS,
+  StreamingActivityCollector,
+  summarizeActivityProfiles,
+  type ActivityProfile,
+} from "./activity-collector.js";
 
 const DEFAULT_SEED = 4_182;
 const DEFAULT_TICKS = 10_000;
 const MAX_SEED = 0xffff_ffff;
+const DEFAULT_PROFILE_SEEDS = [4_182, 921, 23] as const;
 
 interface RunOptions {
   seed: number;
@@ -28,6 +37,8 @@ interface BatchOptions {
   seeds: number[];
   ticks: number;
 }
+
+type ProfileOptions = BatchOptions;
 
 interface PerformanceMetrics {
   elapsedMs: number;
@@ -41,6 +52,14 @@ interface RunResult {
   performance: PerformanceMetrics;
 }
 
+interface ProfileRunResult {
+  seed: number;
+  requestedTicks: number;
+  finalHash: string;
+  profile: ActivityProfile;
+  performance: PerformanceMetrics;
+}
+
 class CliError extends Error {}
 
 function usage(): string {
@@ -50,6 +69,7 @@ function usage(): string {
     "Usage:",
     "  npm run headless -- [run] [--seed N] [--ticks N]",
     "  npm run headless -- batch [--seeds 1..100|1,4,8] [--count N] [--ticks N]",
+    "  npm run headless -- profile [--seed N|--seeds 4182,921,23|--count N] [--ticks N]",
     "",
     "Options:",
     `  --seed N       Unsigned 32-bit world seed (default: ${DEFAULT_SEED})`,
@@ -173,6 +193,50 @@ function parseBatchOptions(args: readonly string[]): BatchOptions {
   };
 }
 
+function parseProfileOptions(args: readonly string[]): ProfileOptions {
+  let seeds: number[] | undefined;
+  let count: number | undefined;
+  let ticks = DEFAULT_TICKS;
+
+  for (let index = 0; index < args.length; index++) {
+    const argument = args[index];
+    if (argument === "--seed") {
+      if (seeds !== undefined) {
+        throw new CliError("Use only one of --seed, --seeds, or --count.");
+      }
+      seeds = [parseInteger(optionValue(args, index, argument), argument, 0, MAX_SEED)];
+      index++;
+    } else if (argument === "--seeds") {
+      if (seeds !== undefined) {
+        throw new CliError("Use only one of --seed, --seeds, or --count.");
+      }
+      seeds = parseSeedList(optionValue(args, index, argument));
+      index++;
+    } else if (argument === "--count") {
+      count = parseInteger(optionValue(args, index, argument), argument, 1, 10_000);
+      index++;
+    } else if (argument === "--ticks") {
+      ticks = parseInteger(optionValue(args, index, argument), argument, 0);
+      index++;
+    } else {
+      throw new CliError(`Unknown profile option: ${String(argument)}`);
+    }
+  }
+
+  if (seeds !== undefined && count !== undefined) {
+    throw new CliError("Use only one of --seed, --seeds, or --count.");
+  }
+
+  return {
+    seeds:
+      seeds ??
+      (count === undefined
+        ? [...DEFAULT_PROFILE_SEEDS]
+        : Array.from({ length: count }, (_, index) => index + 1)),
+    ticks,
+  };
+}
+
 function round(value: number, decimalPlaces: number): number {
   const scale = 10 ** decimalPlaces;
   return Math.round(value * scale) / scale;
@@ -245,6 +309,47 @@ function runBatch(options: BatchOptions): object {
   };
 }
 
+function profileSimulation({ seed, ticks }: RunOptions): ProfileRunResult {
+  const state = createSimulation(seed);
+  const collector = new StreamingActivityCollector(state);
+  const startedAt = performance.now();
+  for (let tick = 0; tick < ticks; tick += ACTIVITY_SAMPLE_EVERY_TICKS) {
+    advanceSimulation(state, ACTIVITY_SAMPLE_EVERY_TICKS);
+    collector.observe(state);
+  }
+  const elapsedMs = performance.now() - startedAt;
+
+  return {
+    seed,
+    requestedTicks: ticks,
+    finalHash: hashSimulationState(state),
+    profile: collector.report(),
+    performance: {
+      elapsedMs: round(elapsedMs, 3),
+      ticksPerSecond:
+        ticks === 0 ? 0 : round((ticks * 1_000) / Math.max(elapsedMs, 0.001), 1),
+    },
+  };
+}
+
+function runProfile(options: ProfileOptions): object {
+  const runs = options.seeds.map((seed) =>
+    profileSimulation({ seed, ticks: options.ticks }),
+  );
+  return {
+    schemaVersion: ACTIVITY_PROFILE_SCHEMA_VERSION,
+    command: "profile",
+    configuration: {
+      seeds: options.seeds,
+      ticksPerRun: options.ticks,
+      sampleEveryTicks: ACTIVITY_SAMPLE_EVERY_TICKS,
+      significantEventTiers: SIGNIFICANT_EVENT_TIERS,
+    },
+    runs,
+    aggregate: summarizeActivityProfiles(runs.map((run) => run.profile)),
+  };
+}
+
 function main(args: readonly string[]): void {
   if (args.includes("--help") || args.includes("-h")) {
     process.stdout.write(`${usage()}\n`);
@@ -254,6 +359,12 @@ function main(args: readonly string[]): void {
   const [first, ...rest] = args;
   if (first === "batch") {
     process.stdout.write(`${JSON.stringify(runBatch(parseBatchOptions(rest)), null, 2)}\n`);
+    return;
+  }
+  if (first === "profile") {
+    process.stdout.write(
+      `${JSON.stringify(runProfile(parseProfileOptions(rest)), null, 2)}\n`,
+    );
     return;
   }
 

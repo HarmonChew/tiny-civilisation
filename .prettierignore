@@ -4,4 +4,5 @@ coverage/
 playwright-report/
 test-results/
 packages/sim-core/tests/fixtures/golden-replays.v1.json
+packages/sim-core/tests/fixtures/golden-replays.v2.json
 package-lock.json

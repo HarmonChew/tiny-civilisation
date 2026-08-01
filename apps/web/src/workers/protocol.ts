@@ -1,8 +1,21 @@
-import type { PlayerCommand } from "@tiny-civ/sim-core";
+import type {
+  CausalEvidenceProjectionV1,
+  CausalEvidenceQueryOptions,
+  CausalEvidenceRef,
+  ExperimentOutcomeComparisonV1,
+  ExperimentOutcomeV1,
+  PlayerCommand,
+  ScheduledPlayerCommand,
+  SimulationState,
+} from "@tiny-civ/sim-core";
 import type {
   InterventionAcknowledgement,
   ReplayResult,
   RunToTickResult,
+  RuntimeCanonicalHash,
+  RuntimeCheckpoint,
+  RuntimeEntityDetail,
+  RuntimeInterventionOutcomeProjection,
   RuntimeProgress,
   RuntimeReplay,
   SimulationFrame,
@@ -16,17 +29,34 @@ export type RuntimeOperation =
   | { readonly type: "step"; readonly ticks: number }
   | { readonly type: "intervene"; readonly command: PlayerCommand }
   | { readonly type: "get-frame" }
+  | { readonly type: "get-state" }
+  | { readonly type: "get-canonical-hash" }
+  | { readonly type: "get-checkpoint" }
+  | {
+      readonly type: "get-causal-evidence";
+      readonly focus: CausalEvidenceRef;
+      readonly query?: CausalEvidenceQueryOptions;
+    }
+  | { readonly type: "get-entity-detail"; readonly ref: CausalEvidenceRef }
+  | {
+      readonly type: "get-intervention-outcomes";
+      readonly commands: readonly ScheduledPlayerCommand[];
+    }
+  | { readonly type: "get-outcome" }
+  | { readonly type: "compare-outcome"; readonly baseline: ExperimentOutcomeV1 }
   | { readonly type: "save" }
   | { readonly type: "load"; readonly serialized: string }
   | {
       readonly type: "run-to-tick";
       readonly targetTick: number;
       readonly chunkSize?: number;
+      readonly captureTicks?: readonly number[];
     }
   | {
       readonly type: "replay";
       readonly replay: RuntimeReplay;
       readonly chunkSize?: number;
+      readonly captureTicks?: readonly number[];
     }
   | { readonly type: "dispose" };
 
@@ -36,6 +66,14 @@ export type RuntimeOperationResult =
   | RunToTickResult
   | ReplayResult
   | SimulationRuntimeStatus
+  | SimulationState
+  | RuntimeCanonicalHash
+  | RuntimeCheckpoint
+  | CausalEvidenceProjectionV1
+  | RuntimeEntityDetail
+  | readonly RuntimeInterventionOutcomeProjection[]
+  | ExperimentOutcomeV1
+  | ExperimentOutcomeComparisonV1
   | string;
 
 export interface RuntimeRequestMessage {

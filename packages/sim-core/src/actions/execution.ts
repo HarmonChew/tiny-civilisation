@@ -1,5 +1,6 @@
 import { addHistory, emitDomainEvent } from "../events.js";
 import { findPath, manhattanDistance } from "../pathfinding.js";
+import { planCompletedAfterAction, recordPlanTransition } from "../plans.js";
 import { keyedRandomU32, keyedRandomUnit } from "../rng.js";
 import {
   addMemory,
@@ -30,10 +31,10 @@ import {
   UNIT_MAX,
   clamp,
   clampUnit,
+  creatureTravelPosition,
   groupStorage,
   inventorySpace,
   removeGuardAssignment,
-  tileCenter,
 } from "./shared.js";
 
 function refreshMovingTarget(
@@ -41,6 +42,7 @@ function refreshMovingTarget(
   creature: CreatureState,
   action: ActiveAction,
 ): boolean {
+  if (action.interactionClaim) return true;
   if (
     action.targetEntityId === null ||
     action.kind === "FLEE" ||
@@ -67,6 +69,25 @@ function refreshMovingTarget(
     }
   }
   return true;
+}
+
+function recordRouteSample(state: SimulationState, creature: CreatureState): void {
+  const latest = creature.recentRoute.at(-1);
+  if (latest?.tileIndex === creature.tileIndex && state.tick - latest.tick < 4) {
+    return;
+  }
+  creature.recentRoute.push({
+    tick: state.tick,
+    tileIndex: creature.tileIndex,
+    x: creature.x,
+    y: creature.y,
+  });
+  if (creature.recentRoute.length > state.configuration.maxRouteSamplesPerCreature) {
+    creature.recentRoute.splice(
+      0,
+      creature.recentRoute.length - state.configuration.maxRouteSamplesPerCreature,
+    );
+  }
 }
 
 function moveCreatureAlongPath(
@@ -99,7 +120,14 @@ function moveCreatureAlongPath(
     action.progress = 0;
     return true;
   }
-  const target = tileCenter(state, nextTile);
+  const isFinalWaypoint = action.pathIndex === action.path.length - 1;
+  const target =
+    isFinalWaypoint && action.interactionClaim
+      ? {
+          x: action.interactionClaim.targetX,
+          y: action.interactionClaim.targetY,
+        }
+      : creatureTravelPosition(state, nextTile, creature.id);
   const speed = Math.max(
     64,
     Math.floor((MOVEMENT_SPEED * (7_500 + creature.health / 4)) / UNIT_MAX),
@@ -110,6 +138,7 @@ function moveCreatureAlongPath(
     creature.x = target.x;
     creature.y = target.y;
     creature.tileIndex = nextTile;
+    recordRouteSample(state, creature);
     action.pathIndex += 1;
     if (action.pathIndex >= action.path.length) {
       action.phase = "WORKING";
@@ -135,6 +164,12 @@ function finishCreatureAction(state: SimulationState, creature: CreatureState): 
   if (action.kind === "GUARD") {
     removeGuardAssignment(state, creature);
   }
+  if (creature.activePlan) {
+    creature.activePlan.interactionClaim = null;
+    if (planCompletedAfterAction(state, creature, action.kind)) {
+      recordPlanTransition(state, creature, "COMPLETED");
+    }
+  }
   creature.activeAction = null;
   creature.activeGoal = null;
   creature.nextDecisionTick = state.tick + 1;
@@ -153,6 +188,10 @@ export function executeActiveActions(state: SimulationState): void {
       }
       creature.activeAction = null;
       creature.activeGoal = null;
+      if (creature.activePlan) {
+        creature.activePlan.interactionClaim = null;
+        recordPlanTransition(state, creature, "BLOCKED");
+      }
       creature.nextDecisionTick = state.tick + 1;
       continue;
     }
@@ -161,6 +200,10 @@ export function executeActiveActions(state: SimulationState): void {
         state.metrics.invalidPathFailures += 1;
         creature.activeAction = null;
         creature.activeGoal = null;
+        if (creature.activePlan) {
+          creature.activePlan.interactionClaim = null;
+          recordPlanTransition(state, creature, "BLOCKED");
+        }
         creature.nextDecisionTick = state.tick + 3;
       }
       continue;
@@ -476,9 +519,24 @@ function buildStorage(state: SimulationState, creature: CreatureState): void {
       summary: `${creature.name} added ${deposited} material to the shared store.`,
     });
   }
+  const previousProgress = site.progress;
   site.progress = clampUnit(
     site.progress + 1_250 + Math.floor(creature.traits.loyalty / 12),
   );
+  for (const threshold of [2_500, 5_000, 7_500] as const) {
+    if (previousProgress >= threshold || site.progress < threshold) continue;
+    emitDomainEvent(state, {
+      type: "STORAGE_WORK_ADVANCED",
+      actorIds: [creature.id],
+      targetIds: [site.id],
+      groupIds: [group.id],
+      locationTileIndex: site.tileIndex,
+      quantity: threshold,
+      decisionRecordIds: currentDecisionIds(creature),
+      importance: threshold === 7_500 ? 48 : 30,
+      summary: `${creature.name} advanced ${group.name}'s shared store to ${threshold / 100}% completion.`,
+    });
+  }
   if (site.material >= site.materialRequired && site.progress >= site.workRequired) {
     site.kind = "STORAGE";
     site.completedTick = state.tick;
@@ -643,6 +701,20 @@ function attackCreature(
     summary: hit
       ? `${attacker.name} struck ${target.name}, causing ${damage} injury.`
       : `${attacker.name} confronted ${target.name}, but the blow missed.`,
+  });
+  emitDomainEvent(state, {
+    type: "CONFRONTATION_AFTERMATH",
+    actorIds: [attacker.id],
+    targetIds: [target.id],
+    groupIds: [attacker.groupId, target.groupId].filter(
+      (groupId): groupId is number => groupId !== null,
+    ),
+    locationTileIndex: target.tileIndex,
+    quantity: target.health,
+    causedByEventIds: [event.id],
+    decisionRecordIds: currentDecisionIds(attacker),
+    importance: 32,
+    summary: `${target.name} remained at ${Math.floor(target.health / 100)}% health after ${attacker.name}'s confrontation.`,
   });
   changeRelationship(
     state,
