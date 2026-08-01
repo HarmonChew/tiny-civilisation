@@ -58,6 +58,7 @@ export function WorldStage({
   tool,
   overlays,
   feedback,
+  mutationDisabled = false,
   onTool,
   onOverlay,
   onSelect,
@@ -70,6 +71,7 @@ export function WorldStage({
   tool: InterventionTool;
   overlays: OverlaySettings;
   feedback: string;
+  mutationDisabled?: boolean;
   onTool: (tool: InterventionTool) => void;
   onOverlay: (overlay: keyof OverlaySettings) => void;
   onSelect: (id: EntityId | null) => void;
@@ -87,6 +89,7 @@ export function WorldStage({
               label={option.label}
               icon={option.icon}
               pressed={tool === option.id}
+              disabled={mutationDisabled && option.id !== "inspect"}
               onClick={() => onTool(option.id)}
             >
               {option.label}
@@ -121,7 +124,9 @@ export function WorldStage({
         </div>
         <span className="dish-heading__instruction">
           <ActiveToolIcon aria-hidden="true" size={15} />
-          {activeTool.help}
+          {mutationDisabled && tool !== "inspect"
+            ? "Wait for the current experiment operation to finish."
+            : activeTool.help}
         </span>
       </div>
       <div className="dish-well">
@@ -131,6 +136,7 @@ export function WorldStage({
           followedId={followedId}
           tool={tool}
           overlays={overlays}
+          mutationDisabled={mutationDisabled}
           onSelect={onSelect}
           onWorldAction={onWorldAction}
         />

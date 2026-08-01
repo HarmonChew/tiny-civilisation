@@ -164,7 +164,6 @@ function TimelineEntry({
   event: TimelineEventView;
   onSelectEvent: (event: TimelineEventView) => void;
 }) {
-  const actorId = event.decisionActorId ?? event.actorIds[0] ?? event.targetIds[0];
   return (
     <li className={`timeline-entry timeline-entry--${event.category}`}>
       <span className="timeline-entry__pin" aria-hidden="true" />
@@ -173,22 +172,15 @@ function TimelineEntry({
           <time>{tickLabel(event.tick)}</time>
           <span>{event.category}</span>
         </div>
-        {actorId ? (
-          <button
-            type="button"
-            className="timeline-entry__body"
-            onClick={() => onSelectEvent(event)}
-            aria-label={`${event.title}. Inspect involved creature.`}
-          >
-            <strong>{event.title}</strong>
-            <span>{event.detail}</span>
-          </button>
-        ) : (
-          <div className="timeline-entry__body">
-            <strong>{event.title}</strong>
-            <span>{event.detail}</span>
-          </div>
-        )}
+        <button
+          type="button"
+          className="timeline-entry__body"
+          onClick={() => onSelectEvent(event)}
+          aria-label={`${event.title}. Inspect causal evidence.`}
+        >
+          <strong>{event.title}</strong>
+          <span>{event.detail}</span>
+        </button>
         {event.causedByEventIds.length > 0 ? (
           <span className="source-note">
             traced to {event.causedByEventIds.length} earlier{" "}

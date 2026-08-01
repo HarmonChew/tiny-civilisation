@@ -19,8 +19,9 @@
     "test:coverage": "npm run test:coverage --workspace @tiny-civ/sim-core && npm run test:coverage --workspace @tiny-civ/web",
     "test:golden": "npm run test:golden --workspace @tiny-civ/sim-core",
     "test:golden:update": "npm run test:golden:update --workspace @tiny-civ/sim-core",
-    "test:e2e": "node scripts/run-e2e.mjs",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run test:e2e && npm run build",
+    "test:e2e": "npm run build && node scripts/run-e2e.mjs",
+    "test:e2e:dev": "node scripts/run-e2e.mjs --dev",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run test:e2e",
     "headless": "npm run start --workspace @tiny-civ/headless --",
     "batch": "npm run batch --workspace @tiny-civ/headless --",
     "benchmark": "npm run benchmark --workspace @tiny-civ/headless --"

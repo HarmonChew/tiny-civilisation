@@ -9,3 +9,7 @@ export const COMMAND_SCHEMA_VERSION = 1 as const;
 export const SNAPSHOT_SCHEMA_VERSION = 1 as const;
 export const REPLAY_SCHEMA_VERSION = 1 as const;
 export const SAVE_SCHEMA_VERSION = 1 as const;
+export const SCENARIO_SCHEMA_VERSION = 1 as const;
+export const EXPERIMENT_SCHEMA_VERSION = 1 as const;
+export const OUTCOME_SCHEMA_VERSION = 1 as const;
+export const CAUSAL_EVIDENCE_SCHEMA_VERSION = 1 as const;

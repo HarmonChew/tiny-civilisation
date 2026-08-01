@@ -1,6 +1,7 @@
 import {
   CircleDot,
   Clock3,
+  FlaskConical,
   Focus,
   Footprints,
   HeartPulse,
@@ -14,9 +15,11 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TimelinePanel } from "./components/Chronicle";
+import { ExperimentWorkspace } from "./components/ExperimentWorkspace";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { WorldStage } from "./components/WorldStage";
 import { IconButton } from "./components/ui";
+import { useExperimentWorkspace } from "./hooks/useExperimentWorkspace";
 import { useSimulationController } from "./hooks/useSimulationController";
 import type {
   EntityId,
@@ -32,8 +35,12 @@ const DEFAULT_SEED = 4182;
 type MobileRegion = "chronicle" | "dish" | "subject";
 
 export default function App() {
+  const simulation = useSimulationController(DEFAULT_SEED);
   const {
     view,
+    seed,
+    initialized,
+    busy,
     fatalError,
     playing,
     setPlaying,
@@ -41,12 +48,8 @@ export default function App() {
     setSpeed,
     feedback,
     advance,
-    restart,
-    applyIntervention,
-  } = useSimulationController(DEFAULT_SEED);
-  const [selectedId, setSelectedId] = useState<EntityId | null>(
-    view.creatures[0]?.id ?? null,
-  );
+  } = simulation;
+  const [selectedId, setSelectedId] = useState<EntityId | null>(null);
   const [followedId, setFollowedId] = useState<EntityId | null>(null);
   const [tool, setTool] = useState<InterventionTool>("inspect");
   const [overlays, setOverlays] = useState<OverlaySettings>({
@@ -60,15 +63,6 @@ export default function App() {
   );
   const [mobileRegion, setMobileRegion] = useState<MobileRegion>("dish");
 
-  const restartWorkspace = useCallback(() => {
-    const nextView = restart();
-    if (!nextView) return;
-    setSelectedId(nextView.creatures[0]?.id ?? null);
-    setFollowedId(null);
-    setSelectedEvidenceEventId(null);
-    setTool("inspect");
-  }, [restart]);
-
   const selectCreature = useCallback((id: EntityId | null) => {
     setSelectedId(id);
     setSelectedEvidenceEventId(null);
@@ -76,20 +70,39 @@ export default function App() {
     if (id !== null) setMobileRegion("subject");
   }, []);
 
-  const inspectTimelineEvent = useCallback((event: TimelineEventView) => {
-    const id = event.decisionActorId ?? event.actorIds[0] ?? event.targetIds[0] ?? null;
-    setSelectedId(id);
+  const experimentWorkspace = useExperimentWorkspace({
+    simulation,
+    onSelectCreature: (id) => selectCreature(id),
+  });
+  const workspaceBusy = experimentWorkspace.busy;
+
+  const recoverWorkspace = useCallback(async () => {
+    const recovered = await experimentWorkspace.recover();
+    if (!recovered) return;
+    setSelectedId(null);
     setFollowedId(null);
-    setSelectedEvidenceEventId(event.id);
-    setMobileRegion("subject");
-  }, []);
+    setSelectedEvidenceEventId(null);
+    setTool("inspect");
+  }, [experimentWorkspace]);
+
+  const inspectTimelineEvent = useCallback(
+    (event: TimelineEventView) => {
+      const id = event.decisionActorId ?? event.actorIds[0] ?? event.targetIds[0] ?? null;
+      setSelectedId(id);
+      setFollowedId(null);
+      setSelectedEvidenceEventId(event.id);
+      setMobileRegion("subject");
+      experimentWorkspace.inspectTimelineEvent(event);
+    },
+    [experimentWorkspace],
+  );
 
   const applyWorldAction = useCallback(
     (action: WorldAction) => {
-      if (tool === "inspect") return;
-      applyIntervention(tool, action.tile);
+      if (tool === "inspect" || busy || workspaceBusy) return;
+      void experimentWorkspace.applyWorldIntervention(tool, action.tile);
     },
-    [applyIntervention, tool],
+    [busy, experimentWorkspace, tool, workspaceBusy],
   );
 
   useEffect(() => {
@@ -103,6 +116,7 @@ export default function App() {
       ) {
         return;
       }
+      if (!initialized || busy || workspaceBusy || fatalError) return;
       if (event.key === " ") {
         event.preventDefault();
         setPlaying((current) => !current);
@@ -120,7 +134,16 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [advance, selectedId]);
+  }, [
+    advance,
+    busy,
+    fatalError,
+    initialized,
+    selectedId,
+    setPlaying,
+    setSpeed,
+    workspaceBusy,
+  ]);
 
   const selectedCreature = useMemo(
     () => view.creatures.find((creature) => creature.id === selectedId) ?? null,
@@ -152,7 +175,17 @@ export default function App() {
             aria-hidden="true"
           />
           <div>
-            <span>{playing ? `Running at ${speed}×` : "Observation paused"}</span>
+            <span>
+              {fatalError
+                ? "Simulation unavailable"
+                : busy
+                  ? "Reconstructing experiment"
+                  : playing
+                    ? `Running at ${speed}×`
+                    : initialized
+                      ? "Observation paused"
+                      : "Preparing field station"}
+            </span>
             <strong>{view.timeLabel}</strong>
           </div>
         </div>
@@ -161,13 +194,13 @@ export default function App() {
             label={playing ? "Pause simulation (Space)" : "Play simulation (Space)"}
             icon={playing ? Pause : Play}
             pressed={playing}
-            disabled={Boolean(fatalError)}
+            disabled={Boolean(fatalError) || busy || workspaceBusy || !initialized}
             onClick={() => setPlaying((current) => !current)}
           />
           <IconButton
             label="Advance one tick (period)"
             icon={StepForward}
-            disabled={Boolean(fatalError)}
+            disabled={Boolean(fatalError) || busy || workspaceBusy || !initialized}
             onClick={() => {
               setPlaying(false);
               advance(1);
@@ -180,6 +213,7 @@ export default function App() {
                 key={value}
                 className={speed === value ? "is-active" : ""}
                 aria-pressed={speed === value}
+                disabled={Boolean(fatalError) || busy || workspaceBusy || !initialized}
                 onClick={() => setSpeed(value)}
               >
                 {value}×
@@ -187,9 +221,17 @@ export default function App() {
             ))}
           </div>
           <IconButton
-            label={`Restart seed ${DEFAULT_SEED}`}
+            label="Open experiment notebook"
+            icon={FlaskConical}
+            pressed={experimentWorkspace.props.open}
+            disabled={Boolean(fatalError) || !initialized}
+            onClick={() => experimentWorkspace.openDrawer("record")}
+          />
+          <IconButton
+            label="Start a new experiment"
             icon={RotateCcw}
-            onClick={restartWorkspace}
+            disabled={busy || workspaceBusy || !initialized}
+            onClick={experimentWorkspace.props.actions.onRequestNew}
           />
         </div>
       </header>
@@ -231,7 +273,7 @@ export default function App() {
             <strong>Simulation unavailable</strong>
             <span>{fatalError}</span>
           </div>
-          <button type="button" onClick={restartWorkspace}>
+          <button type="button" onClick={() => void recoverWorkspace()}>
             Try restart
           </button>
         </div>
@@ -260,13 +302,14 @@ export default function App() {
           }`}
         >
           <WorldStage
-            seed={DEFAULT_SEED}
+            seed={seed}
             view={view}
             selectedId={selectedId}
             followedId={followedId}
             tool={tool}
             overlays={overlays}
             feedback={feedback}
+            mutationDisabled={busy || workspaceBusy}
             onTool={setTool}
             onOverlay={(overlay) =>
               setOverlays((current) => ({ ...current, [overlay]: !current[overlay] }))
@@ -295,6 +338,7 @@ export default function App() {
           />
         </aside>
       </main>
+      <ExperimentWorkspace {...experimentWorkspace.props} />
       <footer className="status-rail">
         <span>
           <Footprints aria-hidden="true" size={14} />

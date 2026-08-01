@@ -359,6 +359,8 @@ export interface ToggleObstacleCommand {
 
 export type PlayerCommand = AddFoodCommand | RemoveFoodCommand | ToggleObstacleCommand;
 
+export const MAX_PLAYER_COMMAND_AMOUNT = 999;
+
 export interface ScheduledPlayerCommand {
   commandId: number;
   applyAtTick: Tick;

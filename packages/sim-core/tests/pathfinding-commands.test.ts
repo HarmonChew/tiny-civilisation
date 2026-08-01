@@ -99,6 +99,46 @@ describe("player command queue", () => {
     ).toBe(6);
   });
 
+  it("rejects food quantities outside the persisted command contract", () => {
+    const state = createSimulation(42);
+    const target = tileIndexAt(state.world, 6, 6);
+    expect(() =>
+      queuePlayerCommand(state, {
+        type: "ADD_FOOD",
+        tileIndex: target,
+        amount: 1_000,
+      }),
+    ).toThrow("whole number from 1 to 999");
+    expect(() =>
+      queuePlayerCommand(state, {
+        type: "REMOVE_FOOD",
+        tileIndex: target,
+        amount: 1.5,
+      }),
+    ).toThrow("whole number from 1 to 999");
+    expect(state.commandQueue).toEqual([]);
+  });
+
+  it("rejects fractional command ticks and tile indexes before scheduling", () => {
+    const state = createSimulation(42);
+    expect(() =>
+      queuePlayerCommand(state, {
+        type: "ADD_FOOD",
+        tileIndex: 4.5,
+        amount: 1,
+      }),
+    ).toThrow("targets invalid tile");
+    expect(() =>
+      queuePlayerCommand(state, {
+        type: "ADD_FOOD",
+        tileIndex: 4,
+        amount: 1,
+        applyAtTick: 2.5,
+      }),
+    ).toThrow("tick must be a nonnegative whole number");
+    expect(state.commandQueue).toEqual([]);
+  });
+
   it("does not trap a creature by blocking its occupied tile", () => {
     const state = createSimulation(4_182);
     const creature = state.creatures[0];

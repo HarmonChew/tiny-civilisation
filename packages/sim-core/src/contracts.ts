@@ -1,8 +1,17 @@
-import type {
-  PlayerCommand,
-  RenderSnapshot,
-  ScheduledPlayerCommand,
-  SimulationState,
+import { advanceSimulation } from "./tick.js";
+import { createSimulation } from "./creation.js";
+import { hashSimulationState } from "./state-hash.js";
+import {
+  assertCompatibleSimulationState,
+  assertSerializedSize,
+  MAX_PERSISTED_COLLECTION_ITEMS,
+} from "./state-validation.js";
+import {
+  MAX_PLAYER_COMMAND_AMOUNT,
+  type PlayerCommand,
+  type RenderSnapshot,
+  type ScheduledPlayerCommand,
+  type SimulationState,
 } from "./types.js";
 import {
   COMMAND_SCHEMA_VERSION,
@@ -35,7 +44,7 @@ export interface SimulationReplayV1 {
   readonly behaviorVersion: typeof SIMULATION_BEHAVIOR_VERSION;
   readonly stateSchemaVersion: typeof SIMULATION_STATE_VERSION;
   readonly seed: number;
-  readonly commands: readonly ScheduledPlayerCommand[];
+  readonly commands: readonly Readonly<ScheduledPlayerCommand>[];
   readonly finalTick?: number;
   readonly finalHash?: string;
 }
@@ -49,6 +58,20 @@ export interface SimulationSaveV1 {
 }
 
 export type SimulationSave = SimulationSaveV1;
+export type ReplayHashStatus = "VERIFIED" | "MISMATCH" | "UNVERIFIED";
+
+export interface ReplayExecutionOptions {
+  readonly finalTick?: number;
+  readonly requireHashMatch?: boolean;
+}
+
+export interface ReplayExecutionResult {
+  readonly state: SimulationState;
+  readonly finalTick: number;
+  readonly finalHash: string;
+  readonly expectedFinalHash: string | null;
+  readonly hashStatus: ReplayHashStatus;
+}
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -59,36 +82,143 @@ function readVersion(record: UnknownRecord, key: string): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
-export function assertCompatibleSimulationState(
-  value: unknown,
-): asserts value is SimulationState {
-  if (!isRecord(value)) {
-    throw new Error("Simulation state must be an object.");
+function assertExactKeys(
+  record: UnknownRecord,
+  keys: readonly string[],
+  label: string,
+): void {
+  const allowed = new Set(keys);
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) throw new Error(`${label} contains unsupported field ${key}.`);
   }
-  const version = readVersion(value, "schemaVersion");
-  if (version !== SIMULATION_STATE_VERSION) {
+}
+
+function assertNonnegativeInteger(value: unknown, label: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a nonnegative safe integer.`);
+  }
+}
+
+function assertPositiveInteger(value: unknown, label: string): asserts value is number {
+  assertNonnegativeInteger(value, label);
+  if (value < 1) throw new Error(`${label} must be positive.`);
+}
+
+export function assertStateHash(
+  value: unknown,
+  label = "State hash",
+): asserts value is string {
+  if (typeof value !== "string" || !/^[0-9a-f]{16}$/u.test(value)) {
+    throw new Error(`${label} must be a lowercase 64-bit hexadecimal hash.`);
+  }
+}
+
+export function assertScheduledPlayerCommand(
+  value: unknown,
+  label = "Scheduled command",
+): asserts value is ScheduledPlayerCommand {
+  if (!isRecord(value)) throw new Error(`${label} must be an object.`);
+  assertExactKeys(
+    value,
+    ["commandId", "applyAtTick", "type", "tileIndex", "amount", "blocked"],
+    label,
+  );
+  assertPositiveInteger(value.commandId, `${label}.commandId`);
+  assertNonnegativeInteger(value.applyAtTick, `${label}.applyAtTick`);
+  assertNonnegativeInteger(value.tileIndex, `${label}.tileIndex`);
+  assertNonnegativeInteger(value.amount, `${label}.amount`);
+  if (
+    value.type !== "ADD_FOOD" &&
+    value.type !== "REMOVE_FOOD" &&
+    value.type !== "TOGGLE_OBSTACLE"
+  ) {
+    throw new Error(`${label}.type is not supported.`);
+  }
+  if (value.type === "TOGGLE_OBSTACLE") {
+    if (value.amount !== 0)
+      throw new Error(`${label}.amount must be zero for an obstacle.`);
+    if (value.blocked !== null && typeof value.blocked !== "boolean") {
+      throw new Error(`${label}.blocked must be boolean or null.`);
+    }
+  } else {
+    if (value.amount < 1) throw new Error(`${label}.amount must be positive for food.`);
+    if (value.amount > MAX_PLAYER_COMMAND_AMOUNT) {
+      throw new Error(
+        `${label}.amount must not exceed ${MAX_PLAYER_COMMAND_AMOUNT.toString()}.`,
+      );
+    }
+    if (value.blocked !== null) throw new Error(`${label}.blocked must be null for food.`);
+  }
+}
+
+export function assertSimulationReplay(
+  value: unknown,
+): asserts value is SimulationReplayV1 {
+  if (!isRecord(value) || value.kind !== "tiny-civilisation/replay") {
+    throw new Error("Invalid Tiny Civilisation replay envelope.");
+  }
+  assertExactKeys(
+    value,
+    [
+      "kind",
+      "schemaVersion",
+      "behaviorVersion",
+      "stateSchemaVersion",
+      "seed",
+      "commands",
+      "finalTick",
+      "finalHash",
+    ],
+    "Replay",
+  );
+  const schemaVersion = readVersion(value, "schemaVersion");
+  if (schemaVersion !== REPLAY_SCHEMA_VERSION) {
     throw new Error(
-      `Unsupported simulation state version ${String(version)}; expected ${SIMULATION_STATE_VERSION}.`,
+      `Unsupported replay schema version ${String(schemaVersion)}; expected ${REPLAY_SCHEMA_VERSION}.`,
     );
   }
-  for (const key of [
-    "creatures",
-    "resourceNodes",
-    "structures",
-    "groups",
-    "relationships",
-    "memories",
-    "commandQueue",
-    "domainEvents",
-    "historyEvents",
-    "decisionRecords",
-  ] as const) {
-    if (!Array.isArray(value[key])) {
-      throw new Error(`Invalid simulation state: ${key} must be an array.`);
+  const behaviorVersion = readVersion(value, "behaviorVersion");
+  if (behaviorVersion !== SIMULATION_BEHAVIOR_VERSION) {
+    throw new Error(
+      `Replay behavior version ${String(behaviorVersion)} is incompatible with ${SIMULATION_BEHAVIOR_VERSION}.`,
+    );
+  }
+  const stateSchemaVersion = readVersion(value, "stateSchemaVersion");
+  if (stateSchemaVersion !== SIMULATION_STATE_VERSION) {
+    throw new Error(
+      `Replay state version ${String(stateSchemaVersion)} is incompatible with ${SIMULATION_STATE_VERSION}.`,
+    );
+  }
+  assertNonnegativeInteger(value.seed, "Replay seed");
+  if (value.seed > 0xffffffff)
+    throw new Error("Replay seed must be an unsigned 32-bit integer.");
+  if (!Array.isArray(value.commands)) throw new Error("Replay commands must be an array.");
+  if (value.commands.length > MAX_PERSISTED_COLLECTION_ITEMS) {
+    throw new Error(
+      `Replay commands exceed the ${MAX_PERSISTED_COLLECTION_ITEMS.toString()} item limit.`,
+    );
+  }
+  for (const [index, command] of value.commands.entries()) {
+    assertScheduledPlayerCommand(command, `Replay commands[${index.toString()}]`);
+    if (command.commandId !== index + 1) {
+      throw new Error("Replay command IDs must be contiguous and begin at 1.");
     }
   }
-  if (!isRecord(value.world) || !Array.isArray(value.world.tiles)) {
-    throw new Error("Invalid simulation state: world.tiles must be an array.");
+  if (value.finalTick !== undefined) {
+    assertNonnegativeInteger(value.finalTick, "Replay finalTick");
+    const lastCommandTick = value.commands.reduce(
+      (latest, command) => Math.max(latest, command.applyAtTick),
+      -1,
+    );
+    if (value.finalTick <= lastCommandTick) {
+      throw new Error("Replay finalTick must be after its last command tick.");
+    }
+  }
+  if (value.finalHash !== undefined) assertStateHash(value.finalHash, "Replay finalHash");
+  if ((value.finalTick === undefined) !== (value.finalHash === undefined)) {
+    throw new Error(
+      "Replay finalTick and finalHash must either both be present or both be absent.",
+    );
   }
 }
 
@@ -119,7 +249,7 @@ export function createSimulationReplay(
   commands: readonly ScheduledPlayerCommand[],
   result?: { readonly finalTick: number; readonly finalHash: string },
 ): SimulationReplayV1 {
-  return {
+  const replay: SimulationReplayV1 = {
     kind: "tiny-civilisation/replay",
     schemaVersion: REPLAY_SCHEMA_VERSION,
     behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
@@ -128,6 +258,80 @@ export function createSimulationReplay(
     commands: commands.map((command) => ({ ...command })),
     ...(result ? { finalTick: result.finalTick, finalHash: result.finalHash } : {}),
   };
+  assertSimulationReplay(replay);
+  return replay;
+}
+
+export function serializeSimulationReplay(replay: SimulationReplayV1): string {
+  assertSimulationReplay(replay);
+  const serialized = JSON.stringify(replay);
+  assertSerializedSize(serialized, "Replay data");
+  return serialized;
+}
+
+export function migrateSimulationReplay(value: unknown): SimulationReplayV1 {
+  assertSimulationReplay(value);
+  return value;
+}
+
+export function deserializeSimulationReplay(serialized: string): SimulationReplayV1 {
+  assertSerializedSize(serialized, "Replay data");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized) as unknown;
+  } catch (error) {
+    throw new Error("Replay data is not valid JSON.", { cause: error });
+  }
+  return migrateSimulationReplay(parsed);
+}
+
+export function executeSimulationReplay(
+  replayValue: SimulationReplayV1 | unknown,
+  options: ReplayExecutionOptions = {},
+): ReplayExecutionResult {
+  const replay = migrateSimulationReplay(replayValue);
+  const latestCommandTick = replay.commands.reduce(
+    (latest, command) => Math.max(latest, command.applyAtTick),
+    -1,
+  );
+  const finalTick = options.finalTick ?? replay.finalTick ?? latestCommandTick + 1;
+  assertNonnegativeInteger(finalTick, "Replay execution finalTick");
+  if (latestCommandTick >= finalTick) {
+    throw new Error(
+      `Replay execution finalTick ${finalTick.toString()} must be after the last command tick ${latestCommandTick.toString()}.`,
+    );
+  }
+
+  const state = createSimulation(replay.seed);
+  for (const command of replay.commands) {
+    if (command.tileIndex >= state.world.tiles.length) {
+      throw new Error(
+        `Replay command ${command.commandId.toString()} targets invalid tile ${command.tileIndex.toString()}.`,
+      );
+    }
+  }
+  state.commandQueue = replay.commands
+    .map((command) => ({ ...command }))
+    .sort(
+      (left, right) =>
+        left.applyAtTick - right.applyAtTick || left.commandId - right.commandId,
+    );
+  state.nextCommandId = replay.commands.length + 1;
+  advanceSimulation(state, finalTick);
+  const finalHash = hashSimulationState(state);
+  const expectedFinalHash = replay.finalHash ?? null;
+  const hashStatus: ReplayHashStatus =
+    expectedFinalHash === null
+      ? "UNVERIFIED"
+      : expectedFinalHash === finalHash
+        ? "VERIFIED"
+        : "MISMATCH";
+  if (options.requireHashMatch === true && hashStatus === "MISMATCH") {
+    throw new Error(
+      `Replay hash mismatch: expected ${expectedFinalHash ?? "none"}, received ${finalHash}.`,
+    );
+  }
+  return { state, finalTick, finalHash, expectedFinalHash, hashStatus };
 }
 
 export function createSimulationSave(state: SimulationState): SimulationSaveV1 {
@@ -142,17 +346,21 @@ export function createSimulationSave(state: SimulationState): SimulationSaveV1 {
 }
 
 export function serializeSimulationSave(state: SimulationState): string {
-  return JSON.stringify(createSimulationSave(state));
+  const serialized = JSON.stringify(createSimulationSave(state));
+  assertSerializedSize(serialized, "Save data");
+  return serialized;
 }
 
-/**
- * Central migration boundary. Version 1 is currently the only persisted save
- * format; future migrations are added here rather than scattered through apps.
- */
+/** Central migration boundary for persisted saves. */
 export function migrateSimulationSave(value: unknown): SimulationSaveV1 {
   if (!isRecord(value) || value.kind !== "tiny-civilisation/save") {
     throw new Error("Invalid Tiny Civilisation save envelope.");
   }
+  assertExactKeys(
+    value,
+    ["kind", "schemaVersion", "behaviorVersion", "stateSchemaVersion", "state"],
+    "Save",
+  );
   const schemaVersion = readVersion(value, "schemaVersion");
   if (schemaVersion !== SAVE_SCHEMA_VERSION) {
     throw new Error(
@@ -176,6 +384,7 @@ export function migrateSimulationSave(value: unknown): SimulationSaveV1 {
 }
 
 export function deserializeSimulationSave(serialized: string): SimulationState {
+  assertSerializedSize(serialized, "Save data");
   let parsed: unknown;
   try {
     parsed = JSON.parse(serialized) as unknown;
@@ -184,3 +393,11 @@ export function deserializeSimulationSave(serialized: string): SimulationState {
   }
   return migrateSimulationSave(parsed).state;
 }
+
+export { assertCompatibleSimulationState } from "./state-validation.js";
+export {
+  MAX_PERSISTED_COLLECTION_ITEMS,
+  MAX_PERSISTED_JSON_CHARACTERS,
+  MAX_PERSISTED_STRING_CHARACTERS,
+  MAX_PERSISTED_WORLD_TILES,
+} from "./state-validation.js";

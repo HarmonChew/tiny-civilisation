@@ -2,7 +2,7 @@
 
 Tiny Civilisation is an observable social simulation in a Petri dish. The player changes resources and terrain; the creatures decide how to respond. There are no movement orders, build orders, or buttons that force a relationship or group outcome.
 
-This repository implements the first vertical slice of the larger design: a small deterministic world where food pressure can lead to sharing, trust, group formation, communal storage, theft, confrontation, and a factual history the player can inspect.
+This repository implements an experiment-ready vertical slice of the larger design: a small deterministic world where food pressure can lead to sharing, trust, group formation, communal storage, theft, confrontation, and a factual history the player can preserve, replay, compare, and explain.
 
 ## What is implemented
 
@@ -15,12 +15,19 @@ This repository implements the first vertical slice of the larger design: a smal
 - Emergent groups, leadership, descriptive roles, shared storage, witness-based theft detection, and nonlethal-biased conflict.
 - A PixiJS world view with React controls and inspectors for intentions, relationships, groups, decisions, and history.
 - Player commands for adding or removing food and toggling obstacles. Commands enter the simulation at an authoritative tick.
+- A paused-first experiment setup with a short orientation, seed entry, and three seed-led scenario presets.
+- An experiment notebook that records interventions, creates baseline and intervention branches, and bookmarks meaningful ticks.
+- Versioned browser saves with IndexedDB and local-storage fallback, plus compact experiment import and export.
+- Deterministic branch replay with progress, cancellation, and final-hash verification.
+- Equal-horizon baseline-versus-intervention comparison for population, resources, groups, trust, sharing, theft, confrontation, and construction.
+- A navigable causal explorer connecting events to decisions, utility factors, relevant social evidence, immediate causes, and later consequences.
+- Worker-backed browser execution for authoritative ticking and replay, with the direct runtime retained for unsupported environments and tests.
 - A Node.js headless runner for deterministic single-seed and multi-seed runs.
-- Versioned command, snapshot, replay, save, behavior, and authoritative-state contracts with tested save migration and invalid-data rejection.
+- Versioned command, snapshot, replay, save, scenario, experiment, outcome, causal-evidence, behavior, and authoritative-state contracts with migration and invalid-data rejection.
 - A declared tick pipeline, focused simulation systems, typed lookup indexes, and an exhaustive action resolver registry.
 - Real-browser Pixi smoke coverage, responsive screenshot baselines, enforced coverage floors, and a repeatable throughput benchmark.
 
-The current product slice deliberately excludes water, shelters, birth and ageing, culture, migration, trade, territory, seasons, disease, predators, technology, user-facing save/replay workflows, Web Workers, and LLM narration. Those belong to later milestones after the social feedback loop is reliable and understandable.
+The current product slice deliberately excludes water, shelters, birth and ageing, culture, migration, trade, territory, seasons, disease, predators, technology, large-world scaling, and LLM narration. Those belong to later milestones after the existing mechanics produce a broader range of explainable outcomes.
 
 ## Quick start
 
@@ -68,8 +75,10 @@ npm run build
 | Remove food tool  | Remove food at the chosen tile through the command queue |
 | Obstacle tool     | Toggle a tile between open and blocked                   |
 | Restart same seed | Recreate the initial world for a controlled comparison   |
+| Experiment button | Open the record, replay, compare, and explain notebook   |
+| New experiment    | Return to paused scenario and seed setup                 |
 
-The interface also provides resource, intention, and group overlays plus filters for the event timeline.
+The interface also provides resource, intention, and group overlays, event-timeline filters, automatic intervention records, bookmarks, local save/load, import/export, deterministic replay, outcome comparison, and causal navigation.
 
 ## Headless simulation
 
@@ -100,22 +109,15 @@ Elapsed time and ticks per second are measurements of the current machine and ar
 ## Architecture
 
 ```text
-Browser input ──PlayerCommand──┐
-                              ▼
-Headless runner ─────────► deterministic sim-core
-                              │
-                    ┌─────────┴──────────┐
-                    ▼                    ▼
-              render snapshot      domain/history events
-                    │                    │
-                    └─────────┬──────────┘
-                              ▼
-                     PixiJS + React UI
+Browser input -> controller -> Worker engine -> deterministic sim-core
+React + PixiJS <- read-only frames, status, and evidence ---------|
+
+Headless runner and tests -> direct engine -> the same sim-core
 ```
 
-The simulation core owns time and authoritative state. PixiJS renders read-only snapshots, React owns the interface, and the history layer summarizes facts emitted by the simulation. The headless app imports the same core as the browser and does not require a DOM or renderer.
+The simulation core owns time and authoritative state. In the browser, a typed engine boundary sends ticking, interventions, persistence operations, and replay to a Web Worker; PixiJS renders read-only snapshots and React owns the interface. A direct engine implements the same boundary for unsupported environments and tests. The headless app imports the same core without requiring a DOM, renderer, or Worker.
 
-`sim-core` exposes a small simulation facade and explicit tick coordinator. Commands, social state, groups, events, projections, persistence, actions, and maintenance systems live in focused modules. The web app consumes those contracts directly through a simulation controller hook; its Pixi camera/runtime/layers remain downstream of read-only snapshots.
+`sim-core` exposes a small simulation facade and explicit tick coordinator. Commands, social state, groups, events, projections, persistence, experiment branches, outcomes, causal evidence, actions, and maintenance systems live in focused modules. The web app consumes those contracts through simulation and experiment controller hooks; its Pixi camera/runtime/layers remain downstream of read-only snapshots.
 
 The repository is organized as npm workspaces:
 
@@ -152,6 +154,6 @@ food pressure
   → relationship and historical consequences
 ```
 
-Phases 0 and 1 are complete: the baseline is protected and the architecture has been split without changing the golden replay corpus. Phase 2 is next and will add paused onboarding, scenario selection, save/load, intervention logs, deterministic replay, comparison, causal navigation, and worker execution. See `PROGRESS.md` for the ordered plan.
+Phases 0, 1, and 2 are complete: the baseline is protected, the architecture has been split without intentionally changing simulation behavior, and the repeatable experiment loop is available in the browser. Phase 3 is next and will use the existing replay, comparison, causal, Worker, and headless foundations to increase variation across deterministic scenarios. See `PROGRESS.md` for the ordered plan.
 
-Major new simulation systems should wait until that experiment loop is complete. Water and shelter, lifecycle, culture, and migration can then extend the same typed events and decisions without moving authority into the renderer or bypassing creature choice.
+Phase 3 should broaden outcomes with the existing mechanics before major new simulation systems arrive. Water and shelter, lifecycle, culture, and migration can then extend the same typed events and decisions without moving authority out of the simulation core or bypassing creature choice.

@@ -1,7 +1,12 @@
 import { addHistory, emitDomainEvent } from "./events.js";
 import { findNearestWalkable, isWalkableTile } from "./navigation.js";
 import { tileIndexAt } from "./pathfinding.js";
-import type { PlayerCommand, ScheduledPlayerCommand, SimulationState } from "./types.js";
+import {
+  MAX_PLAYER_COMMAND_AMOUNT,
+  type PlayerCommand,
+  type ScheduledPlayerCommand,
+  type SimulationState,
+} from "./types.js";
 
 function resolveCommandTile(state: SimulationState, command: PlayerCommand): number {
   if (typeof command.tileIndex === "number") return command.tileIndex;
@@ -19,22 +24,39 @@ export function queuePlayerCommand(
   command: PlayerCommand,
 ): ScheduledPlayerCommand {
   let tileIndex = resolveCommandTile(state, command);
-  if (tileIndex < 0 || tileIndex >= state.world.tiles.length) {
+  if (
+    !Number.isSafeInteger(tileIndex) ||
+    tileIndex < 0 ||
+    tileIndex >= state.world.tiles.length
+  ) {
     throw new RangeError(`Player command targets invalid tile ${tileIndex}.`);
   }
   if (command.type === "ADD_FOOD" && !isWalkableTile(state, tileIndex)) {
     tileIndex = findNearestWalkable(state, tileIndex);
   }
-  const applyAtTick = Math.max(state.tick, Math.floor(command.applyAtTick ?? state.tick));
+  const isFoodCommand = command.type === "ADD_FOOD" || command.type === "REMOVE_FOOD";
+  const requestedAmount = isFoodCommand ? (command.amount ?? 12) : 0;
+  if (
+    isFoodCommand &&
+    (!Number.isSafeInteger(requestedAmount) ||
+      requestedAmount < 1 ||
+      requestedAmount > MAX_PLAYER_COMMAND_AMOUNT)
+  ) {
+    throw new RangeError(
+      `Food command amount must be a whole number from 1 to ${MAX_PLAYER_COMMAND_AMOUNT.toString()}.`,
+    );
+  }
+  const requestedTick = command.applyAtTick ?? state.tick;
+  if (!Number.isSafeInteger(requestedTick) || requestedTick < 0) {
+    throw new RangeError("Player command tick must be a nonnegative whole number.");
+  }
+  const applyAtTick = Math.max(state.tick, requestedTick);
   const scheduled: ScheduledPlayerCommand = {
     commandId: state.nextCommandId++,
     applyAtTick,
     type: command.type,
     tileIndex,
-    amount:
-      command.type === "ADD_FOOD" || command.type === "REMOVE_FOOD"
-        ? Math.max(1, Math.floor(command.amount ?? 12))
-        : 0,
+    amount: isFoodCommand ? requestedAmount : 0,
     blocked:
       command.type === "TOGGLE_OBSTACLE" && typeof command.blocked === "boolean"
         ? command.blocked

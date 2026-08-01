@@ -18,6 +18,7 @@ interface PixiWorldProps {
   followedId: EntityId | null;
   tool: InterventionTool;
   overlays: OverlaySettings;
+  mutationDisabled?: boolean;
   onSelect: (id: EntityId | null) => void;
   onWorldAction: (action: WorldAction) => void;
 }
@@ -38,6 +39,7 @@ export function PixiWorld({
   followedId,
   tool,
   overlays,
+  mutationDisabled = false,
   onSelect,
   onWorldAction,
 }: PixiWorldProps) {
@@ -204,6 +206,7 @@ export function PixiWorld({
     if (!tile) return;
 
     if (tool !== "inspect") {
+      if (mutationDisabled) return;
       onWorldAction({ tile, worldPosition: point });
       return;
     }
@@ -279,6 +282,7 @@ export function PixiWorld({
       className={`pixi-world pixi-world--${tool}`}
       role="application"
       tabIndex={0}
+      aria-disabled={mutationDisabled && tool !== "inspect"}
       aria-label="Living dish map. Click a creature to inspect it. Drag to pan, use the mouse wheel to zoom, or use arrow and plus or minus keys."
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

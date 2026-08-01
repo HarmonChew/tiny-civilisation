@@ -1,4 +1,4 @@
-import type { SimulationState } from "@tiny-civ/sim-core";
+import type { SimulationReplayV1, SimulationState } from "@tiny-civ/sim-core";
 import {
   useCallback,
   useEffect,
@@ -9,18 +9,21 @@ import {
 } from "react";
 import type { InterventionTool, TileView, WorldView } from "../model";
 import {
-  advanceSimulationTicks,
-  createSimulationState,
-  makeWorldView,
-  queueIntervention,
-  ticksPerSecond,
-} from "../sim-adapter";
+  createSimulationEngine,
+  type InterventionAcknowledgement,
+  type LongRunningOperationOptions,
+  type ReplayResult,
+  type RunToTickResult,
+  type SimulationEngine,
+  type SimulationFrame,
+} from "../runtime";
+import { makeWorldView, ticksPerSecond } from "../sim-adapter";
 
 export type SimulationSpeed = 1 | 2 | 4;
 
 const EMPTY_VIEW: WorldView = {
   tick: 0,
-  timeLabel: "T+0s",
+  timeLabel: "Day 1 · 00:00",
   hash: "",
   width: 48,
   height: 32,
@@ -34,81 +37,130 @@ const EMPTY_VIEW: WorldView = {
   foodStock: 0,
 };
 
-interface InitialSimulation {
-  state: SimulationState | null;
-  view: WorldView;
-  error: string | null;
-}
-
 export interface SimulationController {
   view: WorldView;
+  seed: number;
+  initialized: boolean;
+  busy: boolean;
   fatalError: string | null;
   playing: boolean;
   setPlaying: Dispatch<SetStateAction<boolean>>;
   speed: SimulationSpeed;
   setSpeed: Dispatch<SetStateAction<SimulationSpeed>>;
   feedback: string;
-  advance: (ticks: number) => void;
-  restart: () => WorldView | null;
-  applyIntervention: (tool: Exclude<InterventionTool, "inspect">, tile: TileView) => void;
+  advance: (ticks: number) => Promise<WorldView | null>;
+  restart: (seed?: number) => Promise<WorldView | null>;
+  applyIntervention: (
+    tool: Exclude<InterventionTool, "inspect">,
+    tile: TileView,
+    amount?: number,
+  ) => Promise<InterventionAcknowledgement | null>;
+  getState: () => SimulationState | null;
+  save: () => Promise<string>;
+  load: (serialized: string) => Promise<WorldView>;
+  runToTick: (
+    targetTick: number,
+    options?: LongRunningOperationOptions,
+  ) => Promise<RunToTickResult>;
+  replay: (
+    replay: SimulationReplayV1,
+    options?: LongRunningOperationOptions,
+  ) => Promise<ReplayResult>;
 }
 
-function initialize(seed: number): InitialSimulation {
-  try {
-    const state = createSimulationState(seed);
-    return { state, view: makeWorldView(state), error: null };
-  } catch (error) {
-    return {
-      state: null,
-      view: EMPTY_VIEW,
-      error: error instanceof Error ? error.message : "The simulation could not start.",
-    };
-  }
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
-export function useSimulationController(seed: number): SimulationController {
-  const initialRef = useRef<InitialSimulation | null>(null);
-  if (!initialRef.current) initialRef.current = initialize(seed);
+function stateFromFrame(frame: SimulationFrame): SimulationState {
+  return frame.state as unknown as SimulationState;
+}
 
-  const simRef = useRef<SimulationState | null>(initialRef.current.state);
-  const [view, setView] = useState<WorldView>(initialRef.current.view);
-  const [fatalError, setFatalError] = useState<string | null>(initialRef.current.error);
-  const [playing, setPlaying] = useState(true);
+export function useSimulationController(initialSeed = 4_182): SimulationController {
+  const engineRef = useRef<SimulationEngine | null>(null);
+  if (!engineRef.current) engineRef.current = createSimulationEngine();
+
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+  const frameRef = useRef<SimulationFrame | null>(null);
+  const mountedRef = useRef(true);
+  const advanceInFlightRef = useRef(false);
+  const [view, setView] = useState<WorldView>(EMPTY_VIEW);
+  const [seed, setSeed] = useState(initialSeed >>> 0);
+  const [initialized, setInitialized] = useState(false);
+  const [busy, setBusy] = useState(true);
+  const [fatalError, setFatalError] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<SimulationSpeed>(1);
   const [feedback, setFeedback] = useState(
-    "Conditions are stable. The creatures retain authority over every action.",
+    "Observation is paused. Set a question, then begin when you are ready.",
   );
 
-  const fail = useCallback((error: unknown, fallback: string) => {
-    setFatalError(error instanceof Error ? error.message : fallback);
-    setPlaying(false);
+  const applyFrame = useCallback((frame: SimulationFrame): WorldView => {
+    frameRef.current = frame;
+    const nextView = makeWorldView(stateFromFrame(frame));
+    if (mountedRef.current) {
+      setView(nextView);
+      setSeed(frame.seed);
+      setInitialized(true);
+      setBusy(false);
+      setFatalError(null);
+    }
+    return nextView;
   }, []);
 
-  const refresh = useCallback(() => {
-    if (!simRef.current) return;
-    try {
-      setView(makeWorldView(simRef.current));
-    } catch (error) {
-      fail(error, "The simulation view failed.");
-    }
-  }, [fail]);
+  const fail = useCallback((error: unknown, fallback: string) => {
+    if (!mountedRef.current) return;
+    setFatalError(errorMessage(error, fallback));
+    setPlaying(false);
+    setBusy(false);
+  }, []);
 
-  const advance = useCallback(
-    (ticks: number) => {
-      if (!simRef.current || ticks <= 0) return;
-      try {
-        advanceSimulationTicks(simRef.current, ticks);
-        refresh();
-      } catch (error) {
-        fail(error, "The simulation stopped.");
-      }
+  const subscribeToEngine = useCallback(
+    (engine: SimulationEngine) => {
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = engine.subscribe((status) => {
+        if (!mountedRef.current) return;
+        if (status.phase === "replaying") setBusy(true);
+        if (status.phase === "ready" || status.phase === "running") setBusy(false);
+        if ((status.phase === "error" || status.phase === "crashed") && status.error) {
+          fail(status.error, status.error);
+        }
+      });
     },
-    [fail, refresh],
+    [fail],
   );
 
   useEffect(() => {
-    if (!playing || fatalError) return;
-    let frame = 0;
+    mountedRef.current = true;
+    const engine = engineRef.current ?? createSimulationEngine();
+    engineRef.current = engine;
+    subscribeToEngine(engine);
+    void engine
+      .create(initialSeed)
+      .then(applyFrame)
+      .catch((error) => fail(error, "The simulation could not start."));
+    return () => {
+      mountedRef.current = false;
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = null;
+      engine.dispose();
+      engineRef.current = null;
+    };
+  }, [applyFrame, fail, initialSeed, subscribeToEngine]);
+
+  useEffect(() => {
+    if (!initialized || fatalError) return;
+    const engine = engineRef.current;
+    if (!engine) return;
+    const operation = playing ? engine.play() : engine.pause();
+    void operation.then(applyFrame).catch((error) => {
+      fail(error, playing ? "The simulation could not start." : "Pause failed.");
+    });
+  }, [applyFrame, fail, fatalError, initialized, playing]);
+
+  useEffect(() => {
+    if (!playing || fatalError || !initialized) return;
+    let frameRequest = 0;
     let lastTime = performance.now();
     let accumulator = 0;
     const loop = (now: number) => {
@@ -116,62 +168,208 @@ export function useSimulationController(seed: number): SimulationController {
       lastTime = now;
       accumulator += (elapsed / 1_000) * ticksPerSecond * speed;
       const ticks = Math.min(20, Math.floor(accumulator));
-      if (ticks > 0) {
+      if (ticks > 0 && !advanceInFlightRef.current) {
         accumulator -= ticks;
-        advance(ticks);
-      }
-      frame = requestAnimationFrame(loop);
-    };
-    frame = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(frame);
-  }, [advance, fatalError, playing, speed]);
-
-  const restart = useCallback((): WorldView | null => {
-    try {
-      const state = createSimulationState(seed);
-      const nextView = makeWorldView(state);
-      simRef.current = state;
-      setView(nextView);
-      setFatalError(null);
-      setFeedback(`Seed ${seed} restarted. No interventions carried forward.`);
-      return nextView;
-    } catch (error) {
-      fail(error, "Restart failed.");
-      return null;
-    }
-  }, [fail, seed]);
-
-  const applyIntervention = useCallback(
-    (tool: Exclude<InterventionTool, "inspect">, tile: TileView) => {
-      if (!simRef.current) return;
-      try {
-        queueIntervention(simRef.current, tool, tile);
-        if (!playing) advanceSimulationTicks(simRef.current, 1);
-        refresh();
-        if (tool === "obstacle") {
-          const change = tile.blocked ? "Passage opening" : "Obstacle placement";
-          setFeedback(
-            `${change} requested at ${tile.x}, ${tile.y}. Safety rules reject changes that would cover or trap an entity.`,
-          );
+        advanceInFlightRef.current = true;
+        const engine = engineRef.current;
+        if (engine) {
+          void engine
+            .advance(ticks)
+            .then(applyFrame)
+            .catch((error) => fail(error, "The simulation stopped."))
+            .finally(() => {
+              advanceInFlightRef.current = false;
+            });
         } else {
-          const verb = tool === "add-food" ? "Food added" : "Food removed";
-          setFeedback(
-            `${verb} at ${tile.x}, ${tile.y}. Creatures will respond through their own decisions.`,
-          );
+          advanceInFlightRef.current = false;
         }
+      }
+      frameRequest = requestAnimationFrame(loop);
+    };
+    frameRequest = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frameRequest);
+  }, [applyFrame, fail, fatalError, initialized, playing, speed]);
+
+  const advance = useCallback(
+    async (ticks: number): Promise<WorldView | null> => {
+      const engine = engineRef.current;
+      if (!engine || ticks <= 0) return null;
+      try {
+        setPlaying(false);
+        const frame = await engine.step(ticks);
+        return applyFrame(frame);
       } catch (error) {
-        setFeedback(
-          error instanceof Error
-            ? error.message
-            : "That intervention could not be applied.",
-        );
+        fail(error, "The simulation could not advance.");
+        return null;
       }
     },
-    [playing, refresh],
+    [applyFrame, fail],
+  );
+
+  const restart = useCallback(
+    async (nextSeed = seed): Promise<WorldView | null> => {
+      let engine = engineRef.current;
+      if (
+        !engine ||
+        engine.status.phase === "crashed" ||
+        engine.status.phase === "disposed"
+      ) {
+        unsubscribeRef.current?.();
+        unsubscribeRef.current = null;
+        engine?.dispose();
+        engine = createSimulationEngine();
+        engineRef.current = engine;
+        advanceInFlightRef.current = false;
+        subscribeToEngine(engine);
+      }
+      try {
+        setBusy(true);
+        setPlaying(false);
+        const frame = await engine.create(nextSeed >>> 0);
+        const nextView = applyFrame(frame);
+        setFeedback(
+          `Seed ${frame.seed} is ready at tick 0. No interventions carried forward.`,
+        );
+        return nextView;
+      } catch (error) {
+        fail(error, "Restart failed.");
+        return null;
+      }
+    },
+    [applyFrame, fail, seed, subscribeToEngine],
+  );
+
+  const applyIntervention = useCallback(
+    async (
+      tool: Exclude<InterventionTool, "inspect">,
+      tile: TileView,
+      amount = 12,
+    ): Promise<InterventionAcknowledgement | null> => {
+      const engine = engineRef.current;
+      if (!engine) return null;
+      const common = { applyAtTick: view.tick, tileIndex: tile.index };
+      const command =
+        tool === "add-food"
+          ? ({ ...common, type: "ADD_FOOD", amount } as const)
+          : tool === "remove-food"
+            ? ({ ...common, type: "REMOVE_FOOD", amount } as const)
+            : ({ ...common, type: "TOGGLE_OBSTACLE", blocked: !tile.blocked } as const);
+      try {
+        const acknowledgement = await engine.intervene(command);
+        applyFrame(acknowledgement.frame);
+        if (!acknowledgement.accepted) {
+          setFeedback(acknowledgement.reason);
+          return acknowledgement;
+        }
+        let frame = acknowledgement.frame;
+        if (!playing) {
+          try {
+            frame = await engine.step(1);
+            applyFrame(frame);
+          } catch (error) {
+            fail(error, "The intervention was scheduled, but the simulation stopped.");
+          }
+        }
+        const scheduled = acknowledgement.command;
+        const x = scheduled.tileIndex % frame.snapshot.width;
+        const y = Math.floor(scheduled.tileIndex / frame.snapshot.width);
+        if (tool === "obstacle") {
+          setFeedback(
+            `${scheduled.blocked ? "Obstacle placement" : "Passage opening"} scheduled at ${x}, ${y} for tick ${scheduled.applyAtTick}. The chronicle records whether it could be applied.`,
+          );
+        } else {
+          setFeedback(
+            `${tool === "add-food" ? "Food addition" : "Food removal"} of ${scheduled.amount} units scheduled at ${x}, ${y} for tick ${scheduled.applyAtTick}.`,
+          );
+        }
+        return acknowledgement;
+      } catch (error) {
+        setFeedback(errorMessage(error, "That intervention could not be scheduled."));
+        return null;
+      }
+    },
+    [applyFrame, fail, playing, view.tick],
+  );
+
+  const getState = useCallback(
+    (): SimulationState | null =>
+      frameRef.current ? stateFromFrame(frameRef.current) : null,
+    [],
+  );
+
+  const save = useCallback(async (): Promise<string> => {
+    const engine = engineRef.current;
+    if (!engine) throw new Error("The simulation is not ready to save.");
+    setPlaying(false);
+    const frame = await engine.pause();
+    const serialized = await engine.save();
+    applyFrame(frame);
+    return serialized;
+  }, [applyFrame]);
+
+  const load = useCallback(
+    async (serialized: string): Promise<WorldView> => {
+      const engine = engineRef.current;
+      if (!engine) throw new Error("The simulation is not ready to load.");
+      setBusy(true);
+      try {
+        setPlaying(false);
+        const frame = await engine.load(serialized);
+        const nextView = applyFrame(frame);
+        setFeedback(`Seed ${frame.seed} restored at tick ${frame.tick}.`);
+        return nextView;
+      } finally {
+        if (mountedRef.current) setBusy(false);
+      }
+    },
+    [applyFrame],
+  );
+
+  const runToTick = useCallback(
+    async (
+      targetTick: number,
+      options?: LongRunningOperationOptions,
+    ): Promise<RunToTickResult> => {
+      const engine = engineRef.current;
+      if (!engine) throw new Error("The simulation is not ready to replay.");
+      setBusy(true);
+      setPlaying(false);
+      try {
+        const result = await engine.runToTick(targetTick, options);
+        applyFrame(result.frame);
+        return result;
+      } finally {
+        if (mountedRef.current) setBusy(false);
+      }
+    },
+    [applyFrame],
+  );
+
+  const replay = useCallback(
+    async (
+      replayContract: SimulationReplayV1,
+      options?: LongRunningOperationOptions,
+    ): Promise<ReplayResult> => {
+      const engine = engineRef.current;
+      if (!engine) throw new Error("The simulation is not ready to replay.");
+      setBusy(true);
+      setPlaying(false);
+      try {
+        const result = await engine.replay(replayContract, options);
+        applyFrame(result.frame);
+        return result;
+      } finally {
+        if (mountedRef.current) setBusy(false);
+      }
+    },
+    [applyFrame],
   );
 
   return {
     view,
+    seed,
+    initialized,
+    busy,
     fatalError,
     playing,
     setPlaying,
@@ -181,5 +379,10 @@ export function useSimulationController(seed: number): SimulationController {
     advance,
     restart,
     applyIntervention,
+    getState,
+    save,
+    load,
+    runToTick,
+    replay,
   };
 }

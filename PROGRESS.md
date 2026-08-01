@@ -4,34 +4,31 @@ Last updated: 1 August 2026
 
 ## Current position
 
-Phase 0 (baseline protection) and Phase 1 (behavior-preserving architecture) are complete. The deterministic simulation is now divided into focused systems behind typed, versioned contracts; the browser is split into controller, feature, rendering, and style modules; and CI can detect behavior, coverage, visual, build, and throughput regressions.
+Phase 0 (baseline protection), Phase 1 (behavior-preserving architecture), and Phase 2 (the repeatable experiment loop) are complete. The deterministic simulation is divided into focused systems behind typed, versioned contracts; the browser delegates authoritative work to a Web Worker; and players can preserve, reconstruct, compare, and explain controlled interventions.
 
-The project is ready to begin Phase 2: completing the player’s repeatable experiment loop. Major simulation systems remain deferred until experiments can be saved, replayed, compared, and explained.
+The project is ready to begin Phase 3: increasing variation with the existing mechanics. Major simulation systems remain deferred until deterministic scenarios demonstrate several meaningful, explainable outcomes instead of repeatedly converging on the tuned reference story.
 
-### Verified baseline
+### Verification coverage
 
-- TypeScript type-checking, formatting, linting, and production builds pass across all workspaces.
-- All 29 unit and integration tests pass: 24 simulation-core tests and 5 web tests.
-- Four Playwright journeys pass against the real Pixi renderer, including narrow, medium, and wide screenshot baselines.
-- The unchanged golden replay fixture has SHA-256 `8D343349EBE11F6113FDCD145391602FC74C8FA34BB5F05CE35098F78BAB299C`.
-- Measured coverage is 88.68% statements in `sim-core` and 44.03% across the full web surface, with enforced regression floors.
-- The post-refactor 200,000-tick benchmark reaches 23,704.9 ticks per second against a 12,874-tick minimum.
-- CI exercises Node.js 22.12 and the primary Node.js 24 runtime.
-- Commands, snapshots, replays, saves, behavior, and authoritative state have explicit version contracts.
+- `npm run check` covers formatting, linting, type-checking, coverage, production-browser journeys, and builds across the workspaces.
+- The checked-in golden replay corpus remains protected from accidental snapshot updates during ordinary verification.
+- Runtime tests exercise the direct and Worker engines, queued operations, replay progress and cancellation, stale responses, and crash recovery.
+- Contract and persistence tests cover experiment round trips, branching, deep validation, browser-storage fallback behavior, size limits, and malformed data.
+- Browser journeys cover paused setup, the real Pixi renderer, interventions, local save/load, replay hash verification, outcome comparison, import/export, causal navigation, malformed-file recovery, and narrow, medium, and wide screenshot baselines.
+- Commands, snapshots, replays, saves, scenarios, experiments, outcomes, causal evidence, behavior, and authoritative state have explicit version contracts.
 
 ### Main engineering risks
 
-- The simulation still runs on the browser’s main thread. Move it into a Web Worker during Phase 2 before increasing population or world complexity.
-- The render projection is rebuilt frequently. Measure and optimize this only after representative larger scenarios exist.
-- Versioned save and replay contracts exist in the core, but the product has no save, load, replay, comparison, or import/export workflow yet.
+- The render projection is rebuilt frequently. Measure and optimize it against representative Phase 3 scenarios before increasing population or world complexity.
+- Browser persistence currently centers on one active local save. A named experiment library, cross-device sync, and long-term archival policy remain product decisions rather than Phase 2 requirements.
+- Worker execution keeps authoritative work off the UI thread, but population, world-size, replay-time, and message-volume budgets still need representative scale targets.
 - Pixi rendering has real browser coverage, but its camera and layer modules remain costly to unit-test in jsdom; the screenshot gate is the present regression boundary.
 
 ### Main product risks
 
-- The current slice explains individual decisions well, but it does not yet help players preserve, replay, and compare experiments.
-- The default run begins immediately, so a new player can miss the opening causal chain.
 - Seed 4182 is intentionally tuned to demonstrate the complete social-storage-theft-conflict story. In an audit of seeds 1–20 at 10,000 ticks, every run formed exactly one group and completed one storage. Conflict varied, but the macro outcome did not.
-- Several compact mobile controls measured between 28 and 36 pixels high, below a comfortable touch target.
+- The current scenario choices are seed-led presets over the same world contract. Phase 3 must introduce structural differences in terrain, resources, traits, and starting proximity.
+- Causal navigation is available, but its usefulness should be evaluated across a wider range of important outcomes and long runs with bounded history.
 - The canvas supports keyboard panning and zooming, but it lacks an equivalent keyboard-accessible way to browse creatures and world objects.
 
 ## Product principles
@@ -118,7 +115,7 @@ The architecture phase is complete when:
 
 ### Phase 2 — Complete the experiment loop
 
-Status: **Next full phase.**
+Status: **Complete (1 August 2026).**
 
 Goal: turn the current simulation viewer into a repeatable experimental sandbox.
 
@@ -140,11 +137,15 @@ The experiment-loop phase is complete when:
 - Reloading a saved experiment preserves its authoritative result.
 - Important events have an inspectable causal explanation.
 
+The delivered browser workflow opens paused at tick 0, records accepted and rejected interventions, branches from bookmarks, and saves locally with a resilient storage fallback. It imports and exports versioned experiment files, reconstructs branches through the simulation runtime, checks replay hashes, and compares equal horizons. The timeline and intervention record open the corresponding causal evidence. Authoritative ticking and replay run through the Worker engine where the platform supports it.
+
 ### Phase 3 — Increase variation with existing mechanics
+
+Status: **Next full phase.**
 
 Goal: broaden emergence before adding many new nouns and rules.
 
-- Add deterministic scenario presets with varied terrain, chokepoints, food distribution, starting traits, and social proximity.
+- Turn the seed-led presets into structurally distinct deterministic scenarios with varied terrain, chokepoints, food distribution, starting traits, and social proximity.
 - Establish a deterministic map-generation contract.
 - Extend batch reporting with distributions, percentiles, time-to-event, group composition, relationship-network structure, stalemate detection, and dominant-strategy warnings.
 - Define scenario-specific expected ranges instead of requiring one scripted outcome.
@@ -188,7 +189,7 @@ Goal: make the expanded simulation understandable and dependable across devices 
 
 - Add a keyboard-accessible creature and world-object navigator.
 - Provide a textual summary of important world state as an alternative to canvas-only discovery.
-- Increase compact mobile controls and filters to comfortable touch sizes.
+- Maintain comfortable touch targets as new compact controls and filters are introduced.
 - Add intervention previews, clear rejection reasons, and replay-backed undo.
 - Cluster repetitive events while preserving significant causal turns.
 - Add optional ambient sound and clearer world feedback without obscuring evidence.
@@ -211,13 +212,13 @@ The project is ready for broad feature expansion when:
 
 ## Recommended next work
 
-Phase 1 is complete. Implement Phase 2 in this dependency order:
+Phase 2 is complete. Implement Phase 3 in this dependency order:
 
-1. Start new sessions paused; add a skippable orientation plus seed and scenario selection.
-2. Expose the versioned save contract through save, load, export, import, and clear incompatibility recovery UI.
-3. Record interventions automatically and let players bookmark meaningful ticks.
-4. Build deterministic replay from seed plus command log, then add baseline-versus-intervention comparison and outcome deltas.
-5. Connect events, decisions, memories, relationships, and consequences into a navigable causal trail.
-6. Move authoritative ticking and replay into a Web Worker, retaining the existing typed command and snapshot boundary.
+1. Define a versioned deterministic scenario contract for terrain, resources, starting traits, social proximity, and seed behavior.
+2. Implement a small scenario matrix that changes those starting conditions while reusing the existing mechanics and experiment workflow.
+3. Extend headless batch reports with distributions, percentiles, time-to-event, group composition, relationship-network structure, and stalemate signals.
+4. Add scenario-specific expected ranges and automated checks for unreachable, dominant, repetitive, or irrelevant actions.
+5. Tune existing mechanics from the batch evidence, preserving the reference scenario and recording any intentional golden-corpus changes.
+6. Set Worker message-volume, replay-time, population, world-size, and rendering budgets against the new matrix before increasing scale.
 
-Phase 2 should finish with one browser-level acceptance journey: create a baseline, branch with one intervention, save and reload both runs, replay them to identical hashes, and compare the explained outcome.
+Phase 3 should finish with a deterministic scenario matrix that produces several meaningful macro outcomes, remains reproducible through save and replay, and keeps each difference inspectable through comparison and causal evidence.

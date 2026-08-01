@@ -1,11 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorldView } from "./model";
-
-const testState = vi.hoisted(() => ({
-  advanceCalls: 0,
-  interventionCalls: 0,
-}));
 
 const view = {
   tick: 120,
@@ -157,16 +152,7 @@ const view = {
 
 vi.mock("./sim-adapter", () => ({
   ticksPerSecond: 10,
-  createSimulationState: vi.fn(() => ({ tick: 120 })),
   makeWorldView: vi.fn(() => view),
-  advanceSimulationTicks: vi.fn((state: unknown) => {
-    testState.advanceCalls += 1;
-    return state;
-  }),
-  queueIntervention: vi.fn((state: unknown) => {
-    testState.interventionCalls += 1;
-    return state;
-  }),
 }));
 
 vi.mock("./components/PixiWorld", () => ({
@@ -200,36 +186,45 @@ import App from "./App";
 
 describe("Tiny Civilisation workspace", () => {
   beforeEach(() => {
-    testState.advanceCalls = 0;
-    testState.interventionCalls = 0;
+    localStorage.clear();
   });
 
-  it("shows a factual, inspectable simulation workspace", () => {
+  it("shows a factual, inspectable simulation workspace", async () => {
     render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
 
     expect(screen.getByText("Tiny Civilisation")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Living dish" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Field chronicle" })).toBeTruthy();
+    expect(await screen.findByText("A portion was shared")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "A portion was shared. Inspect causal evidence.",
+      }),
+    );
     expect(screen.getByRole("heading", { name: "Iri" })).toBeTruthy();
     expect(screen.getByText("Recipient hunger")).toBeTruthy();
-    expect(screen.getByText("A portion was shared")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Select Nalo in dish" }));
     expect(screen.getByRole("heading", { name: "Nalo" })).toBeTruthy();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "A portion was shared. Inspect involved creature.",
+        name: "A portion was shared. Inspect causal evidence.",
       }),
     );
     expect(screen.getByRole("heading", { name: "Iri" })).toBeTruthy();
   });
 
-  it("supports stepping, selecting, following, and a condition-only intervention", () => {
+  it("supports stepping, selecting, following, and a condition-only intervention", async () => {
     render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    await screen.findByText("Observation paused");
 
-    fireEvent.click(screen.getByRole("button", { name: /Pause simulation/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Advance one tick/ }));
-    expect(testState.advanceCalls).toBe(1);
+    const stepButton = screen.getByRole("button", { name: /Advance one tick/ });
+    expect((stepButton as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(stepButton);
+    await waitFor(() => expect((stepButton as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByText("Observation paused")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Select Nalo in dish" }));
     expect(screen.getByRole("heading", { name: "Nalo" })).toBeTruthy();
@@ -238,9 +233,6 @@ describe("Tiny Civilisation workspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add food" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply active tool" }));
-    expect(testState.interventionCalls).toBe(1);
-    expect(
-      screen.getByText(/Creatures will respond through their own decisions/),
-    ).toBeTruthy();
+    expect(await screen.findByText(/Food addition of 12 units scheduled/)).toBeTruthy();
   });
 });

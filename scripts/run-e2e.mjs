@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const port = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? "43173", 10);
 const baseURL = `http://127.0.0.1:${port}`;
+const useDevelopmentServer = process.argv.includes("--dev");
+const playwrightArguments = process.argv
+  .slice(2)
+  .filter((argument) => argument !== "--dev");
 
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error(`Invalid PLAYWRIGHT_PORT: ${process.env.PLAYWRIGHT_PORT}`);
@@ -26,6 +30,7 @@ const vite = spawn(
   process.execPath,
   [
     path.join(root, "node_modules/vite/bin/vite.js"),
+    ...(useDevelopmentServer ? [] : ["preview"]),
     "apps/web",
     "--host",
     "127.0.0.1",
@@ -56,14 +61,12 @@ async function waitForVite() {
       throw new Error(`Vite exited before startup.\n${serverOutput.join("")}`);
     }
 
-    if (serverOutput.join("").includes("ready in")) {
-      try {
-        const response = await fetch(baseURL);
-        const html = await response.text();
-        if (response.ok && html.includes("Tiny Civilisation")) return;
-      } catch {
-        // Vite can announce its URL just before its listener accepts requests.
-      }
+    try {
+      const response = await fetch(baseURL);
+      const html = await response.text();
+      if (response.ok && html.includes("Tiny Civilisation")) return;
+    } catch {
+      // Vite can announce its URL just before its listener accepts requests.
     }
     await delay(100);
   }
@@ -95,7 +98,7 @@ try {
     [
       path.join(root, "node_modules/@playwright/test/cli.js"),
       "test",
-      ...process.argv.slice(2),
+      ...playwrightArguments,
     ],
     {
       cwd: root,
