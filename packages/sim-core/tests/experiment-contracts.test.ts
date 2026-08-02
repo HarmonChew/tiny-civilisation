@@ -132,7 +132,7 @@ describe("versioned experiment contracts", () => {
     expect(changed.branches[0]).not.toBe(baseline.branches[0]);
   });
 
-  it("persists deeply frozen response evidence through round trips and branch forks", () => {
+  it("persists response evidence without leaking observations across a fork horizon", () => {
     const completed = buildExperiment();
     const entry = completed.branches[0]?.commandLog[0];
     if (!entry) throw new Error("Expected a recorded intervention.");
@@ -169,20 +169,34 @@ describe("versioned experiment contracts", () => {
       entry.command.commandId,
       trace,
     );
-    const forked = forkExperimentBranch(
+    const earlyFork = forkExperimentBranch(
       recorded,
       "baseline",
-      "response-fork",
-      "Response fork",
+      "early-response-fork",
+      "Early response fork",
       10,
     );
+    const forked = forkExperimentBranch(
+      earlyFork,
+      "baseline",
+      "late-response-fork",
+      "Late response fork",
+      30,
+    );
     const loaded = deserializeExperiment(serializeExperiment(forked));
-    const baselineTrace = loaded.branches[0]?.commandLog[0]?.responseTrace;
-    const forkTrace = loaded.branches[1]?.commandLog[0]?.responseTrace;
+    const baselineTrace = loaded.branches.find((branch) => branch.id === "baseline")
+      ?.commandLog[0]?.responseTrace;
+    const earlyForkTrace = loaded.branches.find(
+      (branch) => branch.id === "early-response-fork",
+    )?.commandLog[0]?.responseTrace;
+    const lateForkTrace = loaded.branches.find(
+      (branch) => branch.id === "late-response-fork",
+    )?.commandLog[0]?.responseTrace;
 
     expect(baselineTrace).toEqual(trace);
-    expect(forkTrace).toEqual(trace);
-    expect(baselineTrace).not.toBe(forkTrace);
+    expect(earlyForkTrace).toBeNull();
+    expect(lateForkTrace).toEqual(trace);
+    expect(baselineTrace).not.toBe(lateForkTrace);
     expect(Object.isFrozen(baselineTrace)).toBe(true);
     expect(Object.isFrozen(baselineTrace?.responses)).toBe(true);
     expect(Object.isFrozen(baselineTrace?.responses[0]?.beats)).toBe(true);

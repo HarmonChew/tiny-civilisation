@@ -54,6 +54,8 @@ const EMPTY_VIEW: WorldView = {
 export interface SimulationController {
   view: WorldView;
   seed: number;
+  /** Changes whenever the authoritative timeline is replaced rather than advanced. */
+  timelineRevision: number;
   initialized: boolean;
   busy: boolean;
   fatalError: string | null;
@@ -118,6 +120,7 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
   const advanceInFlightRef = useRef(false);
   const [view, setView] = useState<WorldView>(EMPTY_VIEW);
   const [seed, setSeed] = useState(initialSeed >>> 0);
+  const [timelineRevision, setTimelineRevision] = useState(0);
   const [initialized, setInitialized] = useState(false);
   const [busy, setBusy] = useState(true);
   const [fatalError, setFatalError] = useState<string | null>(null);
@@ -282,6 +285,7 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
         const frame = await engine.create(nextSeed >>> 0);
         verifiedHashRef.current = null;
         const nextView = applyFrame(frame);
+        setTimelineRevision((current) => current + 1);
         setFeedback(
           `Seed ${frame.seed} is ready at tick 0. No interventions carried forward.`,
         );
@@ -459,6 +463,7 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
         setPlaying(false);
         const frame = await engine.load(serialized);
         const nextView = applyFrame(frame);
+        setTimelineRevision((current) => current + 1);
         setFeedback(`Seed ${frame.seed} restored at tick ${frame.tick}.`);
         return nextView;
       } finally {
@@ -500,6 +505,7 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
       try {
         const result = await engine.replay(replayContract, options);
         applyFrame(result.frame);
+        setTimelineRevision((current) => current + 1);
         return result;
       } finally {
         if (mountedRef.current) setBusy(false);
@@ -511,6 +517,7 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
   return {
     view,
     seed,
+    timelineRevision,
     initialized,
     busy,
     fatalError,

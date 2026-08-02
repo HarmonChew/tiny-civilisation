@@ -15,7 +15,7 @@ const STORY_SCENES = [
   {
     name: "settlement",
     tick: 101,
-    expectedHash: "984779412c9b8214",
+    expectedHash: "b09dc7e0d57d6d3d",
     subject: "Iri",
     narrative:
       "Iri, Nalo, Aro, Meka, Pela, Sori formed the Riverhollow group around repeated sharing and sustained proximity.",
@@ -24,7 +24,7 @@ const STORY_SCENES = [
   {
     name: "construction",
     tick: 198,
-    expectedHash: "3e1d0db353d3902b",
+    expectedHash: "3178fbf3ddded5f8",
     subject: "Iri",
     narrative: "The Riverhollow group began a shared store.",
     subjectState: "Iri is building the shared store.",
@@ -32,7 +32,7 @@ const STORY_SCENES = [
   {
     name: "theft",
     tick: 392,
-    expectedHash: "3475da6616a31e6b",
+    expectedHash: "d2f304578cf9a677",
     subject: "Taro",
     narrative: "Taro took food without permission.",
     subjectState: "Taro plans to take food under pressure.",
@@ -40,7 +40,7 @@ const STORY_SCENES = [
   {
     name: "conflict",
     tick: 486,
-    expectedHash: "24ed53b61eedad41",
+    expectedHash: "b038672676265c8e",
     subject: "Iri",
     narrative: "Iri confronted Taro, but the blow missed.",
     subjectState: "Iri plans to confront a threat.",
@@ -48,7 +48,7 @@ const STORY_SCENES = [
   {
     name: "aftermath",
     tick: 817,
-    expectedHash: "45fa06a5e4c81fe1",
+    expectedHash: "e45147feda125cd8",
     subject: "Taro",
     narrative: "Pela replaced Iri as leader of Riverhollow.",
     subjectState: "Taro plans to rest somewhere safe.",
@@ -68,12 +68,12 @@ function storyExperimentBuffer(scene: StoryScene): Buffer {
     JSON.stringify({
       kind: "tiny-civilisation/experiment",
       schemaVersion: 2,
-      behaviorVersion: 2,
+      behaviorVersion: 3,
       stateSchemaVersion: 2,
       scenario: {
         kind: "tiny-civilisation/scenario",
         schemaVersion: 1,
-        behaviorVersion: 2,
+        behaviorVersion: 3,
         scenarioId: "petri-world",
         scenarioVersion: 1,
         seed: STORY_SEED,

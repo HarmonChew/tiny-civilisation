@@ -1,5 +1,5 @@
 /** Changes only when deterministic simulation outcomes intentionally change. */
-export const SIMULATION_BEHAVIOR_VERSION = 2 as const;
+export const SIMULATION_BEHAVIOR_VERSION = 3 as const;
 
 /** Version of the authoritative state stored inside SimulationState. */
 export const SIMULATION_STATE_VERSION = 2 as const;

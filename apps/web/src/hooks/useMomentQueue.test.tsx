@@ -145,4 +145,38 @@ describe("useMomentQueue", () => {
     await waitFor(() => expect(result.current.activeMomentId).toBe(3));
     expect(onPacingRequest).not.toHaveBeenCalled();
   });
+
+  it("replaces same-tick moments when the authoritative timeline changes", async () => {
+    const original = momentEvent(4, "SIGNIFICANT");
+    const replacement = {
+      ...momentEvent(4, "CRITICAL"),
+      title: "A different branch confrontation",
+    };
+    const initialProps: UseMomentQueueOptions = {
+      events: [original],
+      currentTick: original.tick,
+      speed: 2,
+      preference: "HIGHLIGHT_ONLY",
+      playing: false,
+      streamKey: "4182:0",
+    };
+    const { result, rerender } = renderHook(
+      (props: UseMomentQueueOptions) => useMomentQueue(props),
+      { initialProps },
+    );
+
+    await waitFor(() =>
+      expect(result.current.moments[0]?.latestEvent.title).toBe(original.title),
+    );
+    rerender({
+      ...initialProps,
+      events: [replacement],
+      streamKey: "4182:1",
+    });
+
+    await waitFor(() =>
+      expect(result.current.moments[0]?.latestEvent.title).toBe(replacement.title),
+    );
+    expect(result.current.moments).toHaveLength(1);
+  });
 });

@@ -12,6 +12,7 @@ import {
   TILE_FIXED_UNITS,
   tileIndexAt,
   validateInteractionClaims,
+  type ActionKind,
   type DecisionCandidate,
   type DomainEvent,
 } from "../src/index.js";
@@ -77,14 +78,36 @@ describe("hierarchical intent selection", () => {
   it("retains factual reasons at the decision tick and projects only retained facts", () => {
     const state = createSimulation(4_182);
     advanceSimulation(state, 600);
+    const travelScorePerTile: Partial<Record<ActionKind, number>> = {
+      GATHER_FOOD: 52,
+      REST: 35,
+      SHARE: 45,
+      DEPOSIT: 40,
+      WITHDRAW: 45,
+      GATHER_MATERIAL: 40,
+      BUILD_STORAGE: 42,
+      STEAL: 48,
+      GUARD: 35,
+      ATTACK: 55,
+      JOIN_GROUP: 55,
+    };
+    let checkedTravelFact = false;
     expect(state.decisionRecords.length).toBeGreaterThan(0);
     for (const record of state.decisionRecords) {
       for (const option of record.candidates) {
         for (const factor of option.factors) {
           if (factor.fact) expect(factor.fact.capturedAtTick).toBe(record.tick);
+          if (factor.key === "travel cost" && factor.fact) {
+            const scale = travelScorePerTile[option.action];
+            if (!scale) throw new Error(`Missing travel scale for ${option.action}.`);
+            expect(factor.fact).toMatchObject({ unit: "TILES" });
+            expect(factor.fact.value).toBe(Math.abs(factor.contribution) / scale);
+            checkedTravelFact = true;
+          }
         }
       }
     }
+    expect(checkedTravelFact).toBe(true);
     const creature = state.creatures.find(
       (item) => item.activePlan?.strongestReason !== null,
     );

@@ -762,9 +762,23 @@ export function forkExperimentBranch(
   const parent = experiment.branches.find((branch) => branch.id === parentBranchId);
   if (!parent) throw new Error(`Experiment branch ${parentBranchId} does not exist.`);
   if (forkTick < parent.forkTick) throw new Error("Branch cannot fork before its parent.");
-  const commandLog = parent.commandLog.filter(
-    (entry) => entry.command.applyAtTick < forkTick,
-  );
+  const commandLog = parent.commandLog
+    .filter((entry) => entry.command.applyAtTick < forkTick)
+    .map((entry) => {
+      const trace = entry.responseTrace;
+      const containsFutureEvidence =
+        trace !== null &&
+        ((trace.outcome !== null && trace.outcome.tick > forkTick) ||
+          (trace.observedThroughTick !== null && trace.observedThroughTick > forkTick) ||
+          (trace.closedAtTick !== null && trace.closedAtTick > forkTick) ||
+          trace.responses.some(
+            (response) =>
+              response.firstObservedTick > forkTick ||
+              response.beats.some((beat) => beat.tick > forkTick) ||
+              (response.failure !== null && response.failure.tick > forkTick),
+          ));
+      return containsFutureEvidence ? { ...entry, responseTrace: null } : entry;
+    });
   return frozenExperiment({
     ...experiment,
     branches: [

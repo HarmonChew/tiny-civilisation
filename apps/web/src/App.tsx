@@ -368,7 +368,7 @@ export default function App() {
     speed,
     preference: pacingPreference,
     playing,
-    streamKey: seed,
+    streamKey: `${seed.toString()}:${simulation.timelineRevision.toString()}`,
     onInspect: inspectTimelineEvent,
     onPacingRequest: (request) => {
       if (automaticPacingRef.current !== null) return;
@@ -410,7 +410,6 @@ export default function App() {
         try {
           const pausedView = await simulation.pause();
           if (!pausedView) return;
-          moments.continueMoment(momentId);
           setPlaying(false);
           clearTransient();
           focusTimelineEvent(moment.latestEvent, "MOMENT");
@@ -419,6 +418,14 @@ export default function App() {
             pausedView,
           );
           if (!replayed || momentReplaySessionRef.current !== replaySession) return;
+          const pacing = automaticPacingRef.current;
+          if (pacing?.momentId === momentId) {
+            replaySession.resumePlaying = pacing.resumePlaying;
+          }
+          moments.continueMoment(momentId);
+          // Releasing automatic pacing restores the pre-moment state. Keep the
+          // live engine paused until the isolated presentation is dismissed.
+          setPlaying(false);
           replaySession.status = "presenting";
           presenting = true;
         } catch {

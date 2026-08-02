@@ -1,8 +1,9 @@
 import { createSimulation } from "@tiny-civ/sim-core";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MomentReplayPresentation } from "./hooks/useExperimentWorkspace";
+import type { UseMomentQueueOptions } from "./hooks/useMomentQueue";
 import type { TimelineEventView, WorldView } from "./model";
 import { makeWorldView } from "./sim-adapter";
 
@@ -135,6 +136,7 @@ interface ReplayTestContext {
   view: WorldView;
   priorEvent: TimelineEventView;
   momentEvent: TimelineEventView;
+  momentQueueOptions?: UseMomentQueueOptions;
 }
 
 const testContext = {} as ReplayTestContext;
@@ -176,6 +178,40 @@ function replayPresentation(view: WorldView): MomentReplayPresentation {
   };
 }
 
+function simulationController(playing = true) {
+  return {
+    view: testContext.view,
+    seed: 4_182,
+    timelineRevision: 0,
+    initialized: true,
+    busy: false,
+    fatalError: null,
+    playing,
+    setPlaying: mocks.setPlaying,
+    speed: 2,
+    setSpeed: mocks.setSpeed,
+    feedback: "Live world",
+    advance: vi.fn(),
+    pause: mocks.pause,
+  };
+}
+
+function momentQueueController() {
+  return {
+    moments: [
+      {
+        id: 9,
+        latestEvent: testContext.momentEvent,
+      },
+    ],
+    activeMomentId: 9,
+    selectMoment: vi.fn(),
+    inspectMoment: vi.fn(),
+    continueMoment: mocks.continueMoment,
+    dismissMoment: vi.fn(),
+  };
+}
+
 function stage(): HTMLElement {
   return screen.getByTestId("world-stage");
 }
@@ -207,36 +243,12 @@ describe("App isolated replay session", () => {
       hash: "live-hash",
       events: [testContext.priorEvent, testContext.momentEvent],
     };
+    delete testContext.momentQueueOptions;
     mocks.pause.mockResolvedValue(testContext.view);
     mocks.executeReplay.mockResolvedValue(true);
-    mocks.useSimulationController.mockReturnValue({
-      view: testContext.view,
-      seed: 4_182,
-      initialized: true,
-      busy: false,
-      fatalError: null,
-      playing: true,
-      setPlaying: mocks.setPlaying,
-      speed: 2,
-      setSpeed: mocks.setSpeed,
-      feedback: "Live world",
-      advance: vi.fn(),
-      pause: mocks.pause,
-    });
+    mocks.useSimulationController.mockReturnValue(simulationController());
     mocks.usePersistentEventPacingPreference.mockReturnValue(["HIGHLIGHT_ONLY", vi.fn()]);
-    mocks.useMomentQueue.mockReturnValue({
-      moments: [
-        {
-          id: 9,
-          latestEvent: testContext.momentEvent,
-        },
-      ],
-      activeMomentId: 9,
-      selectMoment: vi.fn(),
-      inspectMoment: vi.fn(),
-      continueMoment: mocks.continueMoment,
-      dismissMoment: vi.fn(),
-    });
+    mocks.useMomentQueue.mockReturnValue(momentQueueController());
     mocks.useExperimentWorkspace.mockImplementation(() => {
       const [momentReplay, setMomentReplay] = useState<MomentReplayPresentation | null>(
         null,
@@ -299,6 +311,7 @@ describe("App isolated replay session", () => {
       replayEvent: "9",
     });
     expect(mocks.pause).toHaveBeenCalledOnce();
+    expect(mocks.continueMoment).toHaveBeenCalledWith(9);
     expect(mocks.setPlaying).toHaveBeenCalledWith(false);
 
     fireEvent.click(screen.getByRole("button", { name: "Exit isolated replay" }));
@@ -336,5 +349,32 @@ describe("App isolated replay session", () => {
     expect(screen.getByTestId("inspector").getAttribute("data-evidence")).toBe("6");
     expect(mocks.setPlaying.mock.calls.at(-1)?.[0]).toBe(true);
     expect(document.activeElement).toBe(replayButton);
+    expect(mocks.continueMoment).not.toHaveBeenCalled();
+  });
+
+  it("restores the pre-pause play state after replaying an automatically paused moment", async () => {
+    mocks.useMomentQueue.mockImplementation((options: UseMomentQueueOptions) => {
+      testContext.momentQueueOptions = options;
+      return momentQueueController();
+    });
+    render(<App />);
+
+    act(() => {
+      testContext.momentQueueOptions?.onPacingRequest?.({
+        momentId: 9,
+        action: "PAUSE",
+        restoreSpeed: 2,
+        event: testContext.momentEvent,
+      });
+    });
+    expect(mocks.setPlaying).toHaveBeenLastCalledWith(false);
+
+    mocks.useSimulationController.mockReturnValue(simulationController(false));
+    fireEvent.click(screen.getByRole("button", { name: "Select Nalo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Replay focal moment" }));
+    await screen.findByRole("button", { name: "Exit isolated replay" });
+    fireEvent.click(screen.getByRole("button", { name: "Exit isolated replay" }));
+
+    await waitFor(() => expect(mocks.setPlaying).toHaveBeenLastCalledWith(true));
   });
 });

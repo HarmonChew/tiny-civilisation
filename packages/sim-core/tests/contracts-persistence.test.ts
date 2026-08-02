@@ -199,6 +199,15 @@ describe("versioned simulation contracts", () => {
         (event) => event.attentionTier !== undefined && event.clusterKey.length > 0,
       ),
     ).toBe(true);
+    expect(
+      first.decisionRecords.every(
+        (decision) =>
+          decision.strongestReason === null &&
+          decision.candidates.every((candidate) =>
+            candidate.factors.every((factor) => factor.fact === null),
+          ),
+      ),
+    ).toBe(true);
   });
 
   it("preserves v1 replay commands but drops hashes that cannot verify v2 behavior", () => {

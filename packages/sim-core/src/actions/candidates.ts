@@ -29,6 +29,7 @@ import type {
   DecisionRecord,
   DecisionSwitchReason,
   DomainEventType,
+  ReasonFact,
   RelationshipEdge,
   ResourceKind,
   ResourceNode,
@@ -43,15 +44,40 @@ import {
   removeGuardAssignment,
 } from "./shared.js";
 
+type FactorSource = "ACTOR" | "TARGET" | number | null;
+
+interface PendingUtilityFactor {
+  readonly key: string;
+  readonly contribution: number;
+  readonly evidenceEventIds: number[];
+  readonly factValue: ReasonFact["value"];
+  readonly factUnit: ReasonFact["unit"];
+  readonly factSource: FactorSource;
+}
+
 function factor(
   key: string,
   contribution: number,
   evidenceEventIds: number[] = [],
-): UtilityFactor {
+  factValue: ReasonFact["value"] = null,
+  factUnit: ReasonFact["unit"] = null,
+  factSource: FactorSource = "ACTOR",
+): PendingUtilityFactor {
   return {
     key,
     contribution: Math.round(contribution),
     evidenceEventIds: [...evidenceEventIds],
+    factValue,
+    factUnit,
+    factSource,
+  };
+}
+
+function implementationFactor(key: string, contribution: number): UtilityFactor {
+  return {
+    key,
+    contribution: Math.round(contribution),
+    evidenceEventIds: [],
     fact: null,
   };
 }
@@ -62,7 +88,7 @@ function scoredCandidate(
   action: ActionKind,
   targetEntityId: number | null,
   targetTileIndex: number | null,
-  factors: UtilityFactor[],
+  factors: PendingUtilityFactor[],
 ): DecisionCandidate {
   const noise =
     (keyedRandomUnit(
@@ -83,17 +109,37 @@ function scoredCandidate(
     : 0;
   const allFactors = [
     ...factors,
-    ...(crowdingPenalty > 0 ? [factor("crowded interaction", -crowdingPenalty)] : []),
+    ...(crowdingPenalty > 0
+      ? [
+          factor(
+            "crowded interaction",
+            -crowdingPenalty,
+            [],
+            crowding?.claimed ?? 0,
+            "COUNT",
+            "TARGET",
+          ),
+        ]
+      : []),
     factor("bounded decision variation", noise),
-  ].map((item) => ({
-    ...item,
+  ].map((item): UtilityFactor => ({
+    key: item.key,
+    contribution: item.contribution,
+    evidenceEventIds: item.evidenceEventIds,
     fact: captureReasonFact(
       state,
-      creature,
       item.key,
-      item.contribution,
+      {
+        value: item.factValue,
+        unit: item.factUnit,
+        sourceEntityId:
+          item.factSource === "ACTOR"
+            ? creature.id
+            : item.factSource === "TARGET"
+              ? targetEntityId
+              : item.factSource,
+      },
       item.evidenceEventIds,
-      targetEntityId,
     ),
   }));
   return {
@@ -200,8 +246,8 @@ function generateCandidates(
     candidates.push(
       scoredCandidate(state, creature, "EAT", null, creature.tileIndex, [
         factor("eating opportunity", 900),
-        factor("personal hunger", (hunger * 11) / 10),
-        factor("low health", (UNIT_MAX - creature.health) / 4),
+        factor("personal hunger", (hunger * 11) / 10, [], hunger, "UNIT"),
+        factor("low health", (UNIT_MAX - creature.health) / 4, [], creature.health, "UNIT"),
       ]),
     );
   }
@@ -212,15 +258,30 @@ function generateCandidates(
       candidates.push(
         scoredCandidate(state, creature, "GATHER_FOOD", node.id, node.tileIndex, [
           factor("survival work", 1_300),
-          factor("personal hunger", (hunger * 4) / 5),
-          factor("empty food reserve", creature.inventory.food === 0 ? 1_300 : 0),
-          factor("foraging confidence", creature.skills.foraging / 5),
+          factor("personal hunger", (hunger * 4) / 5, [], hunger, "UNIT"),
+          factor(
+            "empty food reserve",
+            creature.inventory.food === 0 ? 1_300 : 0,
+            [],
+            creature.inventory.food,
+            "COUNT",
+          ),
+          factor(
+            "foraging confidence",
+            creature.skills.foraging / 5,
+            [],
+            creature.skills.foraging,
+            "UNIT",
+          ),
           factor(
             "known stock",
             Math.min(1_000, node.currentStock * 35),
             recentInterventionEvidence(state, node.id),
+            node.currentStock,
+            "COUNT",
+            "TARGET",
           ),
-          factor("travel cost", -distance * 52),
+          factor("travel cost", -distance * 52, [], distance, "TILES", "TARGET"),
         ]),
       );
     }
@@ -231,10 +292,17 @@ function generateCandidates(
     const distance = manhattanDistance(state.world, creature.tileIndex, restTile);
     candidates.push(
       scoredCandidate(state, creature, "REST", null, restTile, [
-        factor("need for rest", fatigue),
-        factor("familiar home", ownGroup ? 700 : 100),
-        factor("travel cost", -distance * 35),
-        factor("urgent hunger", hunger > 8_000 ? -2_500 : 0),
+        factor("need for rest", fatigue, [], fatigue, "UNIT"),
+        factor(
+          "familiar home",
+          ownGroup ? 700 : 100,
+          [],
+          ownGroup?.name ?? null,
+          ownGroup ? "LABEL" : null,
+          ownGroup?.id ?? null,
+        ),
+        factor("travel cost", -distance * 35, [], distance, "TILES"),
+        factor("urgent hunger", hunger > 8_000 ? -2_500 : 0, [], hunger, "UNIT"),
       ]),
     );
   }
@@ -261,13 +329,40 @@ function generateCandidates(
       );
       candidates.push(
         scoredCandidate(state, creature, "SHARE", recipient.id, recipient.tileIndex, [
-          factor("sharing opportunity", 450),
-          factor("generous disposition", (creature.traits.generosity * 2) / 5),
-          factor("recipient hunger", (recipient.needs.hunger * 2) / 5),
-          factor("trust in recipient", (edge?.trust ?? 0) / 5, recentEvidence(edge)),
-          factor("communal expectation", (ownGroup?.sharingNorm ?? 0) / 4),
-          factor("own hunger", (-hunger * 7) / 20),
-          factor("travel cost", -distance * 45),
+          factor("sharing opportunity", 450, [], null, null, "TARGET"),
+          factor(
+            "generous disposition",
+            (creature.traits.generosity * 2) / 5,
+            [],
+            creature.traits.generosity,
+            "UNIT",
+          ),
+          factor(
+            "recipient hunger",
+            (recipient.needs.hunger * 2) / 5,
+            [],
+            recipient.needs.hunger,
+            "UNIT",
+            "TARGET",
+          ),
+          factor(
+            "trust in recipient",
+            (edge?.trust ?? 0) / 5,
+            recentEvidence(edge),
+            edge?.trust ?? 0,
+            "UNIT",
+            "TARGET",
+          ),
+          factor(
+            "communal expectation",
+            (ownGroup?.sharingNorm ?? 0) / 4,
+            [],
+            ownGroup?.sharingNorm ?? null,
+            ownGroup ? "UNIT" : null,
+            ownGroup?.id ?? null,
+          ),
+          factor("own hunger", (-hunger * 7) / 20, [], hunger, "UNIT"),
+          factor("travel cost", -distance * 45, [], distance, "TILES", "TARGET"),
         ]),
       );
     }
@@ -276,9 +371,22 @@ function generateCandidates(
     if (creature.inventory.food >= 2 && hunger < 4_200 && !recentlyKept) {
       candidates.push(
         scoredCandidate(state, creature, "KEEP", null, creature.tileIndex, [
-          factor("keep a reserve", 400),
-          factor("private preference", (UNIT_MAX - creature.traits.generosity) / 5),
-          factor("communal expectation", -(ownGroup?.sharingNorm ?? 0) / 5),
+          factor("keep a reserve", 400, [], creature.inventory.food, "COUNT"),
+          factor(
+            "private preference",
+            (UNIT_MAX - creature.traits.generosity) / 5,
+            [],
+            UNIT_MAX - creature.traits.generosity,
+            "UNIT",
+          ),
+          factor(
+            "communal expectation",
+            -(ownGroup?.sharingNorm ?? 0) / 5,
+            [],
+            ownGroup?.sharingNorm ?? null,
+            ownGroup ? "UNIT" : null,
+            ownGroup?.id ?? null,
+          ),
         ]),
       );
     }
@@ -304,11 +412,30 @@ function generateCandidates(
         storageComplete.tileIndex,
         [
           factor("communal contribution", 1_000),
-          factor("group loyalty", (creature.traits.loyalty * 2) / 5),
-          factor("sharing norm", (ownGroup?.sharingNorm ?? 0) / 3),
-          factor("surplus food", creature.inventory.food * 350),
-          factor("own hunger", (-hunger * 3) / 10),
-          factor("travel cost", -distance * 40),
+          factor(
+            "group loyalty",
+            (creature.traits.loyalty * 2) / 5,
+            [],
+            creature.traits.loyalty,
+            "UNIT",
+          ),
+          factor(
+            "sharing norm",
+            (ownGroup?.sharingNorm ?? 0) / 3,
+            [],
+            ownGroup?.sharingNorm ?? null,
+            ownGroup ? "UNIT" : null,
+            ownGroup?.id ?? null,
+          ),
+          factor(
+            "surplus food",
+            creature.inventory.food * 350,
+            [],
+            creature.inventory.food,
+            "COUNT",
+          ),
+          factor("own hunger", (-hunger * 3) / 10, [], hunger, "UNIT"),
+          factor("travel cost", -distance * 40, [], distance, "TILES", "TARGET"),
         ],
       ),
     );
@@ -332,10 +459,17 @@ function generateCandidates(
         storageComplete.id,
         storageComplete.tileIndex,
         [
-          factor("authorized access", 1_200),
-          factor("personal hunger", hunger),
-          factor("available group food", storageComplete.inventory.food * 180),
-          factor("travel cost", -distance * 45),
+          factor("authorized access", 1_200, [], null, null, "TARGET"),
+          factor("personal hunger", hunger, [], hunger, "UNIT"),
+          factor(
+            "available group food",
+            storageComplete.inventory.food * 180,
+            [],
+            storageComplete.inventory.food,
+            "COUNT",
+            "TARGET",
+          ),
+          factor("travel cost", -distance * 45, [], distance, "TILES", "TARGET"),
         ],
       ),
     );
@@ -350,11 +484,24 @@ function generateCandidates(
         const distance = manhattanDistance(state.world, creature.tileIndex, node.tileIndex);
         candidates.push(
           scoredCandidate(state, creature, "GATHER_MATERIAL", node.id, node.tileIndex, [
-            factor("group needs a store", 2_500),
-            factor("group loyalty", (creature.traits.loyalty * 2) / 5),
-            factor("material opportunity", 1_000),
-            factor("urgent hunger", hunger > 7_000 ? -3_500 : 0),
-            factor("travel cost", -distance * 40),
+            factor(
+              "group needs a store",
+              2_500,
+              [],
+              ownStorage?.kind ?? "NO_STORAGE",
+              "LABEL",
+              ownGroup.id,
+            ),
+            factor(
+              "group loyalty",
+              (creature.traits.loyalty * 2) / 5,
+              [],
+              creature.traits.loyalty,
+              "UNIT",
+            ),
+            factor("material opportunity", 1_000, [], node.currentStock, "COUNT", "TARGET"),
+            factor("urgent hunger", hunger > 7_000 ? -3_500 : 0, [], hunger, "UNIT"),
+            factor("travel cost", -distance * 40, [], distance, "TILES", "TARGET"),
           ]),
         );
       }
@@ -374,12 +521,38 @@ function generateCandidates(
           ownStorage?.id ?? null,
           targetTile,
           [
-            factor("shared storage opportunity", 2_800),
-            factor("carried material", creature.inventory.material * 650),
-            factor("group loyalty", (creature.traits.loyalty * 2) / 5),
-            factor("construction progress", (ownStorage?.progress ?? 0) / 5),
-            factor("urgent hunger", hunger > 7_500 ? -4_000 : 0),
-            factor("travel cost", -distance * 42),
+            factor(
+              "shared storage opportunity",
+              2_800,
+              [],
+              ownStorage?.kind ?? "NO_STORAGE",
+              "LABEL",
+              ownGroup.id,
+            ),
+            factor(
+              "carried material",
+              creature.inventory.material * 650,
+              [],
+              creature.inventory.material,
+              "COUNT",
+            ),
+            factor(
+              "group loyalty",
+              (creature.traits.loyalty * 2) / 5,
+              [],
+              creature.traits.loyalty,
+              "UNIT",
+            ),
+            factor(
+              "construction progress",
+              (ownStorage?.progress ?? 0) / 5,
+              [],
+              ownStorage?.progress ?? 0,
+              "UNIT",
+              ownStorage?.id ?? null,
+            ),
+            factor("urgent hunger", hunger > 7_500 ? -4_000 : 0, [], hunger, "UNIT"),
+            factor("travel cost", -distance * 42, [], distance, "TILES", "TARGET"),
           ],
         ),
       );
@@ -429,16 +602,69 @@ function generateCandidates(
         );
         candidates.push(
           scoredCandidate(state, creature, "STEAL", target.id, target.tileIndex, [
-            factor("desperation", (hunger * 3) / 4),
-            factor("aggressive opportunism", (creature.traits.aggression * 9) / 20),
-            factor("food in storage", Math.min(2_200, target.inventory.food * 300)),
-            factor("outsider access", unauthorized ? 1_800 : -900),
-            factor("visible witnesses", -witnesses.length * 180),
-            factor("active guard", -Math.min(1_200, guardPenalty)),
-            factor("fear of defenders", -groupFear),
-            factor("injury risk", -(UNIT_MAX - creature.health) / 2),
-            factor("group loyalty", unauthorized ? 0 : -creature.traits.loyalty / 2),
-            factor("travel cost", -distance * 48),
+            factor("desperation", (hunger * 3) / 4, [], hunger, "UNIT"),
+            factor(
+              "aggressive opportunism",
+              (creature.traits.aggression * 9) / 20,
+              [],
+              creature.traits.aggression,
+              "UNIT",
+            ),
+            factor(
+              "food in storage",
+              Math.min(2_200, target.inventory.food * 300),
+              [],
+              target.inventory.food,
+              "COUNT",
+              "TARGET",
+            ),
+            factor(
+              "outsider access",
+              unauthorized ? 1_800 : -900,
+              [],
+              unauthorized ? "OUTSIDER" : "MEMBER",
+              "LABEL",
+              targetGroup?.id ?? null,
+            ),
+            factor(
+              "visible witnesses",
+              -witnesses.length * 180,
+              [],
+              witnesses.length,
+              "COUNT",
+              "TARGET",
+            ),
+            factor(
+              "active guard",
+              -Math.min(1_200, guardPenalty),
+              [],
+              target.guardIds.length,
+              "COUNT",
+              "TARGET",
+            ),
+            factor(
+              "fear of defenders",
+              -groupFear,
+              [],
+              groupFear,
+              "UNIT",
+              targetGroup?.id ?? null,
+            ),
+            factor(
+              "injury risk",
+              -(UNIT_MAX - creature.health) / 2,
+              [],
+              UNIT_MAX - creature.health,
+              "UNIT",
+            ),
+            factor(
+              "group loyalty",
+              unauthorized ? 0 : -creature.traits.loyalty / 2,
+              [],
+              creature.traits.loyalty,
+              "UNIT",
+            ),
+            factor("travel cost", -distance * 48, [], distance, "TILES", "TARGET"),
           ]),
         );
       }
@@ -466,12 +692,32 @@ function generateCandidates(
         storageComplete.tileIndex,
         [
           factor("protect shared storage", 1_250),
-          factor("group loyalty", creature.traits.loyalty / 3),
-          factor("stored wealth", storageComplete.inventory.food * 170),
-          factor("guard already present", -storageComplete.guardIds.length * 900),
-          factor("personal fatigue", -fatigue / 4),
-          factor("urgent hunger", hunger > 7_000 ? -3_000 : 0),
-          factor("travel cost", -distance * 35),
+          factor(
+            "group loyalty",
+            creature.traits.loyalty / 3,
+            [],
+            creature.traits.loyalty,
+            "UNIT",
+          ),
+          factor(
+            "stored wealth",
+            storageComplete.inventory.food * 170,
+            [],
+            storageComplete.inventory.food,
+            "COUNT",
+            "TARGET",
+          ),
+          factor(
+            "guard already present",
+            -storageComplete.guardIds.length * 900,
+            [],
+            storageComplete.guardIds.length,
+            "COUNT",
+            "TARGET",
+          ),
+          factor("personal fatigue", -fatigue / 4, [], fatigue, "UNIT"),
+          factor("urgent hunger", hunger > 7_000 ? -3_000 : 0, [], hunger, "UNIT"),
+          factor("travel cost", -distance * 35, [], distance, "TILES", "TARGET"),
         ],
       ),
     );
@@ -501,17 +747,52 @@ function generateCandidates(
     ) {
       candidates.push(
         scoredCandidate(state, creature, "ATTACK", target.id, target.tileIndex, [
-          factor("aggressive disposition", (creature.traits.aggression * 2) / 5),
-          factor("remembered grievance", edge.rivalry, recentEvidence(edge)),
+          factor(
+            "aggressive disposition",
+            (creature.traits.aggression * 2) / 5,
+            [],
+            creature.traits.aggression,
+            "UNIT",
+          ),
+          factor(
+            "remembered grievance",
+            edge.rivalry,
+            recentEvidence(edge),
+            edge.rivalry,
+            "UNIT",
+            "TARGET",
+          ),
           factor(
             "defend the group",
             creature.groupId !== null && creature.groupId !== target.groupId ? 1_800 : 0,
             recentEvidence(edge),
+            creature.groupId === null ? null : "GROUP_AT_RISK",
+            creature.groupId === null ? null : "LABEL",
+            creature.groupId,
           ),
-          factor("confidence in combat", creature.skills.combat / 5),
-          factor("fear of target", -edge.fear / 3, recentEvidence(edge)),
-          factor("poor health", -(UNIT_MAX - creature.health) / 2),
-          factor("travel cost", -distance * 55),
+          factor(
+            "confidence in combat",
+            creature.skills.combat / 5,
+            [],
+            creature.skills.combat,
+            "UNIT",
+          ),
+          factor(
+            "fear of target",
+            -edge.fear / 3,
+            recentEvidence(edge),
+            edge.fear,
+            "UNIT",
+            "TARGET",
+          ),
+          factor(
+            "poor health",
+            -(UNIT_MAX - creature.health) / 2,
+            [],
+            creature.health,
+            "UNIT",
+          ),
+          factor("travel cost", -distance * 55, [], distance, "TILES", "TARGET"),
         ]),
       );
     }
@@ -519,10 +800,29 @@ function generateCandidates(
       const fleeTile = findFleeTile(state, creature, target);
       candidates.push(
         scoredCandidate(state, creature, "FLEE", target.id, fleeTile, [
-          factor("fear of aggressor", (edge.fear * 3) / 5, recentEvidence(edge)),
-          factor("injury", UNIT_MAX - creature.health),
+          factor(
+            "fear of aggressor",
+            (edge.fear * 3) / 5,
+            recentEvidence(edge),
+            edge.fear,
+            "UNIT",
+            "TARGET",
+          ),
+          factor(
+            "injury",
+            UNIT_MAX - creature.health,
+            [],
+            UNIT_MAX - creature.health,
+            "UNIT",
+          ),
           factor("escape route", 1_200),
-          factor("aggressive disposition", -creature.traits.aggression / 4),
+          factor(
+            "aggressive disposition",
+            -creature.traits.aggression / 4,
+            [],
+            creature.traits.aggression,
+            "UNIT",
+          ),
         ]),
       );
     }
@@ -544,11 +844,30 @@ function generateCandidates(
       }
       candidates.push(
         scoredCandidate(state, creature, "JOIN_GROUP", group.id, group.homeTileIndex, [
-          factor("social disposition", creature.traits.sociability / 2),
-          factor("known member affinity", affinity / Math.max(1, group.memberIds.length)),
-          factor("group safety", group.cohesion / 4),
-          factor("loss of autonomy", -(UNIT_MAX - creature.traits.loyalty) / 5),
-          factor("travel cost", -distance * 55),
+          factor(
+            "social disposition",
+            creature.traits.sociability / 2,
+            [],
+            creature.traits.sociability,
+            "UNIT",
+          ),
+          factor(
+            "known member affinity",
+            affinity / Math.max(1, group.memberIds.length),
+            [],
+            affinity / Math.max(1, group.memberIds.length),
+            "UNIT",
+            "TARGET",
+          ),
+          factor("group safety", group.cohesion / 4, [], group.cohesion, "UNIT", "TARGET"),
+          factor(
+            "loss of autonomy",
+            -(UNIT_MAX - creature.traits.loyalty) / 5,
+            [],
+            UNIT_MAX - creature.traits.loyalty,
+            "UNIT",
+          ),
+          factor("travel cost", -distance * 55, [], distance, "TILES", "TARGET"),
         ]),
       );
     }
@@ -570,9 +889,9 @@ function generateCandidates(
     );
     candidates.push(
       scoredCandidate(state, creature, "EXPLORE", null, target, [
-        factor("no pressing need", 900),
+        factor("no pressing need", 900, [], Math.max(hunger, fatigue), "UNIT"),
         factor("nearby novelty", 400),
-        factor("fatigue", -fatigue / 8),
+        factor("fatigue", -fatigue / 8, [], fatigue, "UNIT"),
       ]),
     );
   }
@@ -585,7 +904,7 @@ function generateCandidates(
       ) {
         const completion = creature.activeAction?.progress ?? 0;
         const continuation = Math.round(500 + completion / 8);
-        candidate.factors.push(factor("goal continuity", continuation));
+        candidate.factors.push(implementationFactor("goal continuity", continuation));
         candidate.utility += continuation;
       }
     }
@@ -597,7 +916,7 @@ function generateCandidates(
         candidate.targetEntityId === creature.activePlan.targetEntityId
       ) {
         const continuation = 650;
-        candidate.factors.push(factor("plan continuity", continuation));
+        candidate.factors.push(implementationFactor("plan continuity", continuation));
         candidate.utility += continuation;
       }
     }

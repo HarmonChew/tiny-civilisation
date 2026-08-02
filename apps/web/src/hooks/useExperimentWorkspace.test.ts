@@ -114,6 +114,7 @@ function simulationController(
   return {
     view,
     seed: state.seed,
+    timelineRevision: 0,
     initialized: true,
     busy: false,
     fatalError: null,

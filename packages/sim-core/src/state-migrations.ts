@@ -2,10 +2,9 @@ import { desireForAction, desireStrength, planForAction } from "./desires.js";
 import { classifyAttentionTier, createEventClusterKey } from "./event-attention.js";
 import { claimInteractionSlot } from "./interaction-slots.js";
 import { findPath } from "./pathfinding.js";
-import { captureReasonFact, selectStrongestReason } from "./reason-facts.js";
+import { selectStrongestReason } from "./reason-facts.js";
 import type {
   ActionKind,
-  CreatureState,
   DecisionCandidate,
   DecisionRecord,
   DomainEvent,
@@ -32,13 +31,7 @@ function requireArray(record: UnknownRecord, key: string): unknown[] {
   return value;
 }
 
-function enrichFactor(
-  state: SimulationState,
-  creature: CreatureState,
-  factor: UnknownRecord,
-  targetId: number | null,
-  decisionTick: number,
-): UtilityFactor {
+function enrichFactor(factor: UnknownRecord): UtilityFactor {
   const key = typeof factor.key === "string" ? factor.key : "retained factor";
   const contribution =
     typeof factor.contribution === "number" ? Math.round(factor.contribution) : 0;
@@ -47,22 +40,15 @@ function enrichFactor(
         (value): value is number => Number.isSafeInteger(value) && value > 0,
       )
     : [];
-  const fact = captureReasonFact(
-    state,
-    creature,
-    key,
-    contribution,
-    evidenceEventIds,
-    targetId,
-  );
-  if (fact) fact.capturedAtTick = decisionTick;
-  return { key, contribution, evidenceEventIds, fact };
+  // V1 retained utility scores but not the source measurements behind them.
+  // Reconstructing a value from the load-time creature state would fabricate
+  // a historical observation, so migrated factors remain explicitly unknown.
+  return { key, contribution, evidenceEventIds, fact: null };
 }
 
 function enrichDecision(state: SimulationState, value: UnknownRecord): DecisionRecord {
   const actor = state.creatures.find((creature) => creature.id === value.actorId);
   if (!actor) throw new Error("Legacy decision references a missing actor.");
-  const tick = typeof value.tick === "number" ? value.tick : state.tick;
   const candidates = (Array.isArray(value.candidates) ? value.candidates : []).map(
     (candidateValue): DecisionCandidate => {
       if (!isRecord(candidateValue) || typeof candidateValue.action !== "string") {
@@ -75,15 +61,7 @@ function enrichDecision(state: SimulationState, value: UnknownRecord): DecisionR
           : null;
       const factors = (
         Array.isArray(candidateValue.factors) ? candidateValue.factors : []
-      ).map((factorValue) =>
-        enrichFactor(
-          state,
-          actor,
-          isRecord(factorValue) ? factorValue : {},
-          targetEntityId,
-          tick,
-        ),
-      );
+      ).map((factorValue) => enrichFactor(isRecord(factorValue) ? factorValue : {}));
       return {
         action,
         desire: desireForAction(state, actor, action),

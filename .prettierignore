@@ -5,4 +5,5 @@ playwright-report/
 test-results/
 packages/sim-core/tests/fixtures/golden-replays.v1.json
 packages/sim-core/tests/fixtures/golden-replays.v2.json
+packages/sim-core/tests/fixtures/golden-replays.v3.json
 package-lock.json

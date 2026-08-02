@@ -1,5 +1,4 @@
 import type {
-  CreatureState,
   ReasonFact,
   ReasonFactKind,
   SimulationState,
@@ -50,34 +49,18 @@ function kindForKey(key: string): ReasonFactKind {
 
 export function captureReasonFact(
   state: SimulationState,
-  creature: CreatureState,
   key: string,
-  contribution: number,
+  snapshot: Pick<ReasonFact, "value" | "unit" | "sourceEntityId">,
   evidenceEventIds: readonly number[] = [],
-  sourceEntityId: number | null = null,
 ): ReasonFact | null {
   if (implementationOnly.has(key)) return null;
-  const kind = kindForKey(key);
-  let value: number | string | null = Math.round(Math.abs(contribution));
-  let unit: ReasonFact["unit"] = "UNIT";
-  if (/personal hunger|urgent hunger/i.test(key)) value = creature.needs.hunger;
-  else if (/fatigue|need for rest/i.test(key)) value = creature.needs.fatigue;
-  else if (/food reserve|carried food|surplus food/i.test(key)) {
-    value = creature.inventory.food;
-    unit = "COUNT";
-  } else if (/carried material/i.test(key)) {
-    value = creature.inventory.material;
-    unit = "COUNT";
-  } else if (/travel/i.test(key)) {
-    unit = "TILES";
-  }
   return {
-    kind,
+    kind: kindForKey(key),
     key,
     label: humanize(key),
-    value,
-    unit,
-    sourceEntityId,
+    value: typeof snapshot.value === "number" ? Math.round(snapshot.value) : snapshot.value,
+    unit: snapshot.unit,
+    sourceEntityId: snapshot.sourceEntityId,
     sourceEventIds: [...evidenceEventIds],
     capturedAtTick: state.tick,
   };
