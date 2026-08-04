@@ -1,10 +1,17 @@
 import {
+  SCENARIO_CANONICAL_SEEDS,
+  SCENARIO_IDS,
+  createScenarioReference,
   createSimulationReplay,
   hashSimulationState,
   type ScheduledPlayerCommand,
 } from "@tiny-civ/sim-core";
 import { describe, expect, it } from "vitest";
-import type { RuntimeClientMessage, RuntimeWorkerMessage } from "../workers/protocol";
+import {
+  RUNTIME_PROTOCOL_VERSION,
+  type RuntimeClientMessage,
+  type RuntimeWorkerMessage,
+} from "../workers/protocol";
 import {
   SimulationWorkerServer,
   type SimulationWorkerServerPort,
@@ -65,6 +72,7 @@ class ControlledWorker implements SimulationWorkerLike {
   respond(requestId: number, frame: SimulationFrame): void {
     const message: RuntimeWorkerMessage = {
       kind: "tiny-civilisation/runtime-response",
+      protocolVersion: RUNTIME_PROTOCOL_VERSION,
       requestId,
       ok: true,
       status: statusFromFrame(frame, requestId),
@@ -100,29 +108,39 @@ function requestMessages(worker: ControlledWorker | InProcessWorker) {
 }
 
 describe("simulation engines", () => {
-  it("keeps the 5,000-tick hot frame projection-only and below 64 KiB", () => {
-    const runtime = new CoreSimulationRuntime({
-      yieldControl: () => Promise.resolve(),
-    });
-    runtime.create(4_182);
-    const frame = runtime.step(5_000);
-    const payloadBytes = new TextEncoder().encode(JSON.stringify(frame)).byteLength;
+  it("keeps every bootstrap below 128 KiB and every 5,000-tick hot frame below 64 KiB", () => {
+    for (const scenarioId of SCENARIO_IDS) {
+      const runtime = new CoreSimulationRuntime({
+        yieldControl: () => Promise.resolve(),
+      });
+      const initial = runtime.create(
+        createScenarioReference(scenarioId, SCENARIO_CANONICAL_SEEDS[scenarioId]),
+      );
+      const bootstrapBytes = new TextEncoder().encode(JSON.stringify(initial)).byteLength;
+      expect(bootstrapBytes, `${scenarioId} bootstrap bytes`).toBeLessThan(128 * 1_024);
 
-    expect(frame).not.toHaveProperty("state");
-    expect(frame.hash).toBeNull();
-    expect(frame.snapshot.tiles).toEqual([]);
-    expect(frame.snapshot.recentEvents.length).toBeLessThanOrEqual(24);
-    for (const creature of frame.snapshot.creatures) {
-      expect(creature).not.toHaveProperty("food");
-      expect(creature).not.toHaveProperty("material");
-      expect(creature).not.toHaveProperty("strongestReason");
-      expect(creature).not.toHaveProperty("interactionClaim");
+      const frame = runtime.step(5_000);
+      const payloadBytes = new TextEncoder().encode(JSON.stringify(frame)).byteLength;
+      expect(frame).not.toHaveProperty("state");
+      expect(frame.hash).toBeNull();
+      expect(frame.snapshot.tiles).toEqual([]);
+      expect(frame.snapshot.scenario.landmarks).toEqual([]);
+      expect(frame.snapshot.recentEvents.length).toBeLessThanOrEqual(24);
+      for (const creature of frame.snapshot.creatures) {
+        expect(creature).not.toHaveProperty("food");
+        expect(creature).not.toHaveProperty("material");
+        expect(creature).not.toHaveProperty("strongestReason");
+        expect(creature).not.toHaveProperty("interactionClaim");
+      }
+      expect(
+        Math.max(
+          ...frame.snapshot.creatures.map((creature) => creature.recentRoute.length),
+        ),
+      ).toBeLessThanOrEqual(12);
+      expect(payloadBytes, `${scenarioId} hot-frame bytes`).toBeLessThan(64 * 1_024);
+      runtime.dispose();
     }
-    expect(
-      Math.max(...frame.snapshot.creatures.map((creature) => creature.recentRoute.length)),
-    ).toBeLessThanOrEqual(12);
-    expect(payloadBytes).toBeLessThan(64 * 1_024);
-  });
+  }, 15_000);
 
   it("keeps direct and Worker execution bit-for-bit identical", async () => {
     const direct = new DirectSimulationEngine();
@@ -203,6 +221,53 @@ describe("simulation engines", () => {
     direct.dispose();
     worker.dispose();
     expect(workerPort.terminated).toBe(true);
+  });
+
+  it("keeps direct, repeated, and Worker execution deterministic for every scenario", async () => {
+    const mapHashes: string[] = [];
+
+    for (const scenarioId of SCENARIO_IDS) {
+      const reference = createScenarioReference(scenarioId, 42);
+      const firstDirect = new DirectSimulationEngine();
+      const secondDirect = new DirectSimulationEngine();
+      const workerPort = new InProcessWorker();
+      const worker = new WorkerSimulationEngine({ worker: workerPort });
+
+      const [firstInitial, secondInitial, workerInitial] = await Promise.all([
+        firstDirect.create(reference),
+        secondDirect.create(reference),
+        worker.create(reference),
+      ]);
+      expect(firstInitial.scenario).toEqual(reference);
+      expect(secondInitial).toEqual(firstInitial);
+      expect(workerInitial).toEqual(firstInitial);
+      mapHashes.push(firstInitial.compiledMapHash);
+
+      const createRequest = requestMessages(workerPort)[0];
+      expect(createRequest?.operation).toEqual({ type: "create", scenario: reference });
+
+      const [firstAdvanced, secondAdvanced, workerAdvanced] = await Promise.all([
+        firstDirect.step(32),
+        secondDirect.step(32),
+        worker.step(32),
+      ]);
+      expect(secondAdvanced).toEqual(firstAdvanced);
+      expect(workerAdvanced).toEqual(firstAdvanced);
+
+      const [firstHash, secondHash, workerHash] = await Promise.all([
+        firstDirect.getCanonicalHash(),
+        secondDirect.getCanonicalHash(),
+        worker.getCanonicalHash(),
+      ]);
+      expect(secondHash).toEqual(firstHash);
+      expect(workerHash).toEqual(firstHash);
+
+      firstDirect.dispose();
+      secondDirect.dispose();
+      worker.dispose();
+    }
+
+    expect(new Set(mapHashes).size).toBe(SCENARIO_IDS.length);
   });
 
   it("keeps canonical state work behind typed on-demand Worker operations", async () => {
@@ -415,6 +480,26 @@ describe("simulation engines", () => {
     expect(workerProgress).toEqual(directProgress);
   });
 
+  it("supports an explicitly unverified runtime target without weakening persisted replay validation", async () => {
+    const reference = createScenarioReference("split-banks", 42);
+    const persisted = createSimulationReplay(reference, []);
+    const runtimeReplay = { ...persisted, finalTick: 25 };
+    const direct = new DirectSimulationEngine();
+    const worker = new WorkerSimulationEngine({ worker: new InProcessWorker() });
+
+    const [directResult, workerResult] = await Promise.all([
+      direct.replay(runtimeReplay),
+      worker.replay(runtimeReplay),
+    ]);
+
+    expect(directResult.frame.tick).toBe(25);
+    expect(directResult.expectedHash).toBeNull();
+    expect(directResult.hashMatches).toBeNull();
+    expect(workerResult).toEqual(directResult);
+    direct.dispose();
+    worker.dispose();
+  });
+
   it("captures replay observation frames with direct and Worker parity", async () => {
     const source = new DirectSimulationEngine();
     const initial = await source.create(23);
@@ -474,37 +559,47 @@ describe("simulation engines", () => {
     worker.dispose();
   });
 
-  it("returns only reached replay captures when a Worker replay is cancelled", async () => {
-    const reference = new DirectSimulationEngine();
-    await reference.create(4_182);
-    await reference.runToTick(100);
-    const expectedHash = (await reference.getCanonicalHash()).hash;
-    const replay = createSimulationReplay(4_182, [], {
-      finalTick: 100,
-      finalHash: expectedHash,
-    });
-    const worker = new WorkerSimulationEngine({ worker: new InProcessWorker() });
-    const controller = new AbortController();
-    const progress: number[] = [];
-    const result = await worker.replay(replay, {
-      signal: controller.signal,
-      chunkSize: 50,
-      captureTicks: [0, 10, 20, 30],
-      onProgress: (update) => {
-        progress.push(update.currentTick);
-        if (update.currentTick === 20) controller.abort();
-      },
-    });
+  it.each(SCENARIO_IDS)(
+    "returns only reached replay captures when a %s Worker replay is cancelled",
+    async (scenarioId) => {
+      const scenario = createScenarioReference(scenarioId, 42);
+      const reference = new DirectSimulationEngine();
+      await reference.create(scenario);
+      await reference.runToTick(100);
+      const expectedHash = (await reference.getCanonicalHash()).hash;
+      const replay = createSimulationReplay(scenario, [], {
+        finalTick: 100,
+        finalHash: expectedHash,
+      });
+      const worker = new WorkerSimulationEngine({ worker: new InProcessWorker() });
+      const controller = new AbortController();
+      const progress: number[] = [];
+      const result = await worker.replay(replay, {
+        signal: controller.signal,
+        chunkSize: 50,
+        captureTicks: [0, 10, 20, 30],
+        onProgress: (update) => {
+          progress.push(update.currentTick);
+          if (update.currentTick === 20) controller.abort();
+        },
+      });
 
-    expect(result.cancelled).toBe(true);
-    expect(result.frame.tick).toBe(20);
-    expect(result.capturedFrames?.map((frame) => frame.tick)).toEqual([0, 10, 20]);
-    expect(result.frame).toEqual(result.capturedFrames?.at(-1));
-    expect(progress).toEqual([0, 10, 20]);
-    expect(worker.status.phase).toBe("ready");
-    reference.dispose();
-    worker.dispose();
-  });
+      expect(result.cancelled).toBe(true);
+      expect(result.frame.tick).toBe(20);
+      expect(result.frame.scenario).toEqual(scenario);
+      expect(result.capturedFrames?.map((frame) => frame.tick)).toEqual([0, 10, 20]);
+      expect(
+        result.capturedFrames?.every(
+          (frame) => frame.scenario.scenarioId === scenarioId && frame.seed === 42,
+        ),
+      ).toBe(true);
+      expect(result.frame).toEqual(result.capturedFrames?.at(-1));
+      expect(progress).toEqual([0, 10, 20]);
+      expect(worker.status.phase).toBe("ready");
+      reference.dispose();
+      worker.dispose();
+    },
+  );
 
   it("rejects an unbounded capture request before advancing", async () => {
     const direct = new DirectSimulationEngine();
@@ -612,6 +707,7 @@ describe("simulation engines", () => {
     expect(projectionRequest).toBeDefined();
     expect(workerPort.requests).toContainEqual({
       kind: "tiny-civilisation/runtime-cancel",
+      protocolVersion: RUNTIME_PROTOCOL_VERSION,
       requestId: projectionRequest?.requestId,
     });
     worker.dispose();
@@ -664,22 +760,31 @@ describe("simulation engines", () => {
     await expect(older).rejects.toBeInstanceOf(StaleRuntimeResponseError);
   });
 
-  it("moves to a crash state and rejects pending work when the Worker errors", async () => {
-    const controlled = new ControlledWorker();
-    const engine = new WorkerSimulationEngine({ worker: controlled });
-    const pending = engine.create(3);
-    controlled.onerror?.(
-      new ErrorEvent("error", { message: "worker boom", error: new Error("boom") }),
-    );
+  it.each(SCENARIO_IDS)(
+    "moves a pending %s create to a crash state when the Worker errors",
+    async (scenarioId) => {
+      const scenario = createScenarioReference(scenarioId, 42);
+      const controlled = new ControlledWorker();
+      const engine = new WorkerSimulationEngine({ worker: controlled });
+      const pending = engine.create(scenario);
+      expect(requestMessages(controlled)[0]?.operation).toEqual({
+        type: "create",
+        scenario,
+      });
+      controlled.onerror?.(
+        new ErrorEvent("error", { message: "worker boom", error: new Error("boom") }),
+      );
 
-    await expect(pending).rejects.toBeInstanceOf(SimulationWorkerCrashedError);
-    expect(engine.status).toMatchObject({
-      phase: "crashed",
-      playing: false,
-      error: "worker boom",
-    });
-    expect(() => engine.getFrame()).toThrow(SimulationWorkerCrashedError);
-  });
+      await expect(pending).rejects.toBeInstanceOf(SimulationWorkerCrashedError);
+      expect(engine.status).toMatchObject({
+        phase: "crashed",
+        playing: false,
+        error: "worker boom",
+      });
+      expect(() => engine.getFrame()).toThrow(SimulationWorkerCrashedError);
+      engine.dispose();
+    },
+  );
 
   it("selects direct and Worker implementations through the public factory", () => {
     const direct = createSimulationEngine({ mode: "direct" });

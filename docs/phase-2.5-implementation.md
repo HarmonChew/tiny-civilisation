@@ -5,6 +5,8 @@ Updated: **2 August 2026**
 
 This document records the Phase 2.5 contracts that are present in the repository. It is the implementation counterpart to the [Phase 2.5 execution plan](phase-2.5-execution-plan.md), not a claim that every release-evidence activity in that plan has been completed.
 
+> Historical boundary: Phase 3 now supersedes the version numbers and single-scenario assumptions recorded here. See the [Phase 3 contract](phase-3-contract.md) for the current authoritative matrix. This document remains the migration source and Phase 2.5 design record.
+
 ## Runtime and authority boundary
 
 ```text

@@ -1,11 +1,12 @@
+import { createScenarioReference } from "@tiny-civ/sim-core";
 import type {
   CausalEvidenceProjectionV1,
   CausalEvidenceQueryOptions,
   CausalEvidenceRef,
   ExperimentOutcomeComparisonV1,
   ExperimentOutcomeV1,
+  ScenarioReferenceV2,
   ScheduledPlayerCommand,
-  SimulationReplayV1,
   SimulationState,
 } from "@tiny-civ/sim-core";
 import {
@@ -17,6 +18,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { InterventionTool, TileView, WorldView } from "../model";
+import { DEFAULT_SCENARIO_VIEW } from "../experiment/scenario-presets";
 import {
   createSimulationEngine,
   type InterventionAcknowledgement,
@@ -28,14 +30,17 @@ import {
   type RuntimeEntityDetail,
   type RuntimeInterventionOutcomeProjection,
   type RuntimeQueryOptions,
+  type RuntimeReplay,
   type SimulationEngine,
   type SimulationFrame,
+  type SimulationCreation,
 } from "../runtime";
 import { makeWorldViewFromSnapshot, ticksPerSecond } from "../sim-adapter";
 
 export type SimulationSpeed = 1 | 2 | 4;
 
 const EMPTY_VIEW: WorldView = {
+  scenario: DEFAULT_SCENARIO_VIEW,
   tick: 0,
   timeLabel: "Day 1 · 00:00",
   hash: "",
@@ -53,6 +58,7 @@ const EMPTY_VIEW: WorldView = {
 
 export interface SimulationController {
   view: WorldView;
+  scenario: ScenarioReferenceV2;
   seed: number;
   /** Changes whenever the authoritative timeline is replaced rather than advanced. */
   timelineRevision: number;
@@ -66,7 +72,7 @@ export interface SimulationController {
   feedback: string;
   pause: () => Promise<WorldView | null>;
   advance: (ticks: number) => Promise<WorldView | null>;
-  restart: (seed?: number) => Promise<WorldView | null>;
+  restart: (scenario?: SimulationCreation) => Promise<WorldView | null>;
   applyIntervention: (
     tool: Exclude<InterventionTool, "inspect">,
     tile: TileView,
@@ -100,7 +106,7 @@ export interface SimulationController {
     options?: LongRunningOperationOptions,
   ) => Promise<RunToTickResult>;
   replay: (
-    replay: SimulationReplayV1,
+    replay: RuntimeReplay,
     options?: LongRunningOperationOptions,
   ) => Promise<ReplayResult>;
 }
@@ -109,17 +115,25 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-export function useSimulationController(initialSeed = 4_182): SimulationController {
+export function useSimulationController(
+  initialScenario: SimulationCreation = 4_182,
+): SimulationController {
   const engineRef = useRef<SimulationEngine | null>(null);
   if (!engineRef.current) engineRef.current = createSimulationEngine();
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const retainedTilesRef = useRef<readonly TileView[]>([]);
+  const retainedScenarioRef = useRef(DEFAULT_SCENARIO_VIEW);
   const verifiedHashRef = useRef<RuntimeCanonicalHash | null>(null);
   const mountedRef = useRef(true);
   const advanceInFlightRef = useRef(false);
   const [view, setView] = useState<WorldView>(EMPTY_VIEW);
-  const [seed, setSeed] = useState(initialSeed >>> 0);
+  const initialReference =
+    typeof initialScenario === "number"
+      ? createScenarioReference(initialScenario >>> 0)
+      : initialScenario;
+  const [scenario, setScenario] = useState<ScenarioReferenceV2>(initialReference);
+  const [seed, setSeed] = useState(initialReference.seed);
   const [timelineRevision, setTimelineRevision] = useState(0);
   const [initialized, setInitialized] = useState(false);
   const [busy, setBusy] = useState(true);
@@ -140,10 +154,13 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
       verifiedHash?.hash ?? null,
       retainedTilesRef.current,
       verifiedHash?.tick ?? null,
+      retainedScenarioRef.current,
     );
     if (frame.snapshot.tiles.length > 0) retainedTilesRef.current = nextView.tiles;
+    retainedScenarioRef.current = nextView.scenario;
     if (mountedRef.current) {
       setView(nextView);
+      setScenario(frame.scenario);
       setSeed(frame.seed);
       setInitialized(true);
       setBusy(false);
@@ -180,17 +197,17 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
     engineRef.current = engine;
     subscribeToEngine(engine);
     void engine
-      .create(initialSeed)
+      .create(initialScenario)
       .then(applyFrame)
       .catch((error) => fail(error, "The simulation could not start."));
     return () => {
       mountedRef.current = false;
       unsubscribeRef.current?.();
       unsubscribeRef.current = null;
-      engine.dispose();
+      engineRef.current?.dispose();
       engineRef.current = null;
     };
-  }, [applyFrame, fail, initialSeed, subscribeToEngine]);
+  }, [applyFrame, fail, initialScenario, subscribeToEngine]);
 
   useEffect(() => {
     if (!initialized || fatalError) return;
@@ -264,7 +281,7 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
   }, [applyFrame, fail]);
 
   const restart = useCallback(
-    async (nextSeed = seed): Promise<WorldView | null> => {
+    async (nextScenario: SimulationCreation = scenario): Promise<WorldView | null> => {
       let engine = engineRef.current;
       if (
         !engine ||
@@ -282,12 +299,12 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
       try {
         setBusy(true);
         setPlaying(false);
-        const frame = await engine.create(nextSeed >>> 0);
+        const frame = await engine.create(nextScenario);
         verifiedHashRef.current = null;
         const nextView = applyFrame(frame);
         setTimelineRevision((current) => current + 1);
         setFeedback(
-          `Seed ${frame.seed} is ready at tick 0. No interventions carried forward.`,
+          `${frame.snapshot.scenario.name} / seed ${frame.seed} is ready at tick 0. No interventions carried forward.`,
         );
         return nextView;
       } catch (error) {
@@ -295,7 +312,7 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
         return null;
       }
     },
-    [applyFrame, fail, seed, subscribeToEngine],
+    [applyFrame, fail, scenario, subscribeToEngine],
   );
 
   const applyIntervention = useCallback(
@@ -464,7 +481,9 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
         const frame = await engine.load(serialized);
         const nextView = applyFrame(frame);
         setTimelineRevision((current) => current + 1);
-        setFeedback(`Seed ${frame.seed} restored at tick ${frame.tick}.`);
+        setFeedback(
+          `${frame.snapshot.scenario.name} / seed ${frame.seed} restored at tick ${frame.tick}.`,
+        );
         return nextView;
       } finally {
         if (mountedRef.current) setBusy(false);
@@ -495,7 +514,7 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
 
   const replay = useCallback(
     async (
-      replayContract: SimulationReplayV1,
+      replayContract: RuntimeReplay,
       options?: LongRunningOperationOptions,
     ): Promise<ReplayResult> => {
       const engine = engineRef.current;
@@ -516,6 +535,7 @@ export function useSimulationController(initialSeed = 4_182): SimulationControll
 
   return {
     view,
+    scenario,
     seed,
     timelineRevision,
     initialized,

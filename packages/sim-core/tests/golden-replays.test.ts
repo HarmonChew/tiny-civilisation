@@ -4,6 +4,7 @@ import {
   createSimulation,
   hashSimulationState,
   queuePlayerCommand,
+  REPLAY_SCHEMA_VERSION,
   SIMULATION_BEHAVIOR_VERSION,
   type AddFoodCommand,
   type RemoveFoodCommand,
@@ -49,7 +50,7 @@ interface GoldenReplayResult {
 }
 
 interface GoldenReplayCorpus {
-  readonly replaySchemaVersion: 1;
+  readonly replaySchemaVersion: typeof REPLAY_SCHEMA_VERSION;
   readonly simulationSchemaVersion: number;
   readonly simulationBehaviorVersion: number;
   readonly scenarios: GoldenReplayResult[];
@@ -295,7 +296,7 @@ describe("golden deterministic replays", () => {
     }
 
     const corpus: GoldenReplayCorpus = {
-      replaySchemaVersion: 1,
+      replaySchemaVersion: REPLAY_SCHEMA_VERSION,
       simulationSchemaVersion,
       simulationBehaviorVersion: SIMULATION_BEHAVIOR_VERSION,
       scenarios,

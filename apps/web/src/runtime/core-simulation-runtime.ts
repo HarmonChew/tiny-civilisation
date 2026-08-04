@@ -1,8 +1,6 @@
 import {
-  REPLAY_SCHEMA_VERSION,
-  SIMULATION_BEHAVIOR_VERSION,
-  SIMULATION_STATE_VERSION,
   advanceSimulation,
+  assertSimulationReplay,
   compareExperimentOutcomes,
   createCausalEvidenceProjection,
   createExperimentOutcome,
@@ -38,6 +36,7 @@ import type {
   SimulationRuntime,
   SimulationRuntimePhase,
   SimulationRuntimeStatus,
+  SimulationCreation,
 } from "./types";
 
 const DEFAULT_SEED = 4_182;
@@ -131,22 +130,22 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 }
 
 function assertReplay(replay: RuntimeReplay): void {
-  if (replay.kind !== "tiny-civilisation/replay") {
-    throw new Error("Invalid Tiny Civilisation replay envelope.");
+  if (replay.finalTick !== undefined && replay.finalHash === undefined) {
+    const { finalTick, finalHash: _finalHash, ...unverified } = replay;
+    assertSimulationReplay(unverified);
+    if (!Number.isSafeInteger(finalTick) || finalTick < 0) {
+      throw new Error("Runtime replay finalTick must be a nonnegative safe integer.");
+    }
+    const lastCommandTick = replay.commands.reduce(
+      (latest, command) => Math.max(latest, command.applyAtTick),
+      -1,
+    );
+    if (finalTick <= lastCommandTick) {
+      throw new Error("Runtime replay finalTick must be after its last command tick.");
+    }
+    return;
   }
-  if (replay.schemaVersion !== REPLAY_SCHEMA_VERSION) {
-    throw new Error(`Unsupported replay schema version ${replay.schemaVersion}.`);
-  }
-  if (replay.behaviorVersion !== SIMULATION_BEHAVIOR_VERSION) {
-    throw new Error(`Incompatible replay behavior version ${replay.behaviorVersion}.`);
-  }
-  if (replay.stateSchemaVersion !== SIMULATION_STATE_VERSION) {
-    throw new Error(`Incompatible replay state version ${replay.stateSchemaVersion}.`);
-  }
-  normalizeTickCount(replay.seed, "Replay seed");
-  if (replay.finalTick !== undefined) {
-    normalizeTickCount(replay.finalTick, "Replay final tick");
-  }
+  assertSimulationReplay(replay);
 }
 
 function playerCommandFromScheduled(command: ScheduledPlayerCommand): PlayerCommand {
@@ -208,12 +207,14 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     this.latestRequestId = Math.max(this.latestRequestId, requestId);
   }
 
-  create(seed = DEFAULT_SEED): SimulationFrame {
+  create(scenario: SimulationCreation = DEFAULT_SEED): SimulationFrame {
     this.assertNotDisposed();
     if (this.activeRun) throw new Error("Cannot create while a replay is running.");
-    const normalizedSeed = normalizeTickCount(seed, "Simulation seed") >>> 0;
     try {
-      const candidate = createSimulation(normalizedSeed);
+      const candidate =
+        typeof scenario === "number"
+          ? createSimulation(normalizeTickCount(scenario, "Simulation seed") >>> 0)
+          : createSimulation(scenario);
       this.simulation = candidate;
       this.playing = false;
       this.phase = "ready";
@@ -409,7 +410,7 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     assertReplay(replay);
 
     // Build the replay candidate before replacing the active state.
-    const candidate = createSimulation(replay.seed);
+    const candidate = createSimulation(replay.scenario);
     const commands = [...replay.commands].sort(
       (left, right) => left.commandId - right.commandId,
     );
@@ -591,6 +592,8 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     const includeStaticWorld = this.lastProjectedNavigationRevision !== navigationRevision;
     const frame: SimulationFrame = {
       revision: this.revision,
+      scenario: { ...state.scenario },
+      compiledMapHash: state.compiledMapHash,
       seed: state.seed,
       tick: state.tick,
       hash:

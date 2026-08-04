@@ -13,6 +13,7 @@ import type {
 } from "./types.js";
 import { DESIRE_LABELS, PLAN_LABELS } from "./desires.js";
 import { CAUSAL_EVIDENCE_SCHEMA_VERSION, SIMULATION_BEHAVIOR_VERSION } from "./versions.js";
+import type { ScenarioReferenceV2 } from "./scenarios/types.js";
 
 export type CausalEvidenceRef =
   | { readonly kind: "event"; readonly id: number }
@@ -171,6 +172,7 @@ export interface CausalEvidenceEdgeV1 {
 export interface CausalEvidenceProjectionV1 {
   readonly schemaVersion: typeof CAUSAL_EVIDENCE_SCHEMA_VERSION;
   readonly behaviorVersion: typeof SIMULATION_BEHAVIOR_VERSION;
+  readonly scenario: ScenarioReferenceV2;
   readonly stateTick: number;
   readonly focus: CausalEvidenceRef;
   readonly nodes: readonly CausalEvidenceNodeV1[];
@@ -811,6 +813,7 @@ export function createCausalEvidenceProjection(
   return {
     schemaVersion: CAUSAL_EVIDENCE_SCHEMA_VERSION,
     behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
+    scenario: { ...state.scenario },
     stateTick: state.tick,
     focus: { ...focus },
     nodes: [...nodes.values()].sort((left, right) => compareRefs(left.ref, right.ref)),

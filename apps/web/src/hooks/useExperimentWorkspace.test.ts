@@ -1,4 +1,5 @@
 import {
+  SCENARIO_IDS,
   appendExperimentIntervention,
   advanceSimulation,
   compareExperimentOutcomes,
@@ -9,12 +10,16 @@ import {
   createRenderSnapshot,
   createScenarioReference,
   createSimulation,
+  deserializeSimulationSave,
   hashSimulationState,
+  serializeExperiment,
   serializeSimulationSave,
+  setExperimentBranchResult,
   type CausalEvidenceProjectionV1,
   type DomainEvent,
   type ExperimentV1,
   type InterventionLogEntryV1,
+  type ScenarioReferenceV2,
   type ScheduledPlayerCommand,
   type SimulationReplayV1,
   type SimulationState,
@@ -32,6 +37,7 @@ import { reconcilePendingInterventions } from "../experiment/intervention-reconc
 import type { InterventionResponseTrace } from "../experiment/intervention-response";
 import type { TimelineEventView } from "../model";
 import { projectInterventionOutcomes } from "../runtime/state-projections";
+import { createExperimentStorage } from "../storage/experiment-storage";
 import type { SimulationController } from "./useSimulationController";
 import {
   causalDetailFromProjection,
@@ -54,21 +60,48 @@ function replayFrame(tick: number, hash: string): ReplayResult["frame"] {
   return { tick, hash } as ReplayResult["frame"];
 }
 
-function capturedReplayFrames(seed: number, ticks: readonly number[]): SimulationFrame[] {
-  const state = createSimulation(seed);
+function capturedReplayFrames(
+  creation: number | ScenarioReferenceV2,
+  ticks: readonly number[],
+): SimulationFrame[] {
+  const state =
+    typeof creation === "number" ? createSimulation(creation) : createSimulation(creation);
   return [...new Set(ticks)]
     .sort((left, right) => left - right)
     .map((tick, revision) => {
       advanceSimulation(state, tick - state.tick);
       return {
         revision,
-        seed,
+        scenario: { ...state.scenario },
+        compiledMapHash: state.compiledMapHash,
+        seed: state.seed,
         tick,
         hash: hashSimulationState(state),
         playing: false,
         snapshot: createRenderSnapshot(state),
       };
     });
+}
+
+function scenarioFrame(
+  scenario: ScenarioReferenceV2,
+  tick: number,
+): { readonly frame: SimulationFrame; readonly state: SimulationState } {
+  const state = createSimulation(scenario);
+  advanceSimulation(state, tick);
+  return {
+    state,
+    frame: {
+      revision: 1,
+      scenario: { ...state.scenario },
+      compiledMapHash: state.compiledMapHash,
+      seed: state.seed,
+      tick: state.tick,
+      hash: hashSimulationState(state),
+      playing: false,
+      snapshot: createRenderSnapshot(state),
+    },
+  };
 }
 
 function isolatedReplayEngine(
@@ -113,6 +146,7 @@ function simulationController(
   const queryState = async (): Promise<SimulationState> => (await getState()) ?? state;
   return {
     view,
+    scenario: state.scenario,
     seed: state.seed,
     timelineRevision: 0,
     initialized: true,
@@ -231,6 +265,188 @@ function outcomes(experiment: ExperimentV1, branchId: string) {
 
 beforeEach(() => {
   localStorage.clear();
+});
+
+describe("phase 3 scenario identity", () => {
+  it("keeps scenario and seed independent and starts with the full reference", async () => {
+    const restart = vi.fn(
+      async (creation: Parameters<SimulationController["restart"]>[0]) => {
+        const state =
+          creation === undefined
+            ? createSimulation(4_182)
+            : typeof creation === "number"
+              ? createSimulation(creation)
+              : createSimulation(creation);
+        return makeWorldView(state);
+      },
+    );
+    const simulation = simulationController({ restart });
+    const { result } = renderHook(() =>
+      useExperimentWorkspace({ simulation, onSelectCreature: vi.fn() }),
+    );
+    const setup = () => {
+      const value = result.current.props.setup;
+      if (!value) throw new Error("Expected scenario setup props.");
+      return value;
+    };
+
+    expect(setup().scenarios).toHaveLength(4);
+    expect(setup().seed).toBe("4182");
+
+    act(() => setup().onScenarioChange("split-banks"));
+    expect(setup().scenarioId).toBe("split-banks");
+    expect(setup().seed).toBe("4182");
+
+    act(() => setup().onSeedChange("2468"));
+    expect(setup().seed).toBe("2468");
+    act(() => setup().onStart());
+
+    const expected = createScenarioReference("split-banks", 2_468);
+    await waitFor(() => expect(restart).toHaveBeenCalledWith(expected));
+    await waitFor(() => expect(result.current.props.scenarioLabel).toBe("Split Banks"));
+  });
+
+  it("imports and reconstructs the exact scenario identity", async () => {
+    const reference = createScenarioReference("unequal-table", 2_468);
+    const { frame } = scenarioFrame(reference, 8);
+    let imported = createExperiment(reference);
+    imported = setExperimentBranchResult(
+      imported,
+      imported.rootBranchId,
+      frame.tick,
+      frame.hash!,
+    );
+    const replay = vi.fn(async (_replay: SimulationReplayV1) => ({
+      cancelled: false,
+      expectedHash: frame.hash,
+      actualHash: frame.hash!,
+      hashMatches: true,
+      frame,
+    }));
+    const simulation = simulationController({ replay });
+    const { result } = renderHook(() =>
+      useExperimentWorkspace({ simulation, onSelectCreature: vi.fn() }),
+    );
+
+    const file = new File([serializeExperiment(imported)], "unequal-table.json", {
+      type: "application/json",
+    });
+    act(() => result.current.props.actions.onImport(file));
+
+    await waitFor(() =>
+      expect(result.current.props.actions.status).toMatchObject({ phase: "success" }),
+    );
+    expect(replay).toHaveBeenCalledOnce();
+    expect(replay.mock.calls[0]?.[0]).toMatchObject({
+      scenario: reference,
+      seed: reference.seed,
+      finalTick: frame.tick,
+      finalHash: frame.hash,
+    });
+    expect(result.current.props.scenarioLabel).toBe("Unequal Table");
+    expect(result.current.props.actions.status?.message).toContain(
+      "Imported Unequal Table / seed 2468 at tick 8.",
+    );
+  });
+
+  it.each([
+    { label: "malformed", contents: "{not-json" },
+    {
+      label: "unsupported",
+      contents: (() => {
+        const experiment = JSON.parse(
+          serializeExperiment(
+            createExperiment(createScenarioReference("split-banks", 2_468)),
+          ),
+        ) as { scenario: { scenarioId: string } };
+        experiment.scenario.scenarioId = "future-world";
+        return JSON.stringify(experiment);
+      })(),
+    },
+  ])("rejects a $label import atomically", async ({ label, contents }) => {
+    const simulation = simulationController();
+    const originalLabel = simulation.view.scenario.name;
+    const { result } = renderHook(() =>
+      useExperimentWorkspace({ simulation, onSelectCreature: vi.fn() }),
+    );
+    const file = new File([contents], `${label}.json`, {
+      type: "application/json",
+    });
+
+    act(() => result.current.props.actions.onImport(file));
+
+    await waitFor(() =>
+      expect(result.current.props.actions.status).toMatchObject({ phase: "error" }),
+    );
+    expect(simulation.save).not.toHaveBeenCalled();
+    expect(simulation.replay).not.toHaveBeenCalled();
+    expect(simulation.load).not.toHaveBeenCalled();
+    expect(result.current.props.scenarioLabel).toBe(originalLabel);
+    expect(result.current.props.actions.status?.message).toContain(
+      "The active run was preserved.",
+    );
+  });
+
+  it("loads a browser save with its exact scenario identity", async () => {
+    const reference = createScenarioReference("split-banks", 7_777);
+    const { state: savedState } = scenarioFrame(reference, 9);
+    const savedHash = hashSimulationState(savedState);
+    let experiment = createExperiment(reference);
+    experiment = setExperimentBranchResult(
+      experiment,
+      experiment.rootBranchId,
+      savedState.tick,
+      savedHash,
+    );
+    await createExperimentStorage().save(
+      JSON.stringify({
+        kind: "tiny-civilisation/workspace",
+        schemaVersion: 2,
+        activeBranchId: experiment.rootBranchId,
+        experiment,
+        simulationSave: serializeSimulationSave(savedState),
+      }),
+    );
+
+    const initialState = createSimulation(4_182);
+    let installedState = initialState;
+    const load = vi.fn(async (serialized: string) => {
+      installedState = deserializeSimulationSave(serialized);
+      return makeWorldView(installedState);
+    });
+    const save = vi.fn(async () => serializeSimulationSave(installedState));
+    const getCheckpoint = vi.fn(async () => ({
+      tick: installedState.tick,
+      hash: hashSimulationState(installedState),
+      state: deserializeSimulationSave(serializeSimulationSave(installedState)),
+    }));
+    const simulation = simulationController({
+      view: makeWorldView(initialState),
+      scenario: initialState.scenario,
+      seed: initialState.seed,
+      getState: vi.fn(async () => installedState),
+      load,
+      save,
+      getCheckpoint,
+    });
+    const { result } = renderHook(() =>
+      useExperimentWorkspace({ simulation, onSelectCreature: vi.fn() }),
+    );
+
+    await waitFor(() => expect(result.current.props.actions.canLoad).toBe(true));
+    act(() => result.current.props.actions.onLoad());
+    await waitFor(() =>
+      expect(result.current.props.actions.status).toMatchObject({ phase: "success" }),
+    );
+
+    expect(load).toHaveBeenCalledOnce();
+    expect(installedState.scenario).toEqual(reference);
+    expect(installedState.compiledMapHash).toBe(savedState.compiledMapHash);
+    expect(result.current.props.scenarioLabel).toBe("Split Banks");
+    expect(result.current.props.actions.status?.message).toContain(
+      "Restored tick 9 without changing its hash.",
+    );
+  });
 });
 
 describe("experiment causal detail projection", () => {
@@ -596,81 +812,95 @@ describe("isolated experiment replay", () => {
     expect(presentation?.beats[2]?.summary).toBe(event.detail);
   });
 
-  it("replays a timeline moment in a disposable engine without changing the live view", async () => {
-    const state = createSimulation(4_182);
-    state.tick = 70;
-    const liveView = makeWorldView(state);
-    const simulation = simulationController({ view: liveView });
-    const isolated = isolatedReplayEngine(async (replay, options) => {
-      const targetTick = replay.finalTick ?? 0;
-      options?.onProgress?.({
-        operation: "replay",
-        currentTick: 50,
-        targetTick,
-        completedTicks: 50,
-        totalTicks: targetTick,
-        fraction: 50 / targetTick,
+  it.each(SCENARIO_IDS)(
+    "replays a %s timeline moment in a disposable engine without changing the live view",
+    async (scenarioId) => {
+      const scenario = createScenarioReference(scenarioId, 42);
+      const state = createSimulation(scenario);
+      state.tick = 70;
+      const liveView = makeWorldView(state);
+      const simulation = simulationController({
+        view: liveView,
+        scenario: state.scenario,
+        seed: state.seed,
       });
-      return {
-        cancelled: false,
-        expectedHash: replay.finalHash ?? null,
-        actualHash: replay.finalHash ?? "isolated-moment-hash",
-        hashMatches: replay.finalHash ? true : null,
-        frame: replayFrame(targetTick, replay.finalHash ?? "isolated-moment-hash"),
-        capturedFrames: capturedReplayFrames(state.seed, [30, 50, 51, 70]),
-      };
-    });
-    const { result } = renderHook(() =>
-      useExperimentWorkspace({
-        simulation,
-        onSelectCreature: vi.fn(),
-        createReplayEngine: () => isolated.engine,
-      }),
-    );
+      const isolated = isolatedReplayEngine(async (replay, options) => {
+        const targetTick = replay.finalTick ?? 0;
+        options?.onProgress?.({
+          operation: "replay",
+          currentTick: 50,
+          targetTick,
+          completedTicks: 50,
+          totalTicks: targetTick,
+          fraction: 50 / targetTick,
+        });
+        return {
+          cancelled: false,
+          expectedHash: replay.finalHash ?? null,
+          actualHash: replay.finalHash ?? "isolated-moment-hash",
+          hashMatches: replay.finalHash ? true : null,
+          frame: replayFrame(targetTick, replay.finalHash ?? "isolated-moment-hash"),
+          capturedFrames: capturedReplayFrames(scenario, [30, 50, 51, 70]),
+        };
+      });
+      const { result } = renderHook(() =>
+        useExperimentWorkspace({
+          simulation,
+          onSelectCreature: vi.fn(),
+          createReplayEngine: () => isolated.engine,
+        }),
+      );
 
-    await act(async () => {
-      await result.current.replayTimelineEvent(timelineEvent());
-    });
+      await act(async () => {
+        await result.current.replayTimelineEvent(timelineEvent());
+      });
 
-    expect(isolated.replay).toHaveBeenCalledTimes(1);
-    expect(isolated.replay.mock.calls[0]?.[0]).toMatchObject({
-      seed: state.seed,
-      finalTick: 70,
-      finalHash: liveView.hash,
-    });
-    expect(isolated.replay.mock.calls[0]?.[1]?.captureTicks).toEqual([30, 50, 51, 70]);
-    expect(isolated.dispose).toHaveBeenCalledTimes(1);
-    expect(simulation.replay).not.toHaveBeenCalled();
-    expect(simulation.load).not.toHaveBeenCalled();
-    expect(simulation.save).not.toHaveBeenCalled();
-    expect(simulation.view).toBe(liveView);
-    expect(simulation.view.tick).toBe(70);
-    expect(simulation.view.hash).toBe(liveView.hash);
-    expect(result.current.props.currentTick).toBe(70);
-    expect(result.current.props.open).toBe(true);
-    expect(result.current.props.section).toBe("replay");
-    expect(result.current.props.replay.replay).toMatchObject({
-      phase: "complete",
-      currentTick: 70,
-      targetTick: 70,
-      progressPercent: 100,
-      hash: { status: "match", expected: liveView.hash, actual: liveView.hash },
-    });
-    expect(result.current.props.replay.replay.message).toContain("moment tick 50");
-    expect(result.current.props.replay.replay.message).toContain("window 30-70");
-    expect(result.current.momentReplay?.beats.map((beat) => beat.label)).toEqual([
-      "Approach",
-      "Decision",
-      "Action",
-      "Aftermath",
-    ]);
-    expect(result.current.momentReplay?.activeBeatIndex).toBe(0);
+      expect(isolated.replay).toHaveBeenCalledTimes(1);
+      expect(isolated.replay.mock.calls[0]?.[0]).toMatchObject({
+        scenario,
+        seed: state.seed,
+        finalTick: 70,
+        finalHash: liveView.hash,
+      });
+      expect(isolated.replay.mock.calls[0]?.[1]?.captureTicks).toEqual([30, 50, 51, 70]);
+      expect(isolated.dispose).toHaveBeenCalledTimes(1);
+      expect(simulation.replay).not.toHaveBeenCalled();
+      expect(simulation.load).not.toHaveBeenCalled();
+      expect(simulation.save).not.toHaveBeenCalled();
+      expect(simulation.view).toBe(liveView);
+      expect(simulation.view.tick).toBe(70);
+      expect(simulation.view.hash).toBe(liveView.hash);
+      expect(result.current.props.currentTick).toBe(70);
+      expect(result.current.props.open).toBe(true);
+      expect(result.current.props.section).toBe("replay");
+      expect(result.current.props.replay.replay).toMatchObject({
+        phase: "complete",
+        currentTick: 70,
+        targetTick: 70,
+        progressPercent: 100,
+        hash: { status: "match", expected: liveView.hash, actual: liveView.hash },
+      });
+      expect(
+        result.current.momentReplay?.beats.every(
+          (beat) => beat.view.scenario.reference.scenarioId === scenarioId,
+        ),
+      ).toBe(true);
+      expect(result.current.props.replay.replay.message).toContain("moment tick 50");
+      expect(result.current.props.replay.replay.message).toContain("window 30-70");
+      expect(result.current.momentReplay?.beats.map((beat) => beat.label)).toEqual([
+        "Approach",
+        "Decision",
+        "Action",
+        "Aftermath",
+      ]);
+      expect(result.current.momentReplay?.activeBeatIndex).toBe(0);
 
-    act(() => result.current.selectMomentReplayBeat(3));
-    expect(result.current.momentReplay?.activeBeatIndex).toBe(3);
-    act(() => result.current.exitMomentReplay());
-    expect(result.current.momentReplay).toBeNull();
-  });
+      act(() => result.current.selectMomentReplayBeat(3));
+      expect(result.current.momentReplay?.activeBeatIndex).toBe(3);
+      act(() => result.current.exitMomentReplay());
+      expect(result.current.momentReplay).toBeNull();
+    },
+  );
 
   it("uses an explicitly paused live boundary and withholds mismatched frames", async () => {
     const state = createSimulation(4_182);

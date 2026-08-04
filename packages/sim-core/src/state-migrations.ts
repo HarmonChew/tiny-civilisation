@@ -12,6 +12,7 @@ import type {
   UtilityFactor,
 } from "./types.js";
 import { SIMULATION_STATE_VERSION } from "./versions.js";
+import { compileScenario, createScenarioReference } from "./scenarios/index.js";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -29,6 +30,22 @@ function requireArray(record: UnknownRecord, key: string): unknown[] {
     throw new Error(`Legacy simulation state ${key} must be an array.`);
   }
   return value;
+}
+
+function addScenarioIdentity(state: UnknownRecord): void {
+  const seed = state.seed;
+  if (
+    typeof seed !== "number" ||
+    !Number.isSafeInteger(seed) ||
+    seed < 0 ||
+    seed > 0xffff_ffff
+  ) {
+    throw new Error("Legacy simulation state seed must be an unsigned 32-bit integer.");
+  }
+  const scenario = createScenarioReference(seed);
+  state.scenario = { ...scenario };
+  state.compiledMapHash = compileScenario(scenario).compiledMapHash;
+  state.schemaVersion = SIMULATION_STATE_VERSION;
 }
 
 function enrichFactor(factor: UnknownRecord): UtilityFactor {
@@ -117,14 +134,20 @@ export function migrateSimulationState(value: unknown): SimulationState {
   if (value.schemaVersion === SIMULATION_STATE_VERSION) {
     return value as unknown as SimulationState;
   }
+  if (value.schemaVersion === 2) {
+    const migrated = cloneJson(value);
+    if (!isRecord(migrated)) throw new Error("Legacy simulation state is invalid.");
+    addScenarioIdentity(migrated);
+    return migrated as unknown as SimulationState;
+  }
   if (value.schemaVersion !== 1) {
     throw new Error(
-      `Unsupported simulation state version ${String(value.schemaVersion)}; expected 1 or ${SIMULATION_STATE_VERSION}.`,
+      `Unsupported simulation state version ${String(value.schemaVersion)}; expected 1, 2, or ${SIMULATION_STATE_VERSION}.`,
     );
   }
   const migrated = cloneJson(value);
   if (!isRecord(migrated)) throw new Error("Legacy simulation state is invalid.");
-  migrated.schemaVersion = SIMULATION_STATE_VERSION;
+  migrated.schemaVersion = 2;
   const creatures = requireArray(migrated, "creatures");
   const decisions = requireArray(migrated, "decisionRecords");
   const events = requireArray(migrated, "domainEvents");
@@ -223,5 +246,6 @@ export function migrateSimulationState(value: unknown): SimulationState {
       },
     ];
   }
-  return state;
+  addScenarioIdentity(migrated);
+  return migrated as unknown as SimulationState;
 }

@@ -10,6 +10,7 @@ import {
   projectCreatureObservationSummary,
   queuePlayerCommand,
   reasonFactText,
+  sameScenarioReference,
   type DecisionRecord,
   type DomainEvent,
   type HistoricalEvent,
@@ -28,6 +29,7 @@ import type {
   Point,
   RelationshipView,
   ResourceView,
+  ScenarioView,
   StructureView,
   TileView,
   TimelineCategory,
@@ -55,6 +57,43 @@ const pointForTile = (tileIndex: number, width: number): Point => ({
   y: Math.floor(tileIndex / width),
 });
 
+function mapScenario(
+  snapshot: RenderSnapshot,
+  retainedScenario?: ScenarioView,
+): ScenarioView {
+  const canRetain =
+    retainedScenario !== undefined &&
+    sameScenarioReference(retainedScenario.reference, snapshot.scenario.reference) &&
+    retainedScenario.compiledMapHash === snapshot.scenario.compiledMapHash;
+  const retained = canRetain ? retainedScenario : undefined;
+  return {
+    reference: { ...snapshot.scenario.reference },
+    compiledMapHash: snapshot.scenario.compiledMapHash,
+    name: snapshot.scenario.name,
+    role: snapshot.scenario.role || retained?.role || "",
+    dramaticQuestion:
+      snapshot.scenario.dramaticQuestion || retained?.dramaticQuestion || "",
+    startingFacts:
+      snapshot.scenario.startingFacts.length > 0
+        ? [...snapshot.scenario.startingFacts]
+        : [...(retained?.startingFacts ?? [])],
+    observableTensions:
+      snapshot.scenario.observableTensions.length > 0
+        ? [...snapshot.scenario.observableTensions]
+        : [...(retained?.observableTensions ?? [])],
+    landmarks:
+      snapshot.scenario.landmarks.length > 0
+        ? snapshot.scenario.landmarks.map((landmark) => ({
+            ...landmark,
+            tileIndices: [...landmark.tileIndices],
+          }))
+        : (retained?.landmarks ?? []).map((landmark) => ({
+            ...landmark,
+            tileIndices: [...landmark.tileIndices],
+          })),
+  };
+}
+
 const traitLabels = {
   generosity: "Generosity",
   aggression: "Aggression",
@@ -62,19 +101,28 @@ const traitLabels = {
   loyalty: "Loyalty",
 } as const;
 
+const MAX_VISIBLE_FACTORS_PER_CANDIDATE = 3;
+
 function mapFactors(factors: readonly UtilityFactor[]): CandidateView["factors"] {
-  return factors.map((factor) => ({
-    key: factor.key,
-    label: humanize(factor.key),
-    contribution: factor.contribution,
-    evidenceEventIds: [...factor.evidenceEventIds],
-    ...(factor.fact
-      ? {
-          factLabel: factor.fact.label,
-          ...(factor.fact.value === null ? {} : { factValue: factor.fact.value }),
-        }
-      : {}),
-  }));
+  return [...factors]
+    .sort(
+      (left, right) =>
+        Math.abs(right.contribution) - Math.abs(left.contribution) ||
+        left.key.localeCompare(right.key),
+    )
+    .slice(0, MAX_VISIBLE_FACTORS_PER_CANDIDATE)
+    .map((factor) => ({
+      key: factor.key,
+      label: humanize(factor.key),
+      contribution: factor.contribution,
+      evidenceEventIds: [...factor.evidenceEventIds],
+      ...(factor.fact
+        ? {
+            factLabel: factor.fact.label,
+            ...(factor.fact.value === null ? {} : { factValue: factor.fact.value }),
+          }
+        : {}),
+    }));
 }
 
 function candidatesFromDecision(decision: DecisionRecord): CandidateView[] {
@@ -475,6 +523,7 @@ export const makeWorldView = (state: SimulationState): WorldView => {
   ].sort((left, right) => right.tick - left.tick || right.id - left.id);
 
   return {
+    scenario: mapScenario(snapshot),
     tick: snapshot.tick,
     timeLabel: formatSimulationTime(snapshot.tick),
     hash: hashSimulationState(state),
@@ -500,6 +549,7 @@ export const makeWorldViewFromSnapshot = (
   hash: string | null,
   retainedTiles: readonly TileView[] = [],
   hashTick: number | null = hash === null ? null : snapshot.tick,
+  retainedScenario?: ScenarioView,
 ): WorldView => {
   if (
     snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION ||
@@ -757,6 +807,7 @@ export const makeWorldViewFromSnapshot = (
       };
     });
   return {
+    scenario: mapScenario(snapshot, retainedScenario),
     tick: snapshot.tick,
     timeLabel: snapshot.timeLabel,
     hash: hash ?? "",

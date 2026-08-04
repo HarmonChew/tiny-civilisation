@@ -1,4 +1,5 @@
 import type { SimulationState } from "./types.js";
+import type { ScenarioReferenceV2 } from "./scenarios/types.js";
 import { OUTCOME_SCHEMA_VERSION, SIMULATION_BEHAVIOR_VERSION } from "./versions.js";
 
 export interface ExperimentOutcomeMetrics {
@@ -18,12 +19,14 @@ export interface ExperimentOutcomeMetrics {
 export interface ExperimentOutcomeV1 extends ExperimentOutcomeMetrics {
   readonly schemaVersion: typeof OUTCOME_SCHEMA_VERSION;
   readonly behaviorVersion: typeof SIMULATION_BEHAVIOR_VERSION;
+  readonly scenario: ScenarioReferenceV2;
   readonly tick: number;
 }
 
 export interface ExperimentOutcomeComparisonV1 {
   readonly schemaVersion: typeof OUTCOME_SCHEMA_VERSION;
   readonly behaviorVersion: typeof SIMULATION_BEHAVIOR_VERSION;
+  readonly scenario: ScenarioReferenceV2;
   readonly tick: number;
   readonly baseline: ExperimentOutcomeMetrics;
   readonly intervention: ExperimentOutcomeMetrics;
@@ -68,6 +71,7 @@ export function createExperimentOutcome(state: SimulationState): ExperimentOutco
   return {
     schemaVersion: OUTCOME_SCHEMA_VERSION,
     behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
+    scenario: { ...state.scenario },
     tick: state.tick,
     population: aliveCreatures.length,
     wildFood: state.resourceNodes.reduce(
@@ -104,6 +108,16 @@ export function compareExperimentOutcomes(
   if (baseline.behaviorVersion !== intervention.behaviorVersion) {
     throw new Error("Experiment outcomes use incompatible behavior versions.");
   }
+  const baselineIdentity = baseline.scenario;
+  const interventionIdentity = intervention.scenario;
+  if (
+    baselineIdentity.scenarioId !== interventionIdentity.scenarioId ||
+    baselineIdentity.scenarioVersion !== interventionIdentity.scenarioVersion ||
+    baselineIdentity.mapGenerationVersion !== interventionIdentity.mapGenerationVersion ||
+    baselineIdentity.seed !== interventionIdentity.seed
+  ) {
+    throw new Error("Experiment outcomes must use the same scenario identity and seed.");
+  }
   if (baseline.tick !== intervention.tick) {
     throw new Error(
       `Experiment outcomes must share a tick; received ${baseline.tick.toString()} and ${intervention.tick.toString()}.`,
@@ -117,6 +131,7 @@ export function compareExperimentOutcomes(
   return {
     schemaVersion: OUTCOME_SCHEMA_VERSION,
     behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
+    scenario: { ...baseline.scenario },
     tick: baseline.tick,
     baseline: baselineMetrics,
     intervention: interventionMetrics,

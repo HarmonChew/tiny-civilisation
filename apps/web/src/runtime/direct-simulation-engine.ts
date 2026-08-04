@@ -21,6 +21,7 @@ import type {
   RuntimeReplay,
   SimulationEngine,
   SimulationEngineListener,
+  SimulationCreation,
   SimulationFrame,
   SimulationRuntime,
   SimulationRuntimeStatus,
@@ -52,8 +53,8 @@ export class DirectSimulationEngine implements SimulationEngine {
     return () => this.listeners.delete(listener);
   }
 
-  create(seed?: number): Promise<SimulationFrame> {
-    return this.perform(() => this.runtime.create(seed));
+  create(scenario?: SimulationCreation): Promise<SimulationFrame> {
+    return this.perform(() => this.runtime.create(scenario));
   }
 
   play(): Promise<SimulationFrame> {

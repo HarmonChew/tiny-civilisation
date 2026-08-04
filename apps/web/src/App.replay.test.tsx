@@ -181,6 +181,7 @@ function replayPresentation(view: WorldView): MomentReplayPresentation {
 function simulationController(playing = true) {
   return {
     view: testContext.view,
+    scenario: testContext.view.scenario.reference,
     seed: 4_182,
     timelineRevision: 0,
     initialized: true,

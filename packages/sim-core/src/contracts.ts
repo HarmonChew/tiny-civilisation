@@ -22,6 +22,12 @@ import {
   SIMULATION_STATE_VERSION,
   SNAPSHOT_SCHEMA_VERSION,
 } from "./versions.js";
+import {
+  assertScenarioReference,
+  cloneScenarioReference,
+  createScenarioReference,
+  type ScenarioReferenceV2,
+} from "./scenarios/index.js";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -44,6 +50,8 @@ export interface SimulationReplayV1 {
   readonly schemaVersion: typeof REPLAY_SCHEMA_VERSION;
   readonly behaviorVersion: typeof SIMULATION_BEHAVIOR_VERSION;
   readonly stateSchemaVersion: typeof SIMULATION_STATE_VERSION;
+  readonly scenario: ScenarioReferenceV2;
+  /** Convenience copy retained for older callers; must equal scenario.seed. */
   readonly seed: number;
   readonly commands: readonly Readonly<ScheduledPlayerCommand>[];
   readonly finalTick?: number;
@@ -165,6 +173,7 @@ export function assertSimulationReplay(
       "schemaVersion",
       "behaviorVersion",
       "stateSchemaVersion",
+      "scenario",
       "seed",
       "commands",
       "finalTick",
@@ -190,9 +199,13 @@ export function assertSimulationReplay(
       `Replay state version ${String(stateSchemaVersion)} is incompatible with ${SIMULATION_STATE_VERSION}.`,
     );
   }
+  assertScenarioReference(value.scenario);
   assertNonnegativeInteger(value.seed, "Replay seed");
   if (value.seed > 0xffffffff)
     throw new Error("Replay seed must be an unsigned 32-bit integer.");
+  if (value.scenario.seed !== value.seed) {
+    throw new Error("Replay scenario seed must match its seed field.");
+  }
   if (!Array.isArray(value.commands)) throw new Error("Replay commands must be an array.");
   if (value.commands.length > MAX_PERSISTED_COLLECTION_ITEMS) {
     throw new Error(
@@ -246,16 +259,21 @@ export function createRenderSnapshotEnvelope(
 }
 
 export function createSimulationReplay(
-  seed: number,
+  scenarioOrSeed: ScenarioReferenceV2 | number,
   commands: readonly ScheduledPlayerCommand[],
   result?: { readonly finalTick: number; readonly finalHash: string },
 ): SimulationReplayV1 {
+  const scenario =
+    typeof scenarioOrSeed === "number"
+      ? createScenarioReference(scenarioOrSeed)
+      : cloneScenarioReference(scenarioOrSeed);
   const replay: SimulationReplayV1 = {
     kind: "tiny-civilisation/replay",
     schemaVersion: REPLAY_SCHEMA_VERSION,
     behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
     stateSchemaVersion: SIMULATION_STATE_VERSION,
-    seed,
+    scenario,
+    seed: scenario.seed,
     commands: commands.map((command) => ({ ...command })),
     ...(result ? { finalTick: result.finalTick, finalHash: result.finalHash } : {}),
   };
@@ -274,15 +292,42 @@ export function migrateSimulationReplay(value: unknown): SimulationReplayV1 {
   if (
     isRecord(value) &&
     value.kind === "tiny-civilisation/replay" &&
-    readVersion(value, "schemaVersion") === REPLAY_SCHEMA_VERSION &&
-    readVersion(value, "behaviorVersion") === 1 &&
-    readVersion(value, "stateSchemaVersion") === 1
+    readVersion(value, "schemaVersion") === 1
   ) {
+    assertExactKeys(
+      value,
+      [
+        "kind",
+        "schemaVersion",
+        "behaviorVersion",
+        "stateSchemaVersion",
+        "seed",
+        "commands",
+        "finalTick",
+        "finalHash",
+      ],
+      "Replay",
+    );
+    const behaviorVersion = readVersion(value, "behaviorVersion");
+    const stateSchemaVersion = readVersion(value, "stateSchemaVersion");
+    const supportedLegacyVersion =
+      (behaviorVersion === 1 && stateSchemaVersion === 1) ||
+      (behaviorVersion === SIMULATION_BEHAVIOR_VERSION && stateSchemaVersion === 2);
+    if (!supportedLegacyVersion) {
+      throw new Error(
+        `Replay schema version 1 has incompatible behavior/state versions ${String(behaviorVersion)}/${String(stateSchemaVersion)}.`,
+      );
+    }
+    assertNonnegativeInteger(value.seed, "Replay seed");
+    if (value.seed > 0xffffffff) {
+      throw new Error("Replay seed must be an unsigned 32-bit integer.");
+    }
     const migrated = {
       kind: "tiny-civilisation/replay" as const,
       schemaVersion: REPLAY_SCHEMA_VERSION,
       behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
       stateSchemaVersion: SIMULATION_STATE_VERSION,
+      scenario: createScenarioReference(value.seed),
       seed: value.seed,
       commands: value.commands,
     };
@@ -290,7 +335,11 @@ export function migrateSimulationReplay(value: unknown): SimulationReplayV1 {
     return migrated;
   }
   assertSimulationReplay(value);
-  return value;
+  return {
+    ...value,
+    scenario: cloneScenarioReference(value.scenario),
+    commands: value.commands.map((command) => ({ ...command })),
+  };
 }
 
 export function deserializeSimulationReplay(serialized: string): SimulationReplayV1 {
@@ -321,7 +370,7 @@ export function executeSimulationReplay(
     );
   }
 
-  const state = createSimulation(replay.seed);
+  const state = createSimulation(replay.scenario);
   for (const command of replay.commands) {
     if (command.tileIndex >= state.world.tiles.length) {
       throw new Error(
@@ -381,14 +430,13 @@ export function migrateSimulationSave(value: unknown): SimulationSaveV1 {
     "Save",
   );
   const schemaVersion = readVersion(value, "schemaVersion");
-  if (schemaVersion !== SAVE_SCHEMA_VERSION) {
-    throw new Error(
-      `Unsupported save schema version ${String(schemaVersion)}; expected ${SAVE_SCHEMA_VERSION}.`,
-    );
-  }
   const behaviorVersion = readVersion(value, "behaviorVersion");
   const stateSchemaVersion = readVersion(value, "stateSchemaVersion");
-  if (behaviorVersion === 1 && stateSchemaVersion === 1) {
+  if (
+    schemaVersion === 1 &&
+    ((behaviorVersion === 1 && stateSchemaVersion === 1) ||
+      (behaviorVersion === SIMULATION_BEHAVIOR_VERSION && stateSchemaVersion === 2))
+  ) {
     const state = migrateSimulationState(value.state);
     assertCompatibleSimulationState(state);
     return {
@@ -398,6 +446,11 @@ export function migrateSimulationSave(value: unknown): SimulationSaveV1 {
       stateSchemaVersion: SIMULATION_STATE_VERSION,
       state,
     };
+  }
+  if (schemaVersion !== SAVE_SCHEMA_VERSION) {
+    throw new Error(
+      `Unsupported save schema version ${String(schemaVersion)}; expected ${SAVE_SCHEMA_VERSION}.`,
+    );
   }
   if (behaviorVersion !== SIMULATION_BEHAVIOR_VERSION) {
     throw new Error(

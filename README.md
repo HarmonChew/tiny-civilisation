@@ -6,7 +6,7 @@ This repository implements an experiment-ready vertical slice of the larger desi
 
 ## What is implemented
 
-- A fixed-tick, seeded simulation on a hardcoded 48 × 32 tile map.
+- A fixed-tick, seeded simulation with four versioned 48 × 32 scenarios: the preserved Petri reference plus topology, abundance, and unequal-start contrasts.
 - Eight autonomous creatures with hunger, fatigue, health, inventories, traits, and skills.
 - Food and material nodes, blocked terrain, a chokepoint, grid pathfinding, and fixed-point movement.
 - Rule-gated Utility AI with separate persistent desires, plans, physical actions, structured reason facts, deterministic tie-breaking, and factor-by-factor decision records.
@@ -19,17 +19,17 @@ This repository implements an experiment-ready vertical slice of the larger desi
 - Deterministic event attention tiers, clustering, a bounded recoverable moment queue, and optional speed-aware pacing that restores the player's previous playback state.
 - Player commands for adding or removing food and toggling obstacles. Commands enter the simulation at an authoritative tick.
 - Typed command outcomes, rejection recovery, and bounded factual response traces linked by command/event IDs rather than summary text.
-- A paused-first experiment setup with a short orientation, seed entry, and three seed-led scenario presets.
+- A paused-first experiment setup that chooses an authoritative scenario and seed independently, then shows its dramatic question, starting facts, observable tensions, and named regions.
 - An experiment notebook that records interventions, creates baseline and intervention branches, and bookmarks meaningful ticks.
 - Versioned browser saves with IndexedDB and local-storage fallback, plus compact experiment import and export.
 - Deterministic branch and moment replay in disposable engines, with progress, cancellation, final-hash evidence, captured dish frames, event-aware camera framing, and exact restoration of the live session.
 - Equal-horizon baseline-versus-intervention comparison for population, resources, groups, trust, sharing, theft, confrontation, and construction.
 - A navigable causal explorer connecting events to decisions, utility factors, relevant social evidence, immediate causes, and later consequences.
 - Worker-backed browser execution with projection-only live frames and typed on-demand hash, checkpoint, evidence, detail, intervention-outcome, and comparison queries; the direct runtime retains the same boundary for unsupported environments and tests.
-- A Node.js headless runner for deterministic single-seed and multi-seed runs.
+- A Node.js headless runner for deterministic single-seed, multi-seed, activity-profile, benchmark, and locked scenario-matrix runs.
 - Versioned command, snapshot, replay, save, scenario, experiment, outcome, causal-evidence, behavior, and authoritative-state contracts with migration and invalid-data rejection.
 - A declared tick pipeline, focused simulation systems, typed lookup indexes, and an exhaustive action resolver registry.
-- Real-browser Chromium coverage for the Worker, Pixi renderer, touch, reduced motion, forced colors, 200% text, 400% effective zoom, and an 18-image story/viewport matrix, plus enforced coverage and production-bundle budgets and a repeatable throughput benchmark.
+- Real-browser Chromium coverage for the Worker, Pixi renderer, touch, reduced motion, forced colors, 200% text, 400% effective zoom, the 18-image Petri story matrix, tick-zero narrow/medium/wide views of every additional scenario, and one developed-state view per new scenario, plus enforced coverage and production-bundle budgets.
 
 The current product slice deliberately excludes water, shelters, birth and ageing, culture, migration, trade, territory, seasons, disease, predators, technology, large-world scaling, and LLM narration. Those belong to later milestones after the existing mechanics produce a broader range of explainable outcomes.
 
@@ -61,7 +61,7 @@ npm run benchmark
 npm run build
 ```
 
-`npm run check` is the complete automated local and CI gate: formatting, linting, type-checking, coverage, real-browser journeys, production builds, and the post-build JavaScript/CSS budget check. `npm test` starts the interactive Vitest watchers; use `npm run test:run` for a single non-interactive pass. Manual screen-reader and usability sessions remain separate Phase 2.5 release evidence; automated checks do not claim to replace them.
+`npm run check` is the complete automated local and CI gate: formatting, linting, type-checking, coverage, real-browser journeys, production builds, and the post-build JavaScript/CSS budget check. `npm test` starts the interactive Vitest watchers; use `npm run test:run` for a single non-interactive pass. Manual screen-reader, Firefox/WebKit, and usability sessions remain separate release evidence; automated checks do not claim to replace them.
 
 `npm run test:golden` verifies the checked-in deterministic replay baseline without updating it. Use `npm run test:golden:update` only for an intentional simulation behavior change, then review the fixture diff and record the rationale in the commit or pull request. Ordinary `npm run test:run` verification also disables snapshot updates.
 
@@ -89,8 +89,8 @@ The interface also provides a semantic world navigator, resource/intention/group
 Run one seed:
 
 ```sh
-npm run headless -- --seed 4182 --ticks 10000
-npm run headless -- run --seed 4182 --ticks 10000
+npm run headless -- --scenario petri-world --seed 4182 --ticks 10000
+npm run headless -- run --scenario split-banks --seed 7319 --ticks 10000
 ```
 
 Run a seed range or an explicit list:
@@ -106,6 +106,14 @@ Run seeds 1 through a count:
 npm run batch -- --count 100 --ticks 10000
 ```
 
+Run the portable four-scenario matrix (eight locked seeds, 2,000 ticks, with an exact repeat of every run):
+
+```sh
+npm run headless -- matrix --corpus smoke
+```
+
+`matrix` also accepts the locked `nightly`, `calibration`, and `holdout` corpora. Its JSON retains every primary per-seed profile and reports scenario identity, compiled-map hashes, hard invariants, expected-band checks, multi-label factual outcomes, Wilson intervals, paired descriptive deltas, and convergence diagnostics.
+
 Use `npm run headless -- --help` for the complete CLI reference. A run prints structured JSON containing the final tick and state hash, surviving population, current group count, sharing, theft, conflict, and completed-storage counters. Batch output includes every run and aggregate counts.
 
 Elapsed time and ticks per second are measurements of the current machine and are not deterministic. The seed, requested ticks, final state, counters, and hash are the reproducible part of the result.
@@ -117,14 +125,14 @@ Browser input -> controller -> Worker engine -> deterministic sim-core
 React + PixiJS <- read-only projection frames and status --------|
 
 Headless runner and tests -> direct engine -> the same sim-core
-Replay notebook -> fresh disposable engine -> seed + branch commands
+Replay notebook -> fresh disposable engine -> scenario + seed + branch commands
 ```
 
 The simulation core owns time, authoritative intent, interaction claims, events, and state. In the browser, a typed engine boundary sends ticking, interventions, persistence operations, replay, and on-demand projections to a Web Worker; PixiJS renders read-only observation snapshots and React owns focus and presentation policy. Static tiles are resent only when navigation changes. Ordinary live frames are not hashed: their nullable hash field is populated only for an explicitly verified boundary, while the UI retains the latest verified hash together with its tick. A direct engine implements the same boundary for unsupported environments and tests. The headless app imports the same core without requiring a DOM, renderer, or Worker.
 
-`sim-core` exposes a small simulation facade and explicit tick coordinator. Desires, plans, reason facts, interaction slots, commands, social state, groups, attention events, projections, persistence, experiment branches, outcomes, causal evidence, actions, and maintenance systems live in focused modules. The web app consumes those contracts through simulation, focus, moment, and experiment controllers; its Pixi camera/runtime/layers remain downstream of read-only snapshots. General and moment replay use isolated engines. Moment replay supplies captured observation frames to the dish, frames the focal subject, participants, and event location, then restores the exact live viewport, focus, play, follow, region, and DOM-focus state.
+`sim-core` exposes a small simulation facade, a code-owned immutable scenario catalog/compiler, and an explicit tick coordinator. Desires, plans, reason facts, interaction slots, commands, social state, groups, attention events, projections, persistence, experiment branches, outcomes, causal evidence, actions, and maintenance systems live in focused modules. The web app consumes those contracts through simulation, focus, moment, and experiment controllers; its Pixi camera/runtime/layers remain downstream of read-only snapshots. General and moment replay use isolated engines and reconstruct the full scenario reference. Moment replay supplies captured observation frames to the dish, frames the focal subject, participants, and event location, then restores the exact live viewport, focus, play, follow, region, and DOM-focus state.
 
-The implemented Phase 2.5 decisions, version matrix, migrations, verification boundaries, and remaining manual release evidence are recorded in [`docs/phase-2.5-implementation.md`](docs/phase-2.5-implementation.md). The broader product and authority rules remain in [`docs/design-and-architecture.md`](docs/design-and-architecture.md).
+The locked Phase 3 identity, generation, corpus, and compatibility decisions are in [`docs/phase-3-contract.md`](docs/phase-3-contract.md); its work packages and remaining release-evidence gates are in [`docs/phase-3-execution-plan.md`](docs/phase-3-execution-plan.md). The broader product and authority rules remain in [`docs/design-and-architecture.md`](docs/design-and-architecture.md).
 
 The repository is organized as npm workspaces:
 
@@ -143,7 +151,7 @@ tiny-civilisation/
 
 The authoritative simulation advances at a fixed 10 ticks per simulated second. It uses integer or fixed-point values, stable entity IDs, deterministic iteration, a saved sequential RNG for generation, and keyed random values for action outcomes. Player edits are scheduled commands rather than immediate renderer mutations.
 
-`hashSimulationState` produces a canonical state hash. Given the same behavior version, seed, tick count, and command log, a run should reach the same hash. Tests cover repeated runs, command ordering, seeded randomness, pathfinding, bounded social data, persistence contracts, multi-seed invariants, and social scenario outcomes.
+`hashSimulationState` produces a canonical state hash. Given the same supported scenario reference, behavior version, seed, tick count, and command log, a run reaches the same hash. Tests cover all four canonical initial/long-run states, repeated multi-scenario smoke runs, command ordering, seeded randomness, pathfinding, bounded social data, persistence contracts, migrations, and social scenario outcomes.
 
 Rendering frame rate, camera state, open panels, elapsed wall-clock time, and CLI throughput are outside the authoritative state.
 
@@ -163,4 +171,4 @@ food pressure
 
 Phases 0, 1, and 2 are complete. The Phase 2.5 architecture and implementation are also present: v2 intent and spatial contracts, readable dish and semantic navigation, shared focus, attention/moment policy, progressive factual explanation, typed intervention traces, compatibility migrations, and isolated replay. Automated deterministic, component, runtime, and Chromium evidence is checked in, including the narrow/medium/wide story matrix and Chromium coverage for touch, reduced motion, forced colors, text resize, and high-zoom reflow. Manual NVDA/VoiceOver, formative/confirmatory usability sessions, and browser-specific Firefox/WebKit evidence remain required before the project claims complete Phase 2.5 release evidence.
 
-Phase 3 should broaden outcomes with the existing mechanics after the remaining Phase 2.5 release evidence is attached. Water and shelter, lifecycle, culture, and migration can then extend the same typed events and decisions without moving authority out of the simulation core or bypassing creature choice. See `PROGRESS.md` for the ordered plan.
+Phase 3 feature implementation is present: four structural scenarios, authoritative end-to-end identity, a scenario-aware statistical matrix, truthful browser setup, factual scenario context, compatibility migrations, and cross-scenario deterministic/performance gates. It is not yet a complete release-evidence claim: the full locked calibration/holdout artifacts, manual NVDA or VoiceOver pass, Firefox/WebKit release runs, and formative/confirmatory usability sessions still need to be attached. Water and shelter, lifecycle, culture, and migration remain Phase 4 work. See [`docs/phase-3-execution-plan.md`](docs/phase-3-execution-plan.md) for the evidence checklist and `PROGRESS.md` for the wider roadmap.

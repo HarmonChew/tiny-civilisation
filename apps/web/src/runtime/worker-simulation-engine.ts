@@ -13,7 +13,7 @@ import type {
   RuntimeOperation,
   RuntimeOperationResult,
 } from "../workers/protocol";
-import { isRuntimeWorkerMessage } from "../workers/protocol";
+import { RUNTIME_PROTOCOL_VERSION, isRuntimeWorkerMessage } from "../workers/protocol";
 import type {
   InterventionAcknowledgement,
   LongRunningOperationOptions,
@@ -28,6 +28,7 @@ import type {
   RuntimeReplay,
   SimulationEngine,
   SimulationEngineListener,
+  SimulationCreation,
   SimulationFrame,
   SimulationRuntimeStatus,
 } from "./types";
@@ -150,8 +151,15 @@ export class WorkerSimulationEngine implements SimulationEngine {
     return () => this.listeners.delete(listener);
   }
 
-  create(seed?: number): Promise<SimulationFrame> {
-    return this.request({ type: "create", ...(seed === undefined ? {} : { seed }) });
+  create(scenario?: SimulationCreation): Promise<SimulationFrame> {
+    return this.request({
+      type: "create",
+      ...(scenario === undefined
+        ? {}
+        : typeof scenario === "number"
+          ? { seed: scenario }
+          : { scenario }),
+    });
   }
 
   play(): Promise<SimulationFrame> {
@@ -337,6 +345,7 @@ export class WorkerSimulationEngine implements SimulationEngine {
       const abort = (): void => {
         this.worker.postMessage({
           kind: "tiny-civilisation/runtime-cancel",
+          protocolVersion: RUNTIME_PROTOCOL_VERSION,
           requestId,
         });
       };
@@ -355,6 +364,7 @@ export class WorkerSimulationEngine implements SimulationEngine {
       this.pending.set(requestId, pending as PendingRequest);
       this.worker.postMessage({
         kind: "tiny-civilisation/runtime-request",
+        protocolVersion: RUNTIME_PROTOCOL_VERSION,
         requestId,
         operation,
       });

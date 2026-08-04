@@ -3,6 +3,7 @@ import {
   EXPERIMENT_SCHEMA_VERSION,
   MAX_PERSISTED_JSON_CHARACTERS,
   SIMULATION_BEHAVIOR_VERSION,
+  SIMULATION_STATE_VERSION,
   addExperimentBookmark,
   addExperimentCheckpoint,
   appendExperimentIntervention,
@@ -347,7 +348,11 @@ describe("versioned experiment contracts", () => {
       schemaVersion: number;
       behaviorVersion: number;
       stateSchemaVersion: number;
-      scenario: { behaviorVersion: number };
+      scenario: {
+        schemaVersion: number;
+        behaviorVersion: number;
+        mapGenerationVersion?: number;
+      };
       branches: Array<{
         targetTick: number | null;
         expectedHash: string | null;
@@ -362,7 +367,9 @@ describe("versioned experiment contracts", () => {
     legacy.schemaVersion = 1;
     legacy.behaviorVersion = 1;
     legacy.stateSchemaVersion = 1;
+    legacy.scenario.schemaVersion = 1;
     legacy.scenario.behaviorVersion = 1;
+    delete legacy.scenario.mapGenerationVersion;
     for (const branch of legacy.branches) {
       for (const entry of branch.commandLog) delete entry.responseTrace;
     }
@@ -372,7 +379,7 @@ describe("versioned experiment contracts", () => {
 
     expect(JSON.stringify(legacy)).toBe(original);
     expect(migrated.behaviorVersion).toBe(SIMULATION_BEHAVIOR_VERSION);
-    expect(migrated.stateSchemaVersion).toBe(2);
+    expect(migrated.stateSchemaVersion).toBe(SIMULATION_STATE_VERSION);
     expect(migrated.scenario.behaviorVersion).toBe(SIMULATION_BEHAVIOR_VERSION);
     expect(migrated.bookmarks).toEqual(current.bookmarks);
     expect(migrated.checkpoints).toEqual([]);
@@ -383,10 +390,15 @@ describe("versioned experiment contracts", () => {
     });
   });
 
-  it("migrates schema-v1 current experiments without discarding settled results", () => {
+  it("migrates schema-v1 Phase 2 experiments while clearing obsolete hash claims", () => {
     const current = buildExperiment();
     const legacy = JSON.parse(JSON.stringify(current)) as {
       schemaVersion: number;
+      stateSchemaVersion: number;
+      scenario: {
+        schemaVersion: number;
+        mapGenerationVersion?: number;
+      };
       branches: Array<{
         targetTick: number | null;
         expectedHash: string | null;
@@ -394,6 +406,9 @@ describe("versioned experiment contracts", () => {
       }>;
     };
     legacy.schemaVersion = 1;
+    legacy.stateSchemaVersion = 2;
+    legacy.scenario.schemaVersion = 1;
+    delete legacy.scenario.mapGenerationVersion;
     for (const branch of legacy.branches) {
       for (const entry of branch.commandLog) delete entry.responseTrace;
     }
@@ -401,13 +416,13 @@ describe("versioned experiment contracts", () => {
     const migrated = migrateExperiment(legacy);
 
     expect(migrated.schemaVersion).toBe(EXPERIMENT_SCHEMA_VERSION);
-    expect(migrated.branches[0]?.targetTick).toBe(current.branches[0]?.targetTick);
-    expect(migrated.branches[0]?.expectedHash).toBe(current.branches[0]?.expectedHash);
+    expect(migrated.branches[0]?.targetTick).toBeNull();
+    expect(migrated.branches[0]?.expectedHash).toBeNull();
     expect(migrated.branches[0]?.commandLog[0]?.outcome).toEqual(
       current.branches[0]?.commandLog[0]?.outcome,
     );
     expect(migrated.branches[0]?.commandLog[0]?.responseTrace).toBeNull();
-    expect(migrated.checkpoints).toEqual(current.checkpoints);
+    expect(migrated.checkpoints).toEqual([]);
   });
 
   it("fails early on invalid JSON and oversized serialized contracts", () => {

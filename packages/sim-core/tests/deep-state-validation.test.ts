@@ -49,6 +49,23 @@ describe("deep persisted state validation", () => {
     );
   });
 
+  it("rejects contradictory or structurally stale scenario identity", () => {
+    const mismatchedSeed = clonedState();
+    mismatchedSeed.scenario = {
+      ...mismatchedSeed.scenario,
+      seed: mismatchedSeed.seed + 1,
+    };
+    expect(() => assertCompatibleSimulationState(mismatchedSeed)).toThrow(
+      "scenario.seed must equal the authoritative state seed",
+    );
+
+    const staleMap = clonedState();
+    staleMap.compiledMapHash = "0000000000000000";
+    expect(() => assertCompatibleSimulationState(staleMap)).toThrow(
+      "compiledMapHash does not match",
+    );
+  });
+
   it("rejects stable dangling cross-references and invalid counters", () => {
     const group = clonedState();
     if (!group.creatures[0]) throw new Error("Missing fixture creature.");

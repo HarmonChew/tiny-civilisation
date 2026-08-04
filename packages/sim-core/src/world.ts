@@ -9,8 +9,16 @@ import {
   type WorldState,
 } from "./types.js";
 
-const WIDTH = 48;
-const HEIGHT = 32;
+export const SCENARIO_WORLD_WIDTH = 48;
+export const SCENARIO_WORLD_HEIGHT = 32;
+
+export interface WorldTileTemplate {
+  readonly terrain: TileState["terrain"];
+  readonly walkCost: number;
+  readonly blocked: boolean;
+}
+
+export type WorldTileResolver = (x: number, y: number) => WorldTileTemplate;
 
 function clampUnit(value: number): number {
   return Math.max(0, Math.min(10_000, Math.round(value)));
@@ -36,54 +44,76 @@ export function createEmptyActionCounts(): Record<ActionKind, number> {
   };
 }
 
-export function createPetriWorld(): WorldState {
+export function createWorldFromTileResolver(
+  width: number,
+  height: number,
+  resolveTile: WorldTileResolver,
+): WorldState {
   const tiles: TileState[] = [];
-  for (let y = 0; y < HEIGHT; y += 1) {
-    for (let x = 0; x < WIDTH; x += 1) {
-      const index = y * WIDTH + x;
-      const border = x === 0 || y === 0 || x === WIDTH - 1 || y === HEIGHT - 1;
-      const centralBarrier = x === 24 && (y < 14 || y > 17);
-      const westRock = (x === 4 && y >= 4 && y <= 8) || (y === 20 && x >= 3 && x <= 8);
-      const eastRock = (x === 41 && y >= 8 && y <= 13) || (y === 27 && x >= 33 && x <= 39);
-      const shallowWater =
-        !border &&
-        !centralBarrier &&
-        ((x >= 30 && x <= 34 && y === 18) || (x === 34 && y >= 19 && y <= 23));
-      const blocked = border || centralBarrier || westRock || eastRock;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      const tile = resolveTile(x, y);
       tiles.push({
         index,
         x,
         y,
-        terrain: blocked ? "ROCK" : shallowWater ? "SHALLOW_WATER" : "GROUND",
-        walkCost: shallowWater ? 18 : 10,
-        blocked,
+        terrain: tile.terrain,
+        walkCost: tile.walkCost,
+        blocked: tile.blocked,
         navigationRevision: 0,
       });
     }
   }
   return {
-    width: WIDTH,
-    height: HEIGHT,
+    width,
+    height,
     tiles,
     navigationRevision: 0,
   };
 }
 
-interface CreaturePrototype {
-  name: string;
-  color: number;
-  x: number;
-  y: number;
-  hunger: number;
-  generosity: number;
-  aggression: number;
-  sociability: number;
-  loyalty: number;
-  foraging: number;
-  combat: number;
+export function petriWorldTileAt(x: number, y: number): WorldTileTemplate {
+  const border =
+    x === 0 || y === 0 || x === SCENARIO_WORLD_WIDTH - 1 || y === SCENARIO_WORLD_HEIGHT - 1;
+  const centralBarrier = x === 24 && (y < 14 || y > 17);
+  const westRock = (x === 4 && y >= 4 && y <= 8) || (y === 20 && x >= 3 && x <= 8);
+  const eastRock = (x === 41 && y >= 8 && y <= 13) || (y === 27 && x >= 33 && x <= 39);
+  const shallowWater =
+    !border &&
+    !centralBarrier &&
+    ((x >= 30 && x <= 34 && y === 18) || (x === 34 && y >= 19 && y <= 23));
+  const blocked = border || centralBarrier || westRock || eastRock;
+  return {
+    terrain: blocked ? "ROCK" : shallowWater ? "SHALLOW_WATER" : "GROUND",
+    walkCost: shallowWater ? 18 : 10,
+    blocked,
+  };
 }
 
-const PROTOTYPES: CreaturePrototype[] = [
+export function createPetriWorld(): WorldState {
+  return createWorldFromTileResolver(
+    SCENARIO_WORLD_WIDTH,
+    SCENARIO_WORLD_HEIGHT,
+    petriWorldTileAt,
+  );
+}
+
+export interface CreaturePrototype {
+  readonly name: string;
+  readonly color: number;
+  readonly x: number;
+  readonly y: number;
+  readonly hunger: number;
+  readonly generosity: number;
+  readonly aggression: number;
+  readonly sociability: number;
+  readonly loyalty: number;
+  readonly foraging: number;
+  readonly combat: number;
+}
+
+export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
   {
     name: "Iri",
     color: 0x7dd3fc,
@@ -188,7 +218,52 @@ const PROTOTYPES: CreaturePrototype[] = [
     foraging: 3_500,
     combat: 7_400,
   },
-];
+] as const;
+
+export interface ResourceNodePrototype {
+  readonly kind: "FOOD" | "MATERIAL";
+  readonly x: number;
+  readonly y: number;
+  readonly currentStock: number;
+  readonly maximumStock: number;
+  readonly regenerationEveryTicks: number;
+  readonly regenerationAmount: number;
+}
+
+export const PETRI_RESOURCE_PROTOTYPES: readonly ResourceNodePrototype[] = [
+  {
+    kind: "FOOD",
+    x: 10,
+    y: 7,
+    currentStock: 34,
+    maximumStock: 40,
+    regenerationEveryTicks: 34,
+    regenerationAmount: 1,
+  },
+  {
+    kind: "FOOD",
+    x: 37,
+    y: 22,
+    currentStock: 95,
+    maximumStock: 110,
+    regenerationEveryTicks: 20,
+    regenerationAmount: 2,
+  },
+  {
+    kind: "MATERIAL",
+    x: 18,
+    y: 15,
+    currentStock: 80,
+    maximumStock: 80,
+    regenerationEveryTicks: 80,
+    regenerationAmount: 1,
+  },
+] as const;
+
+export interface InitialWorldPopulation {
+  readonly creatures: readonly CreaturePrototype[];
+  readonly resourceNodes: readonly ResourceNodePrototype[];
+}
 
 function createCreature(
   state: Pick<SimulationState, "randomState" | "seed">,
@@ -269,40 +344,32 @@ function createCreature(
   };
 }
 
-export function populateInitialWorld(state: SimulationState): void {
-  for (const prototype of PROTOTYPES) {
+export function populateWorld(
+  state: SimulationState,
+  population: InitialWorldPopulation,
+): void {
+  for (const prototype of population.creatures) {
     const creature = createCreature(state, state.world, state.nextEntityId, prototype);
     state.nextEntityId += 1;
     state.creatures.push(creature);
   }
 
-  state.resourceNodes.push(
-    {
+  for (const prototype of population.resourceNodes) {
+    state.resourceNodes.push({
       id: state.nextEntityId++,
-      kind: "FOOD",
-      tileIndex: tileIndexAt(state.world, 10, 7),
-      currentStock: 34,
-      maximumStock: 40,
-      regenerationEveryTicks: 34,
-      regenerationAmount: 1,
-    },
-    {
-      id: state.nextEntityId++,
-      kind: "FOOD",
-      tileIndex: tileIndexAt(state.world, 37, 22),
-      currentStock: 95,
-      maximumStock: 110,
-      regenerationEveryTicks: 20,
-      regenerationAmount: 2,
-    },
-    {
-      id: state.nextEntityId++,
-      kind: "MATERIAL",
-      tileIndex: tileIndexAt(state.world, 18, 15),
-      currentStock: 80,
-      maximumStock: 80,
-      regenerationEveryTicks: 80,
-      regenerationAmount: 1,
-    },
-  );
+      kind: prototype.kind,
+      tileIndex: tileIndexAt(state.world, prototype.x, prototype.y),
+      currentStock: prototype.currentStock,
+      maximumStock: prototype.maximumStock,
+      regenerationEveryTicks: prototype.regenerationEveryTicks,
+      regenerationAmount: prototype.regenerationAmount,
+    });
+  }
+}
+
+export function populateInitialWorld(state: SimulationState): void {
+  populateWorld(state, {
+    creatures: PETRI_CREATURE_PROTOTYPES,
+    resourceNodes: PETRI_RESOURCE_PROTOTYPES,
+  });
 }

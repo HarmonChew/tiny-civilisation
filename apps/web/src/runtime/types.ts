@@ -11,6 +11,7 @@ import type {
   SettledInterventionOutcomeV1,
   SimulationReplayV1,
   SimulationState,
+  ScenarioReferenceV2,
 } from "@tiny-civ/sim-core";
 
 /** A transport-safe view that callers cannot use to mutate authoritative state. */
@@ -27,6 +28,8 @@ export type SimulationRuntimePhase =
 
 export interface SimulationFrame {
   readonly revision: number;
+  readonly scenario: ScenarioReferenceV2;
+  readonly compiledMapHash: string;
   readonly seed: number;
   readonly tick: number;
   /** Present only when this exact authoritative boundary was explicitly hashed. */
@@ -115,11 +118,20 @@ export interface LongRunningOperationOptions {
   readonly captureTicks?: readonly number[];
 }
 
-export type RuntimeReplay = SimulationReplayV1;
+/**
+ * Runtime-only replay request. A target tick may be supplied without a hash
+ * for an explicitly unverified preview; persisted replay contracts still
+ * require finalTick/finalHash as a pair.
+ */
+export type RuntimeReplay = Omit<SimulationReplayV1, "finalTick" | "finalHash"> & {
+  readonly finalTick?: number;
+  readonly finalHash?: string;
+};
+export type SimulationCreation = number | ScenarioReferenceV2;
 
 export interface SimulationRuntime {
   readonly status: SimulationRuntimeStatus;
-  create(seed?: number): SimulationFrame;
+  create(scenario?: SimulationCreation): SimulationFrame;
   setPlaying(playing: boolean): SimulationFrame;
   /** Clock-driven advancement. It is a no-op while paused. */
   advance(ticks: number): SimulationFrame;
@@ -168,7 +180,7 @@ export interface SimulationEngine {
   readonly kind: "direct" | "worker";
   readonly status: SimulationRuntimeStatus;
   subscribe(listener: SimulationEngineListener): () => void;
-  create(seed?: number): Promise<SimulationFrame>;
+  create(scenario?: SimulationCreation): Promise<SimulationFrame>;
   play(): Promise<SimulationFrame>;
   pause(): Promise<SimulationFrame>;
   /** Clock-driven advancement. Concurrent calls may be coalesced for backpressure. */

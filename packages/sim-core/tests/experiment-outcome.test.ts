@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareExperimentOutcomes,
   createExperimentOutcome,
+  createScenarioReference,
   createSimulation,
   type ExperimentOutcomeV1,
 } from "../src/index.js";
@@ -137,5 +138,16 @@ describe("canonical experiment outcomes", () => {
     expect(() =>
       compareExperimentOutcomes(createExperimentOutcome(baselineState), incompatible),
     ).toThrow("incompatible behavior versions");
+
+    const otherScenario = createSimulation(
+      createScenarioReference("split-banks", baselineState.seed),
+    );
+    otherScenario.tick = baselineState.tick;
+    expect(() =>
+      compareExperimentOutcomes(
+        createExperimentOutcome(baselineState),
+        createExperimentOutcome(otherScenario),
+      ),
+    ).toThrow("same scenario identity and seed");
   });
 });

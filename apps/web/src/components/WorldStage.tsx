@@ -139,7 +139,9 @@ export function WorldStage({
       </div>
       <div className="dish-heading">
         <div>
-          <span className="eyebrow">Specimen field · seed {seed}</span>
+          <span className="eyebrow">
+            {view.scenario.name} · seed {seed}
+          </span>
           <h2 id="dish-heading">Living dish</h2>
         </div>
         <span className="dish-heading__instruction">

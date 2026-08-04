@@ -1,23 +1,23 @@
 # Tiny Civilisation — Progress and Expansion Plan
 
-Last updated: 1 August 2026
+Last updated: 4 August 2026
 
 ## Current position
 
-Phase 0 (baseline protection), Phase 1 (behavior-preserving architecture), and Phase 2 (the repeatable experiment loop) are complete. The deterministic simulation is divided into focused systems behind typed, versioned contracts; the browser delegates authoritative work to a Web Worker; and players can preserve, reconstruct, compare, and explain controlled interventions.
+Phase 0 (baseline protection), Phase 1 (behavior-preserving architecture), Phase 2 (the repeatable experiment loop), and the Phase 2.5 feature architecture are implemented. The deterministic simulation is divided into focused systems behind typed, versioned contracts; the browser delegates authoritative work to a Web Worker; and players can preserve, reconstruct, compare, and explain controlled interventions.
 
-The next milestone is Phase 2.5: making the existing eight-creature civilisation readable, spatially alive, and dramatically paced. Phase 3 scenario variation and major simulation systems remain deferred until a player can understand who the creatures are, what they want, what they are doing, and why an important event matters without first opening a dense evidence view.
+Phase 3 feature implementation is now present. Four structurally distinct scenarios compile from an immutable core catalog; their complete identity survives state, Worker operations, saves, replays, experiments, imports, moment replay, and headless analysis. The browser separates scenario choice from seed choice and exposes factual starting conditions, while the headless matrix measures structural, social, spatial, desire, action, milestone, concentration, outcome-label, and convergence differences across locked seed corpora.
 
-The current implementation proves that the simulation can retain and explain a social story. Phase 2.5 must make that story visible while it unfolds.
+Release evidence is not complete. Full 64-seed calibration and untouched 64-seed holdout artifacts must replace provisional outcome-band status; NVDA or VoiceOver, Firefox, WebKit, and the planned formative/confirmatory usability sessions also remain manual gates. Phase 4 systems remain deferred until those results are reviewed.
 
 ### Verification coverage
 
 - `npm run check` covers formatting, linting, type-checking, coverage, production-browser journeys, and builds across the workspaces.
 - The checked-in golden replay corpus remains protected from accidental snapshot updates during ordinary verification.
-- Runtime tests exercise the direct and Worker engines, queued operations, replay progress and cancellation, stale responses, and crash recovery.
+- Runtime tests exercise the direct and Worker engines, all four scenario identities, queued operations, replay progress and cancellation, stale responses, and crash recovery.
 - Contract and persistence tests cover experiment round trips, branching, deep validation, browser-storage fallback behavior, size limits, and malformed data.
 - Browser journeys cover paused setup, the real Pixi renderer, interventions, local save/load, replay hash verification, outcome comparison, import/export, causal navigation, malformed-file recovery, and narrow, medium, and wide screenshot baselines.
-- Commands, snapshots, replays, saves, scenarios, experiments, outcomes, causal evidence, behavior, and authoritative state have explicit version contracts.
+- Commands, snapshots, replays, saves, scenarios, experiments, outcomes, causal evidence, runtime protocol, workspace, behavior, and authoritative state have explicit version contracts.
 
 ### Main engineering risks
 
@@ -272,17 +272,23 @@ Phase 2.5 is complete when:
 
 ### Phase 3 — Increase variation with readable mechanics
 
-Status: **After Phase 2.5.**
+Status: **Feature implementation present; release evidence pending.**
 
 Goal: broaden emergence while preserving the comprehension, pacing, and spatial-legibility standards established in Phase 2.5.
 
-- Turn the seed-led presets into structurally distinct deterministic scenarios with varied terrain, chokepoints, resource distribution, starting traits, starting desires, social proximity, and interaction capacity.
+The dependency order, authoritative scenario contract, initial four-scenario matrix, measurement protocol, work packages, pull-request slices, and release gates are specified in [`docs/phase-3-execution-plan.md`](docs/phase-3-execution-plan.md).
+
+- Turn the seed-led presets into structurally distinct deterministic scenarios with varied terrain, chokepoints, resource distribution, starting traits and needs, social proximity, and interaction capacity. Scenario definitions never inject desires.
 - Give each scenario a concise dramatic question and a small set of observable tensions without defining a scripted ending.
 - Establish a versioned deterministic scenario and map-generation contract.
 - Extend batch reporting with distributions, percentiles, time-to-event, group composition, relationship-network structure, spatial dispersion, overlap duration, action transitions, event cadence, stalemate detection, and dominant-strategy warnings.
 - Define scenario-specific expected ranges for macro outcomes and moment-to-moment activity instead of requiring one story or one global balance target.
 - Identify actions, desires, locations, traits, and relationships that are unreachable, dominant, repetitive, irrelevant, or convergent across seed batches.
 - Verify that different outcomes are visible through behavior and world state, not only distinguishable in end-of-run metrics.
+
+Implemented automated evidence includes canonical and repeated long-run determinism for all four scenarios, structural and reachability validation, identity-strict save/replay/experiment/runtime paths, legacy migration and atomic rejection, a versioned activity schema, locked matrix commands, multi-label factual classifiers, Wilson intervals, paired descriptive effects, convergence diagnostics, browser identity flows, and payload/save/throughput budgets. The [portable 32-run smoke](docs/baselines/phase-3-smoke-v1.md) repeats every case exactly and passes all inherited hard invariants and contract safety bands.
+
+Still pending are reviewed scenario-specific outcome bands from the full calibration corpus, verification against the untouched holdout corpus, Firefox/WebKit release runs, manual assistive-technology evidence, and the two usability rounds. Until those artifacts exist, Phase 3 does not claim its statistical or comprehension completion gates.
 
 The variation phase is complete when:
 

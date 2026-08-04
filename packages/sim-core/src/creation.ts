@@ -2,12 +2,29 @@ import { TICKS_PER_SECOND } from "./constants.js";
 import { emitDomainEvent } from "./events.js";
 import type { SimulationState } from "./types.js";
 import { SIMULATION_STATE_VERSION } from "./versions.js";
-import { createPetriWorld, populateInitialWorld } from "./world.js";
+import { populateWorld } from "./world.js";
+import {
+  cloneScenarioReference,
+  compileScenario,
+  createScenarioReference,
+  type ScenarioReferenceV2,
+} from "./scenarios/index.js";
 
-export function createSimulation(seed = 4_182): SimulationState {
-  const normalizedSeed = seed >>> 0;
+export function createSimulation(seed?: number): SimulationState;
+export function createSimulation(reference: ScenarioReferenceV2): SimulationState;
+export function createSimulation(
+  scenarioOrSeed: ScenarioReferenceV2 | number = 4_182,
+): SimulationState {
+  const scenario =
+    typeof scenarioOrSeed === "number"
+      ? createScenarioReference(scenarioOrSeed >>> 0)
+      : cloneScenarioReference(scenarioOrSeed);
+  const normalizedSeed = scenario.seed;
+  const compiled = compileScenario(scenario);
   const state: SimulationState = {
     schemaVersion: SIMULATION_STATE_VERSION,
+    scenario,
+    compiledMapHash: compiled.compiledMapHash,
     seed: normalizedSeed,
     tick: 0,
     nextEntityId: 1,
@@ -19,7 +36,7 @@ export function createSimulation(seed = 4_182): SimulationState {
     nextRelationshipId: 1,
     nextGroupId: 1,
     randomState: (normalizedSeed ^ 0xa5a5a5a5) >>> 0,
-    world: createPetriWorld(),
+    world: compiled.world,
     creatures: [],
     resourceNodes: [],
     structures: [],
@@ -47,18 +64,21 @@ export function createSimulation(seed = 4_182): SimulationState {
       ticksPerSecond: TICKS_PER_SECOND,
       maxDomainEvents: 2_000,
       maxHistoryEvents: 500,
-      maxDecisionRecords: 512,
+      maxDecisionRecords: 352,
       maxMemoriesPerCreature: 48,
       maxRelationshipsPerCreature: 32,
       maxIntentHistoryPerCreature: 32,
       maxRouteSamplesPerCreature: 24,
     },
   };
-  populateInitialWorld(state);
+  populateWorld(state, compiled);
   emitDomainEvent(state, {
     type: "SIMULATION_STARTED",
     importance: 30,
-    summary: `The Petri world began with seed ${normalizedSeed}.`,
+    summary:
+      scenario.scenarioId === "petri-world"
+        ? `The Petri world began with seed ${normalizedSeed}.`
+        : `${compiled.metadata.name} began with seed ${normalizedSeed}.`,
   });
   return state;
 }

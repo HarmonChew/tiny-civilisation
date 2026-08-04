@@ -6,6 +6,7 @@ import {
 } from "./types.js";
 import { DESIRE_KINDS, PLAN_KINDS } from "./desires.js";
 import { validateInteractionClaims } from "./interaction-slots.js";
+import { assertScenarioReference, compileScenario } from "./scenarios/index.js";
 import { SIMULATION_STATE_VERSION } from "./versions.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -1048,6 +1049,8 @@ export function assertCompatibleSimulationState(
 ): asserts value is SimulationState {
   const state = object(value, "state", [
     "schemaVersion",
+    "scenario",
+    "compiledMapHash",
     "seed",
     "tick",
     "nextEntityId",
@@ -1079,7 +1082,20 @@ export function assertCompatibleSimulationState(
       `Unsupported simulation state version ${String(version)}; expected ${SIMULATION_STATE_VERSION}.`,
     );
   }
-  integer(state.seed, "seed", 0, 0xffffffff);
+  assertScenarioReference(state.scenario);
+  const seed = integer(state.seed, "seed", 0, 0xffffffff);
+  const scenarioSeed = (state.scenario as { readonly seed: number }).seed;
+  if (scenarioSeed !== seed) {
+    fail("scenario.seed", "must equal the authoritative state seed");
+  }
+  const compiledMapHash = string(state.compiledMapHash, "compiledMapHash");
+  if (!/^[0-9a-f]{16}$/u.test(compiledMapHash)) {
+    fail("compiledMapHash", "must be a lowercase 64-bit hexadecimal hash");
+  }
+  const expectedCompiledMapHash = compileScenario(state.scenario).compiledMapHash;
+  if (compiledMapHash !== expectedCompiledMapHash) {
+    fail("compiledMapHash", `does not match scenario ${state.scenario.scenarioId}`);
+  }
   const tick = integer(state.tick, "tick");
   integer(state.randomState, "randomState", 0, 0xffffffff);
   const { width, height, tileCount } = validateWorld(state.world);

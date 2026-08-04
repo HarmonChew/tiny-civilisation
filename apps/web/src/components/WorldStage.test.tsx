@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CreatureView, WorldView } from "../model";
+import { DEFAULT_SCENARIO_VIEW } from "../experiment/scenario-presets";
 import { WorldStage } from "./WorldStage";
 
 vi.mock("./PixiWorld", () => ({
@@ -44,6 +45,7 @@ const makeCreature = (id: number, name: string, action: string): CreatureView =>
 });
 
 const view: WorldView = {
+  scenario: DEFAULT_SCENARIO_VIEW,
   tick: 8,
   timeLabel: "Dawn",
   hash: "dish-readability",

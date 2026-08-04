@@ -3,6 +3,8 @@ import {
   COMMAND_SCHEMA_VERSION,
   REPLAY_SCHEMA_VERSION,
   SAVE_SCHEMA_VERSION,
+  SCENARIO_CANONICAL_SEEDS,
+  SCENARIO_IDS,
   SIMULATION_BEHAVIOR_VERSION,
   SIMULATION_STATE_VERSION,
   SNAPSHOT_SCHEMA_VERSION,
@@ -13,7 +15,9 @@ import {
   createSimulation,
   createSimulationReplay,
   createSimulationSave,
+  createScenarioReference,
   deserializeSimulationSave,
+  executeSimulationReplay,
   hashSimulationState,
   migrateSimulationReplay,
   migrateSimulationSave,
@@ -127,24 +131,71 @@ describe("versioned simulation contracts", () => {
   });
 
   it("round trips a save without changing its authoritative hash", () => {
-    const state = createSimulation(921);
+    const scenario = createScenarioReference("split-banks", 921);
+    const state = createSimulation(scenario);
     advanceSimulation(state, 1_200);
     const before = hashSimulationState(state);
     const serialized = serializeSimulationSave(state);
     const loaded = deserializeSimulationSave(serialized);
 
     expect(createSimulationSave(state).schemaVersion).toBe(SAVE_SCHEMA_VERSION);
+    expect(loaded.scenario).toEqual(scenario);
+    expect(loaded.compiledMapHash).toBe(state.compiledMapHash);
     expect(hashSimulationState(loaded)).toBe(before);
     expect(loaded).not.toBe(state);
   });
 
-  it("keeps a 10,000-tick reference save within the Phase 2.5 persistence budget", () => {
-    const state = createSimulation(4_182);
-    advanceSimulation(state, 10_000);
+  it("replays a non-reference scenario and rejects contradictory identity", () => {
+    const scenario = createScenarioReference("scattered-plenty", 1_203);
+    const replay = createSimulationReplay(scenario, []);
+    const executed = migrateSimulationReplay(replay);
 
-    const bytes = utf8ByteLength(serializeSimulationSave(state));
-    expect(bytes).toBeLessThanOrEqual(2_500_000);
+    expect(executed.scenario).toEqual(scenario);
+    expect(executed.seed).toBe(scenario.seed);
+    expect(() => migrateSimulationReplay({ ...replay, seed: scenario.seed + 1 })).toThrow(
+      "scenario seed must match",
+    );
+    expect(() =>
+      migrateSimulationReplay({
+        ...replay,
+        scenario: { ...scenario, scenarioId: "unknown-world" },
+      }),
+    ).toThrow("Unsupported scenario unknown-world");
   });
+
+  it("continues saves and verifies replay hashes for every scenario identity", () => {
+    for (const [index, scenarioId] of SCENARIO_IDS.entries()) {
+      const reference = createScenarioReference(scenarioId, 700 + index);
+      const uninterrupted = createSimulation(reference);
+      advanceSimulation(uninterrupted, 800);
+
+      const checkpointed = createSimulation(reference);
+      advanceSimulation(checkpointed, 300);
+      const continued = deserializeSimulationSave(serializeSimulationSave(checkpointed));
+      advanceSimulation(continued, 500);
+      expect(hashSimulationState(continued)).toBe(hashSimulationState(uninterrupted));
+
+      const replay = createSimulationReplay(reference, [], {
+        finalTick: 800,
+        finalHash: hashSimulationState(uninterrupted),
+      });
+      const replayed = executeSimulationReplay(replay, { requireHashMatch: true });
+      expect(replayed.hashStatus).toBe("VERIFIED");
+      expect(replayed.state.scenario).toEqual(reference);
+    }
+  });
+
+  it("keeps every 10,000-tick canonical save within the persistence budget", () => {
+    for (const scenarioId of SCENARIO_IDS) {
+      const state = createSimulation(
+        createScenarioReference(scenarioId, SCENARIO_CANONICAL_SEEDS[scenarioId]),
+      );
+      advanceSimulation(state, 10_000);
+
+      const bytes = utf8ByteLength(serializeSimulationSave(state));
+      expect(bytes, `${scenarioId} save bytes`).toBeLessThanOrEqual(2_500_000);
+    }
+  }, 20_000);
 
   it("fails clearly on invalid and incompatible save data", () => {
     expect(() => deserializeSimulationSave("not json")).toThrow(
@@ -166,11 +217,11 @@ describe("versioned simulation contracts", () => {
     ).toThrow("creatures must be an array");
   });
 
-  it("deterministically migrates v1 saves and rebuilds v2 observation state", () => {
+  it("deterministically migrates v1 saves and rebuilds current observation state", () => {
     const legacyState = legacyStateFixture();
     const legacySave = {
       kind: "tiny-civilisation/save",
-      schemaVersion: SAVE_SCHEMA_VERSION,
+      schemaVersion: 1,
       behaviorVersion: 1,
       stateSchemaVersion: 1,
       state: legacyState,
@@ -210,10 +261,10 @@ describe("versioned simulation contracts", () => {
     ).toBe(true);
   });
 
-  it("preserves v1 replay commands but drops hashes that cannot verify v2 behavior", () => {
+  it("preserves v1 replay commands but drops hashes that cannot verify current state", () => {
     const migrated = migrateSimulationReplay({
       kind: "tiny-civilisation/replay",
-      schemaVersion: REPLAY_SCHEMA_VERSION,
+      schemaVersion: 1,
       behaviorVersion: 1,
       stateSchemaVersion: 1,
       seed: 41,

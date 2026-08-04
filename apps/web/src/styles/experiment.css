@@ -205,6 +205,41 @@
   line-height: 1.4;
 }
 
+.scenario-brief {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.42fr) minmax(0, 1fr);
+  gap: 10px 18px;
+  margin-top: 16px;
+  padding: 13px 14px;
+  border-block: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--status-moss) 7%, transparent);
+}
+
+.scenario-brief h2 {
+  margin: 3px 0 0;
+  font-family: var(--font-editorial);
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.scenario-brief ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 17px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.scenario-brief p {
+  grid-column: 2;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
 .seed-presets,
 .coordinate-fields {
   min-width: 0;
@@ -403,6 +438,38 @@
   font-size: 8.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.experiment-scenario-context {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--status-moss) 6%, transparent);
+}
+
+.experiment-scenario-context h3 {
+  margin: 0;
+  font-family: var(--font-editorial);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.experiment-scenario-context ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 17px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.experiment-scenario-context p {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.5;
 }
 
 .experiment-save-state {
@@ -1453,6 +1520,14 @@
   .experiment-setup__fields,
   .seed-presets > div {
     grid-template-columns: 1fr;
+  }
+
+  .scenario-brief {
+    grid-template-columns: 1fr;
+  }
+
+  .scenario-brief p {
+    grid-column: 1;
   }
 
   .experiment-field small {

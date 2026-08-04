@@ -1,4 +1,17 @@
 export * from "./types.js";
+export * from "./scenarios/catalog.js";
+export * from "./scenarios/compiler.js";
+export * from "./scenarios/validation.js";
+export * from "./scenarios/corpora.js";
+export {
+  SCENARIO_IDS,
+  SCENARIO_DEFINITION_VERSION,
+  SCENARIO_MAP_GENERATION_VERSION,
+  cloneScenarioReference,
+  isScenarioId,
+  sameScenarioReference,
+} from "./scenarios/types.js";
+export type { ScenarioId, ScenarioMetadata } from "./scenarios/types.js";
 export * from "./contracts.js";
 export * from "./experiment-contracts.js";
 export * from "./experiment-outcome.js";

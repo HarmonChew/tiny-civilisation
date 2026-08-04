@@ -1,33 +1,82 @@
+import {
+  DEFAULT_SCENARIO_ID,
+  SCENARIO_CANONICAL_SEEDS,
+  compileScenario,
+  createScenarioReference,
+  scenarioCatalogProjection,
+  type ScenarioId,
+  type ScenarioReferenceV2,
+} from "@tiny-civ/sim-core";
+import type { ScenarioView } from "../model";
+
+/** Browser projection of the authoritative sim-core catalog. */
 export interface ScenarioPreset {
-  id: string;
+  id: ScenarioId;
   name: string;
+  role: string;
   seed: number;
   prompt: string;
+  startingFacts: readonly string[];
+  observableTensions: readonly string[];
+  landmarks: ScenarioView["landmarks"];
+  reference: ScenarioReferenceV2;
+  compiledMapHash: string;
 }
 
-export const SCENARIO_PRESETS: readonly ScenarioPreset[] = [
-  {
-    id: "food-pressure",
-    name: "Food pressure",
-    seed: 4_182,
-    prompt: "What happens when scarcity tests generosity, trust, and shared storage?",
-  },
-  {
-    id: "quiet-accord",
-    name: "Quiet accord",
-    seed: 921,
-    prompt:
-      "Will repeated cooperation hold when creatures have room to form familiar bonds?",
-  },
-  {
-    id: "uneasy-passage",
-    name: "Uneasy passage",
-    seed: 23,
-    prompt: "How will proximity around the central passage alter sharing and rivalry?",
-  },
-] as const;
+export const SCENARIO_PRESETS: readonly ScenarioPreset[] = Object.freeze(
+  scenarioCatalogProjection().map((scenario) => {
+    const seed = SCENARIO_CANONICAL_SEEDS[scenario.scenarioId];
+    const reference = createScenarioReference(scenario.scenarioId, seed);
+    const compiled = compileScenario(reference);
+    return Object.freeze({
+      id: scenario.scenarioId,
+      name: scenario.name,
+      role: scenario.role,
+      seed,
+      prompt: scenario.dramaticQuestion,
+      startingFacts: Object.freeze([...scenario.startingFacts]),
+      observableTensions: Object.freeze([...scenario.observableTensions]),
+      landmarks: Object.freeze([
+        ...compiled.regions.map((region) =>
+          Object.freeze({
+            kind: "REGION" as const,
+            id: region.id,
+            label: region.label,
+            tileIndices: Object.freeze([...region.tileIndices]),
+          }),
+        ),
+        ...compiled.chokepoints.map((chokepoint) =>
+          Object.freeze({
+            kind: "CHOKEPOINT" as const,
+            id: chokepoint.id,
+            label: chokepoint.label,
+            tileIndices: Object.freeze([...chokepoint.tileIndices]),
+          }),
+        ),
+      ]),
+      reference,
+      compiledMapHash: compiled.compiledMapHash,
+    });
+  }),
+);
 
-export const DEFAULT_SCENARIO_PRESET = SCENARIO_PRESETS[0]!;
+export const DEFAULT_SCENARIO_PRESET =
+  SCENARIO_PRESETS.find((scenario) => scenario.id === DEFAULT_SCENARIO_ID) ??
+  SCENARIO_PRESETS[0]!;
+
+export const DEFAULT_SCENARIO_VIEW: ScenarioView = Object.freeze({
+  reference: DEFAULT_SCENARIO_PRESET.reference,
+  compiledMapHash: DEFAULT_SCENARIO_PRESET.compiledMapHash,
+  name: DEFAULT_SCENARIO_PRESET.name,
+  role: DEFAULT_SCENARIO_PRESET.role,
+  dramaticQuestion: DEFAULT_SCENARIO_PRESET.prompt,
+  startingFacts: [...DEFAULT_SCENARIO_PRESET.startingFacts],
+  observableTensions: [...DEFAULT_SCENARIO_PRESET.observableTensions],
+  landmarks: DEFAULT_SCENARIO_PRESET.landmarks.map((landmark) => ({
+    ...landmark,
+    tileIndices: [...landmark.tileIndices],
+  })),
+});
 
 export function scenarioPresetById(id: string): ScenarioPreset | undefined {
   return SCENARIO_PRESETS.find((preset) => preset.id === id);

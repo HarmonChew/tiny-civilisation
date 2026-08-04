@@ -33,6 +33,9 @@ export interface ScenarioOption {
   id: string;
   label: string;
   description: string;
+  role?: string;
+  startingFacts?: readonly string[];
+  observableTensions?: readonly string[];
 }
 
 export interface SeedPreset {
@@ -305,6 +308,9 @@ export interface ExperimentDrawerProps {
   section: ExperimentSection;
   experimentName: string;
   scenarioLabel: string;
+  scenarioQuestion?: string;
+  startingFacts?: readonly string[];
+  developedSummary?: string;
   seed: number;
   currentTick: number;
   dirty: boolean;
@@ -488,7 +494,7 @@ export function ExperimentSetupDialog({
               </select>
               <small id="scenario-description">
                 {selectedScenario?.description ??
-                  "Scenarios pair a research question with a reproducible seed."}
+                  "Choose a versioned starting structure for this field study."}
               </small>
             </div>
 
@@ -510,14 +516,37 @@ export function ExperimentSetupDialog({
                 onChange={(event) => onSeedChange(event.currentTarget.value)}
               />
               <small id="seed-description">
-                Reusing a seed recreates the same starting conditions.
+                The seed varies deterministic choices inside this scenario; it does not
+                choose the scenario.
               </small>
             </div>
           </div>
 
+          {selectedScenario ? (
+            <section className="scenario-brief" aria-labelledby="scenario-brief-title">
+              <div>
+                <span className="experiment-eyebrow">
+                  {selectedScenario.role ?? "Starting conditions"}
+                </span>
+                <h2 id="scenario-brief-title">What is true at tick 0</h2>
+              </div>
+              <ul>
+                {(selectedScenario.startingFacts ?? []).map((fact) => (
+                  <li key={fact}>{fact}</li>
+                ))}
+              </ul>
+              {selectedScenario.observableTensions?.length ? (
+                <p>
+                  <strong>Watch for:</strong>{" "}
+                  {selectedScenario.observableTensions.join(" ")}
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+
           {seedPresets.length > 0 ? (
             <fieldset className="seed-presets">
-              <legend>Named seed presets</legend>
+              <legend>Seed shortcuts</legend>
               <div>
                 {seedPresets.map((preset) => (
                   <button
@@ -1693,6 +1722,9 @@ export function ExperimentDrawer({
   section,
   experimentName,
   scenarioLabel,
+  scenarioQuestion,
+  startingFacts = [],
+  developedSummary,
   seed,
   currentTick,
   dirty,
@@ -1723,6 +1755,27 @@ export function ExperimentDrawer({
       case "record":
         return (
           <>
+            <section
+              className="experiment-scenario-context"
+              aria-labelledby="experiment-scenario-context-heading"
+            >
+              <span className="experiment-eyebrow">Starting structure</span>
+              <h3 id="experiment-scenario-context-heading">
+                {scenarioQuestion ?? scenarioLabel}
+              </h3>
+              {startingFacts.length > 0 ? (
+                <ul>
+                  {startingFacts.map((fact) => (
+                    <li key={fact}>{fact}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {developedSummary ? (
+                <p>
+                  <strong>Current factual readout:</strong> {developedSummary}
+                </p>
+              ) : null}
+            </section>
             <ExperimentActions {...actions} />
             <InterventionComposer {...composer} />
             <InterventionLedger
@@ -1750,7 +1803,11 @@ export function ExperimentDrawer({
     onNavigateIntervention,
     onSelectIntervention,
     replay,
+    scenarioLabel,
+    scenarioQuestion,
     section,
+    startingFacts,
+    developedSummary,
   ]);
 
   if (!open) return null;

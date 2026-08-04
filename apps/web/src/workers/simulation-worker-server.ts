@@ -7,6 +7,7 @@ import type {
   RuntimeWorkerMessage,
   SerializedRuntimeError,
 } from "./protocol";
+import { RUNTIME_PROTOCOL_VERSION } from "./protocol";
 
 export interface SimulationWorkerServerPort {
   postMessage(message: RuntimeWorkerMessage): void;
@@ -74,6 +75,7 @@ export class SimulationWorkerServer {
       const value = await this.execute(requestId, operation, controller.signal);
       this.port.postMessage({
         kind: "tiny-civilisation/runtime-response",
+        protocolVersion: RUNTIME_PROTOCOL_VERSION,
         requestId,
         ok: true,
         status: this.runtime.status,
@@ -82,6 +84,7 @@ export class SimulationWorkerServer {
     } catch (error) {
       this.port.postMessage({
         kind: "tiny-civilisation/runtime-response",
+        protocolVersion: RUNTIME_PROTOCOL_VERSION,
         requestId,
         ok: false,
         status: this.runtime.status,
@@ -100,7 +103,10 @@ export class SimulationWorkerServer {
   ): RuntimeOperationResult | Promise<RuntimeOperationResult> {
     switch (operation.type) {
       case "create":
-        return this.runtime.create(operation.seed);
+        if (operation.scenario !== undefined && operation.seed !== undefined) {
+          throw new Error("Create accepts either a scenario reference or a legacy seed.");
+        }
+        return this.runtime.create(operation.scenario ?? operation.seed);
       case "set-playing":
         return this.runtime.setPlaying(operation.playing);
       case "advance":
@@ -143,6 +149,7 @@ export class SimulationWorkerServer {
           onProgress: (progress) =>
             this.port.postMessage({
               kind: "tiny-civilisation/runtime-progress",
+              protocolVersion: RUNTIME_PROTOCOL_VERSION,
               requestId,
               progress,
             }),
@@ -157,6 +164,7 @@ export class SimulationWorkerServer {
           onProgress: (progress) =>
             this.port.postMessage({
               kind: "tiny-civilisation/runtime-progress",
+              protocolVersion: RUNTIME_PROTOCOL_VERSION,
               requestId,
               progress,
             }),

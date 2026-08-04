@@ -171,11 +171,18 @@ export function worldTextSummary(view: WorldView): string {
   const resourceNoun = view.resources.length === 1 ? "site" : "sites";
   const resourceVerb = view.resources.length === 1 ? "holds" : "hold";
   const structureNoun = completed === 1 ? "structure" : "structures";
-  return `${view.width} by ${view.height} dish. ${living.length} living ${creatureNoun} across ${occupiedTiles} occupied ${tileNoun}. ${view.resources.length} resource ${resourceNoun} ${resourceVerb} ${resourceStock} units. ${completed} complete ${structureNoun} and ${construction} under construction.`;
+  const startingConditions = view.scenario.startingFacts.join(" ");
+  const landmarks = view.scenario.landmarks.map((landmark) => landmark.label).join(", ");
+  return `${view.scenario.name}, seed ${view.scenario.reference.seed}. ${view.scenario.dramaticQuestion} Starting conditions: ${startingConditions} ${landmarks ? `Named places: ${landmarks}. ` : ""}Current dish: ${view.width} by ${view.height}. ${living.length} living ${creatureNoun} across ${occupiedTiles} occupied ${tileNoun}. ${view.resources.length} resource ${resourceNoun} ${resourceVerb} ${resourceStock} units. ${completed} complete ${structureNoun} and ${construction} under construction.`;
 }
 
 export function selectedWorldSummary(view: WorldView, selected: WorldRef | null): string {
   if (!selected) return "Nothing selected. Choose a creature or world object to inspect.";
+  if (selected.kind === "tile") {
+    const tile = view.tiles.find((candidate) => candidate.index === selected.tileIndex);
+    if (!tile) return "The selected tile is no longer present in the dish.";
+    return `Tile at ${locationLabel(tile.x, tile.y)}. ${humanize(tile.terrain)} terrain; ${tile.blocked ? "blocked" : "walkable"}.`;
+  }
   if (selected.kind === "creature") {
     const creature = view.creatures.find((candidate) => candidate.id === selected.id);
     if (!creature) return "The selected creature is no longer present in the dish.";
@@ -337,7 +344,7 @@ export function WorldNavigator({
   selectedRef: WorldRef | null;
   focusedRef: WorldRef | null;
   keyboardFocusedRef: WorldRef | null;
-  onSelect: (ref: NavigableWorldRef) => void;
+  onSelect: (ref: WorldRef) => void;
   onKeyboardFocus: (ref: NavigableWorldRef | null) => void;
   onHover: (ref: NavigableWorldRef | null) => void;
 }) {
@@ -479,6 +486,49 @@ export function WorldNavigator({
           <p>{selectedWorldSummary(view, selectedRef)}</p>
         </section>
       </div>
+
+      {view.scenario.landmarks.length > 0 ? (
+        <section
+          className="world-navigator__landmarks"
+          aria-labelledby={`${summaryId}-landmarks`}
+        >
+          <div>
+            <span className="eyebrow">Starting-condition links</span>
+            <h3 id={`${summaryId}-landmarks`}>Named places</h3>
+          </div>
+          <ul>
+            {view.scenario.landmarks.map((landmark) => {
+              const tileIndex = landmark.tileIndices[0];
+              if (tileIndex === undefined) return null;
+              const livingHere = view.creatures.filter(
+                (creature) =>
+                  creature.alive &&
+                  landmark.tileIndices.includes(
+                    Math.floor(creature.y) * view.width + Math.floor(creature.x),
+                  ),
+              ).length;
+              return (
+                <li key={`${landmark.kind}:${landmark.id}`}>
+                  <button
+                    type="button"
+                    aria-label={`Inspect ${landmark.label}, ${landmark.kind === "CHOKEPOINT" ? "chokepoint" : "region"}; ${livingHere.toString()} living creatures currently inside`}
+                    onClick={() => onSelect({ kind: "tile", tileIndex })}
+                  >
+                    <MapPin aria-hidden="true" size={13} />
+                    <span>
+                      <strong>{landmark.label}</strong>
+                      <small>
+                        {landmark.kind === "CHOKEPOINT" ? "Chokepoint" : "Region"} Â·{" "}
+                        {livingHere} here now
+                      </small>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
 
       <div
         className="world-navigator__filters"

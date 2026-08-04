@@ -7,7 +7,7 @@ const STORY_SCENES = [
   {
     name: "tick-0",
     tick: 0,
-    expectedHash: "36cba3187551d1ec",
+    expectedHash: "bab1ef059a47a308",
     subject: "Iri",
     narrative: "The Petri world began with seed 4182.",
     subjectState: "Iri is deciding what matters next.",
@@ -15,7 +15,7 @@ const STORY_SCENES = [
   {
     name: "settlement",
     tick: 101,
-    expectedHash: "b09dc7e0d57d6d3d",
+    expectedHash: "41545013c5f76779",
     subject: "Iri",
     narrative:
       "Iri, Nalo, Aro, Meka, Pela, Sori formed the Riverhollow group around repeated sharing and sustained proximity.",
@@ -24,7 +24,7 @@ const STORY_SCENES = [
   {
     name: "construction",
     tick: 198,
-    expectedHash: "3178fbf3ddded5f8",
+    expectedHash: "4fd35c929760a8c4",
     subject: "Iri",
     narrative: "The Riverhollow group began a shared store.",
     subjectState: "Iri is building the shared store.",
@@ -32,7 +32,7 @@ const STORY_SCENES = [
   {
     name: "theft",
     tick: 392,
-    expectedHash: "d2f304578cf9a677",
+    expectedHash: "231059da8273431b",
     subject: "Taro",
     narrative: "Taro took food without permission.",
     subjectState: "Taro plans to take food under pressure.",
@@ -40,7 +40,7 @@ const STORY_SCENES = [
   {
     name: "conflict",
     tick: 486,
-    expectedHash: "b038672676265c8e",
+    expectedHash: "bf399dda7ae30442",
     subject: "Iri",
     narrative: "Iri confronted Taro, but the blow missed.",
     subjectState: "Iri plans to confront a threat.",
@@ -48,7 +48,7 @@ const STORY_SCENES = [
   {
     name: "aftermath",
     tick: 817,
-    expectedHash: "e45147feda125cd8",
+    expectedHash: "bf75fda3458feddf",
     subject: "Taro",
     narrative: "Pela replaced Iri as leader of Riverhollow.",
     subjectState: "Taro plans to rest somewhere safe.",
@@ -63,19 +63,69 @@ const STORY_VIEWPORTS = [
 
 type StoryScene = (typeof STORY_SCENES)[number];
 
+const PHASE_3_SCENARIOS = [
+  {
+    id: "split-banks",
+    name: "Split Banks",
+    seed: 7_319,
+    developedHash: "a47a3a64865a6901",
+    developedSummary:
+      "8 creatures are alive; 1 group and 1 completed store is visible; wild food totals 105 units at 2 sites.",
+    question:
+      "Will two clusters become separate communities, or will the passage draw them into one?",
+    startingFacts: [
+      "Two clusters of four begin on opposite banks of a narrow central passage.",
+      "Each bank has moderate food with the same combined starting stock as the reference world.",
+      "The only material patch sits inside the passage between the two clusters.",
+    ],
+  },
+  {
+    id: "scattered-plenty",
+    name: "Scattered Plenty",
+    seed: 1_203,
+    developedHash: "f604fd0f89dbbecb",
+    developedSummary:
+      "8 creatures are alive; 0 groups and 0 completed stores are visible; wild food totals 320 units at 4 sites.",
+    question:
+      "If nobody needs anyone immediately, will familiarity and sharing become a community?",
+    startingFacts: [
+      "Four separated pairs begin around an open world rather than in one cluster.",
+      "Abundant food is distributed near every pair.",
+      "Building material is central, away from every starting pair.",
+    ],
+  },
+  {
+    id: "unequal-table",
+    name: "Unequal Table",
+    seed: 921,
+    developedHash: "cf0b710424f9cf3d",
+    developedSummary:
+      "8 creatures are alive; 1 group and 1 completed store is visible; wild food totals 133 units at 2 sites.",
+    question: "Will outsiders receive help before the common store becomes a target?",
+    startingFacts: [
+      "Five comparatively cooperative creatures begin west of the passage.",
+      "Taro and two more aggressive creatures begin together on the eastern bank.",
+      "Terrain and resources match the reference world, so social placement carries the contrast.",
+    ],
+  },
+] as const;
+
+type Phase3Scenario = (typeof PHASE_3_SCENARIOS)[number];
+
 function storyExperimentBuffer(scene: StoryScene): Buffer {
   return Buffer.from(
     JSON.stringify({
       kind: "tiny-civilisation/experiment",
-      schemaVersion: 2,
+      schemaVersion: 3,
       behaviorVersion: 3,
-      stateSchemaVersion: 2,
+      stateSchemaVersion: 3,
       scenario: {
         kind: "tiny-civilisation/scenario",
-        schemaVersion: 1,
+        schemaVersion: 2,
         behaviorVersion: 3,
         scenarioId: "petri-world",
         scenarioVersion: 1,
+        mapGenerationVersion: 1,
         seed: STORY_SEED,
       },
       rootBranchId: "baseline",
@@ -87,6 +137,40 @@ function storyExperimentBuffer(scene: StoryScene): Buffer {
           forkTick: 0,
           targetTick: scene.tick,
           expectedHash: scene.expectedHash,
+          commandLog: [],
+        },
+      ],
+      bookmarks: [],
+      checkpoints: [],
+    }),
+  );
+}
+
+function phase3ScenarioExperimentBuffer(scenario: Phase3Scenario, tick: number): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      kind: "tiny-civilisation/experiment",
+      schemaVersion: 3,
+      behaviorVersion: 3,
+      stateSchemaVersion: 3,
+      scenario: {
+        kind: "tiny-civilisation/scenario",
+        schemaVersion: 2,
+        behaviorVersion: 3,
+        scenarioId: scenario.id,
+        scenarioVersion: 1,
+        mapGenerationVersion: 1,
+        seed: scenario.seed,
+      },
+      rootBranchId: "baseline",
+      branches: [
+        {
+          id: "baseline",
+          label: "Baseline",
+          parentBranchId: null,
+          forkTick: 0,
+          targetTick: tick,
+          expectedHash: scenario.developedHash,
           commandLog: [],
         },
       ],
@@ -110,18 +194,100 @@ async function openPausedWorkspace(page: Page, useTouch = false): Promise<void> 
   await expect(page.getByRole("heading", { name: "Living dish" })).toBeVisible();
 
   const setup = page.getByRole("dialog", { name: "Set up an experiment" });
-  if (await setup.isVisible()) {
-    await expect(setup.getByText(/opens paused at tick 0/i)).toBeVisible();
-    const openPaused = setup.getByRole("button", { name: "Open paused at tick 0" });
-    await expect(openPaused).toBeEnabled();
-    if (useTouch) await openPaused.tap();
-    else await openPaused.click();
-    await expect(setup).toBeHidden();
-  }
+  await expect(setup).toBeVisible();
+  await expect(setup.getByText(/opens paused at tick 0/i)).toBeVisible();
+  const openPaused = setup.getByRole("button", { name: "Open paused at tick 0" });
+  await expect(openPaused).toBeEnabled();
+  if (useTouch) await openPaused.tap();
+  else await openPaused.click();
+  await expect(setup).toBeHidden();
 
   await expect(page.getByRole("button", { name: /Play simulation/ })).toBeVisible();
   await expect(page.getByRole("application", { name: /Living dish map/ })).toBeVisible();
   await expect(page.getByLabel("Simulation status")).toContainText("Observation paused");
+}
+
+async function openPhase3ScenarioAtTickZero(
+  page: Page,
+  scenario: Phase3Scenario,
+): Promise<void> {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Living dish" })).toBeVisible();
+
+  const setup = page.getByRole("dialog", { name: "Set up an experiment" });
+  await expect(setup).toBeVisible();
+  await setup.getByRole("combobox", { name: "Scenario" }).selectOption(scenario.id);
+  await expect(setup.getByText(scenario.question, { exact: true })).toBeVisible();
+
+  const startingConditions = setup.getByRole("region", {
+    name: "What is true at tick 0",
+  });
+  await expect(startingConditions).toBeVisible();
+  for (const fact of scenario.startingFacts) {
+    await expect(startingConditions.getByText(fact, { exact: true })).toBeVisible();
+  }
+
+  const seed = setup.getByRole("spinbutton", { name: "Seed" });
+  await seed.fill(scenario.seed.toString());
+  await expect(seed).toHaveValue(scenario.seed.toString());
+  await setup.getByRole("button", { name: "Open paused at tick 0" }).click();
+  await expect(setup).toBeHidden();
+
+  await expect(page.getByLabel("Simulation status")).toContainText("Observation paused");
+  await expect(page.getByLabel("Simulation status").locator("strong")).toHaveText(
+    "Day 1 · 00:00",
+  );
+  await expect(page.locator(".dish-heading .eyebrow")).toHaveText(
+    `${scenario.name} · seed ${scenario.seed.toString()}`,
+  );
+
+  const dishSummary = page
+    .getByRole("heading", { name: "Dish at a glance" })
+    .locator("..")
+    .locator("p");
+  if (!(await dishSummary.isVisible())) await showRegion(page, "Chronicle");
+  await expect(dishSummary).toBeVisible();
+  await expect(dishSummary).toContainText(
+    `${scenario.name}, seed ${scenario.seed.toString()}.`,
+  );
+  await expect(dishSummary).toContainText(scenario.question);
+  for (const fact of scenario.startingFacts) {
+    await expect(dishSummary).toContainText(fact);
+  }
+
+  await showRegion(page, "Dish");
+  await expect(page.getByRole("application", { name: /Living dish map/ })).toBeVisible();
+  await waitForRenderedDish(page);
+}
+
+async function loadDevelopedPhase3Scenario(
+  page: Page,
+  scenario: Phase3Scenario,
+): Promise<void> {
+  await openPhase3ScenarioAtTickZero(page, scenario);
+  await openNotebook(page);
+  await page.getByLabel("Import experiment file").setInputFiles({
+    name: `${scenario.id}-developed.tinyciv.json`,
+    mimeType: "application/json",
+    buffer: phase3ScenarioExperimentBuffer(scenario, 2_000),
+  });
+  await expect(
+    page.getByText(
+      `Imported ${scenario.name} / seed ${scenario.seed.toString()} at tick 2000.`,
+    ),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("region", { name: scenario.question })).toContainText(
+    scenario.developedSummary,
+  );
+  await closeNotebook(page);
+  await dismissRetainedMoments(page);
+  await expect(page.getByLabel("Simulation status").locator("strong")).toHaveText(
+    "Day 1 · 03:20",
+  );
+  await expect(page.locator(".status-rail__hash")).toContainText(
+    scenario.developedHash.slice(0, 12),
+  );
+  await waitForRenderedDish(page);
 }
 
 async function openNotebook(page: Page): Promise<void> {
@@ -161,6 +327,14 @@ async function waitForRenderedDish(page: Page): Promise<void> {
   });
 }
 
+async function dismissRetainedMoments(page: Page): Promise<void> {
+  const momentQueue = page.getByRole("heading", { name: "Moment queue" });
+  for (let index = 0; index < 16 && (await momentQueue.isVisible()); index++) {
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
+  }
+  await expect(momentQueue).toBeHidden();
+}
+
 async function showRegion(page: Page, name: "Chronicle" | "Dish" | "Subject") {
   const tab = page.getByRole("button", { name, exact: true });
   if (await tab.isVisible()) await tab.click();
@@ -188,12 +362,12 @@ async function loadStoryScene(page: Page, scene: StoryScene): Promise<void> {
   if (scene.tick > 0) {
     await openNotebook(page);
     await page.getByLabel("Import experiment file").setInputFiles({
-      name: `phase-2.5-${scene.name}.tinyciv.json`,
+      name: `phase-3-${scene.name}.tinyciv.json`,
       mimeType: "application/json",
       buffer: storyExperimentBuffer(scene),
     });
     await expect(
-      page.getByText(`Imported seed ${STORY_SEED} at tick ${scene.tick}.`),
+      page.getByText(`Imported Common Store / seed ${STORY_SEED} at tick ${scene.tick}.`),
     ).toBeVisible({ timeout: 15_000 });
     await closeNotebook(page);
   }
@@ -359,7 +533,9 @@ test("creates, preserves, replays, compares, exports, imports, and explains an e
   if (!downloadPath)
     throw new Error("The exported experiment was not available to import.");
   await page.getByLabel("Import experiment file").setInputFiles(downloadPath);
-  await expect(page.getByText(/Imported seed 4182 at tick 2/)).toBeVisible();
+  await expect(
+    page.getByText(/Imported Common Store \/ seed 4182 at tick 2/),
+  ).toBeVisible();
 
   await closeNotebook(page);
   await page.getByLabel("Simulation speed").getByRole("button", { name: /^4/ }).click();
@@ -454,7 +630,9 @@ test("supports the primary flow with true touch input", async ({ browser }, test
 
   try {
     await openPausedWorkspace(page, true);
-    expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => globalThis.navigator.maxTouchPoints)).toBeGreaterThan(
+      0,
+    );
     expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
 
     await page.getByRole("button", { name: "Chronicle", exact: true }).tap();
@@ -584,4 +762,37 @@ for (const scene of STORY_SCENES) {
       expect(browserErrors).toEqual([]);
     });
   }
+}
+
+for (const scenario of PHASE_3_SCENARIOS) {
+  for (const viewport of STORY_VIEWPORTS) {
+    test(`${scenario.id} tick-0 at ${viewport.name} viewport`, async ({ page }) => {
+      const browserErrors = collectBrowserErrors(page);
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await openPhase3ScenarioAtTickZero(page, scenario);
+      await expectNoPageOverflow(page);
+
+      const dishBounds = await page
+        .getByRole("application", { name: /Living dish map/ })
+        .boundingBox();
+      expect(dishBounds?.width).toBeGreaterThan(240);
+      await expect(page).toHaveScreenshot(`${scenario.id}-tick-0-${viewport.name}.png`, {
+        fullPage: true,
+      });
+      expect(browserErrors).toEqual([]);
+    });
+  }
+
+  test(`${scenario.id} developed state at medium viewport`, async ({ page }) => {
+    const browserErrors = collectBrowserErrors(page);
+    const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
+    await page.setViewportSize({ width: medium.width, height: medium.height });
+    await loadDevelopedPhase3Scenario(page, scenario);
+    await expectNoPageOverflow(page);
+
+    await expect(page).toHaveScreenshot(`${scenario.id}-developed-medium.png`, {
+      fullPage: true,
+    });
+    expect(browserErrors).toEqual([]);
+  });
 }

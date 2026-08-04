@@ -1,6 +1,11 @@
 import { TILE_FIXED_UNITS, type RenderSnapshot, type SimulationState } from "./types.js";
 import { projectCreatureObservationSummary } from "./observation-summary.js";
 import { SIMULATION_BEHAVIOR_VERSION, SNAPSHOT_SCHEMA_VERSION } from "./versions.js";
+import {
+  cloneScenarioReference,
+  compileScenario,
+  getScenarioMetadata,
+} from "./scenarios/index.js";
 
 const HISTORY_TICKS_PER_MINUTE = 10;
 const HISTORY_MINUTES_PER_DAY = 24 * 60;
@@ -8,6 +13,7 @@ const MAX_PROJECTED_ROUTE_SAMPLES = 12;
 const MAX_PROJECTED_MEMORIES_PER_CREATURE = 4;
 const MAX_PROJECTED_RELATIONSHIPS_PER_CREATURE = 6;
 const MAX_PROJECTED_ATTENTION_EVENTS = 24;
+const MAX_PROJECTED_FACTORS_PER_CANDIDATE = 3;
 
 function relationshipSalience(relationship: SimulationState["relationships"][number]) {
   return Math.max(
@@ -33,9 +39,39 @@ export function createRenderSnapshot(
   state: SimulationState,
   includeStaticWorld = true,
 ): RenderSnapshot {
+  const scenarioMetadata = getScenarioMetadata(state.scenario.scenarioId);
+  const compiledScenario = includeStaticWorld ? compileScenario(state.scenario) : null;
   return {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
+    scenario: {
+      reference: cloneScenarioReference(state.scenario),
+      compiledMapHash: state.compiledMapHash,
+      name: scenarioMetadata.name,
+      role: includeStaticWorld ? scenarioMetadata.role : "",
+      dramaticQuestion: includeStaticWorld ? scenarioMetadata.dramaticQuestion : "",
+      startingFacts: includeStaticWorld ? [...scenarioMetadata.startingFacts] : [],
+      observableTensions: includeStaticWorld
+        ? [...scenarioMetadata.observableTensions]
+        : [],
+      landmarks:
+        compiledScenario === null
+          ? []
+          : [
+              ...compiledScenario.regions.map((region) => ({
+                kind: "REGION" as const,
+                id: region.id,
+                label: region.label,
+                tileIndices: [...region.tileIndices],
+              })),
+              ...compiledScenario.chokepoints.map((chokepoint) => ({
+                kind: "CHOKEPOINT" as const,
+                id: chokepoint.id,
+                label: chokepoint.label,
+                tileIndices: [...chokepoint.tileIndices],
+              })),
+            ],
+    },
     tick: state.tick,
     timeLabel: formatSimulationTime(state.tick),
     width: state.world.width,
@@ -102,16 +138,23 @@ export function createRenderSnapshot(
                 : null,
               candidates: decision.candidates.map((candidate) => ({
                 ...candidate,
-                factors: candidate.factors.map((factor) => ({
-                  ...factor,
-                  evidenceEventIds: [...factor.evidenceEventIds],
-                  fact: factor.fact
-                    ? {
-                        ...factor.fact,
-                        sourceEventIds: [...factor.fact.sourceEventIds],
-                      }
-                    : null,
-                })),
+                factors: [...candidate.factors]
+                  .sort(
+                    (left, right) =>
+                      Math.abs(right.contribution) - Math.abs(left.contribution) ||
+                      left.key.localeCompare(right.key),
+                  )
+                  .slice(0, MAX_PROJECTED_FACTORS_PER_CANDIDATE)
+                  .map((factor) => ({
+                    ...factor,
+                    evidenceEventIds: [...factor.evidenceEventIds],
+                    fact: factor.fact
+                      ? {
+                          ...factor.fact,
+                          sourceEventIds: [...factor.fact.sourceEventIds],
+                        }
+                      : null,
+                  })),
               })),
             }
           : null;

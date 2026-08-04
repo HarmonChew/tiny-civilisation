@@ -1,3 +1,5 @@
+import type { ScenarioReferenceV2 } from "./scenarios/types.js";
+
 export type EntityId = number;
 export type GroupId = number;
 export type Tick = number;
@@ -467,6 +469,11 @@ export interface SimulationConfiguration {
 
 export interface SimulationState {
   schemaVersion: number;
+  /** Immutable catalog identity used to reconstruct this exact starting world. */
+  scenario: ScenarioReferenceV2;
+  /** Hash of the compiler output before any simulation ticks or interventions. */
+  compiledMapHash: string;
+  /** Convenience copy retained for keyed runtime decisions; must equal scenario.seed. */
   seed: number;
   tick: Tick;
   nextEntityId: EntityId;
@@ -590,9 +597,28 @@ export interface RenderStructure {
   guardIds: EntityId[];
 }
 
+export interface RenderScenario {
+  reference: ScenarioReferenceV2;
+  compiledMapHash: string;
+  name: string;
+  role: string;
+  dramaticQuestion: string;
+  startingFacts: string[];
+  observableTensions: string[];
+  landmarks: RenderScenarioLandmark[];
+}
+
+export interface RenderScenarioLandmark {
+  kind: "REGION" | "CHOKEPOINT";
+  id: string;
+  label: string;
+  tileIndices: number[];
+}
+
 export interface RenderSnapshot {
   schemaVersion: number;
   behaviorVersion: number;
+  scenario: RenderScenario;
   tick: Tick;
   timeLabel: string;
   width: number;

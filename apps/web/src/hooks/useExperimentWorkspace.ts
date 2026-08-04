@@ -19,7 +19,6 @@ import {
   type InterventionResponseBeatKind,
   type InterventionResponseTrace,
   type ScheduledPlayerCommand,
-  type SimulationReplayV1,
 } from "@tiny-civ/sim-core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -51,6 +50,7 @@ import {
   type ReplayResult,
   type RuntimeCanonicalHash,
   type RuntimeCheckpoint,
+  type RuntimeReplay,
   type SimulationEngine,
   type SimulationFrame,
 } from "../runtime";
@@ -72,7 +72,7 @@ import { useInterventionResponseTraces } from "./useInterventionResponseTraces";
 
 const ONBOARDING_KEY = "tiny-civilisation/orientation-complete/v1";
 const WORKSPACE_KIND = "tiny-civilisation/workspace";
-const WORKSPACE_SCHEMA_VERSION = 1;
+const WORKSPACE_SCHEMA_VERSION = 2;
 const INTERVENTION_BRANCH_BASE_ID = "intervention";
 const MAX_INTERACTIVE_REPLAY_TICK = 100_000;
 const MAX_IMPORTED_REPLAY_COMMANDS = 10_000;
@@ -170,10 +170,9 @@ const EMPTY_COMPARISON: ComparisonState = {
   message: "Bookmark a baseline, introduce one condition, then compare both runs.",
 };
 
-interface PersistedWorkspaceV1 {
+interface PersistedWorkspaceV2 {
   kind: typeof WORKSPACE_KIND;
   schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
-  scenarioPresetId: string;
   activeBranchId: string;
   experiment: ExperimentV1;
   simulationSave: string;
@@ -542,12 +541,13 @@ export function causalDetailFromProjection(
   };
 }
 
-function replayAtTick(replay: SimulationReplayV1, finalTick: number): SimulationReplayV1 {
+function replayAtTick(replay: RuntimeReplay, finalTick: number): RuntimeReplay {
   return {
     kind: replay.kind,
     schemaVersion: replay.schemaVersion,
     behaviorVersion: replay.behaviorVersion,
     stateSchemaVersion: replay.stateSchemaVersion,
+    scenario: { ...replay.scenario },
     seed: replay.seed,
     commands: replay.commands.filter((command) => command.applyAtTick < finalTick),
     finalTick,
@@ -608,10 +608,18 @@ export function createMomentReplayPresentation(
 ): MomentReplayPresentation | null {
   if (capturedFrames.length === 0) return null;
   let retainedTiles: readonly TileView[] = [];
+  let retainedScenario: WorldView["scenario"] | undefined;
   const viewsByTick = new Map<number, WorldView>();
   for (const frame of [...capturedFrames].sort((left, right) => left.tick - right.tick)) {
-    const view = makeWorldViewFromSnapshot(frame.snapshot, frame.hash, retainedTiles);
+    const view = makeWorldViewFromSnapshot(
+      frame.snapshot,
+      frame.hash,
+      retainedTiles,
+      undefined,
+      retainedScenario,
+    );
     if (frame.snapshot.tiles.length > 0) retainedTiles = view.tiles;
+    retainedScenario = view.scenario;
     viewsByTick.set(frame.tick, view);
   }
 
@@ -727,11 +735,11 @@ function comparisonMetrics(
   });
 }
 
-function serializeWorkspace(workspace: PersistedWorkspaceV1): string {
+function serializeWorkspace(workspace: PersistedWorkspaceV2): string {
   return JSON.stringify(workspace);
 }
 
-function parseWorkspace(serialized: string): PersistedWorkspaceV1 {
+function parseWorkspace(serialized: string): PersistedWorkspaceV2 {
   let value: unknown;
   try {
     value = JSON.parse(serialized) as unknown;
@@ -742,14 +750,19 @@ function parseWorkspace(serialized: string): PersistedWorkspaceV1 {
     throw new Error("Saved workspace data must be an object.");
   }
   const record = value as Record<string, unknown>;
-  if (record.kind !== WORKSPACE_KIND || record.schemaVersion !== WORKSPACE_SCHEMA_VERSION) {
+  if (
+    record.kind !== WORKSPACE_KIND ||
+    (record.schemaVersion !== 1 && record.schemaVersion !== WORKSPACE_SCHEMA_VERSION)
+  ) {
     throw new Error("That browser save uses an incompatible workspace version.");
   }
   if (
-    typeof record.scenarioPresetId !== "string" ||
     typeof record.activeBranchId !== "string" ||
     typeof record.simulationSave !== "string"
   ) {
+    throw new Error("Saved workspace metadata is incomplete.");
+  }
+  if (record.schemaVersion === 1 && typeof record.scenarioPresetId !== "string") {
     throw new Error("Saved workspace metadata is incomplete.");
   }
   const experiment = deserializeExperiment(JSON.stringify(record.experiment));
@@ -760,7 +773,6 @@ function parseWorkspace(serialized: string): PersistedWorkspaceV1 {
   return {
     kind: WORKSPACE_KIND,
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
-    scenarioPresetId: record.scenarioPresetId,
     activeBranchId: record.activeBranchId,
     experiment,
     simulationSave: record.simulationSave,
@@ -768,15 +780,22 @@ function parseWorkspace(serialized: string): PersistedWorkspaceV1 {
 }
 
 function assertWorkspaceCheckpoint(
-  workspace: PersistedWorkspaceV1,
+  workspace: PersistedWorkspaceV2,
   checkpoint: RuntimeCheckpoint,
 ): void {
   const branch = workspace.experiment.branches.find(
     (candidate) => candidate.id === workspace.activeBranchId,
   );
   if (!branch) throw new Error("The saved active branch does not exist.");
-  if (workspace.experiment.scenario.seed !== checkpoint.state.seed) {
-    throw new Error("The saved experiment seed does not match its simulation state.");
+  const expected = workspace.experiment.scenario;
+  const actual = checkpoint.state.scenario;
+  if (
+    expected.scenarioId !== actual.scenarioId ||
+    expected.scenarioVersion !== actual.scenarioVersion ||
+    expected.mapGenerationVersion !== actual.mapGenerationVersion ||
+    expected.seed !== actual.seed
+  ) {
+    throw new Error("The saved experiment scenario does not match its simulation state.");
   }
   if (
     branch.targetTick !== checkpoint.tick ||
@@ -829,11 +848,9 @@ export function useExperimentWorkspace({
   const createIsolatedReplayEngine = createReplayEngineOverride ?? createSimulationEngine;
   const getInterventionOutcomes = simulation.getInterventionOutcomes;
   const simulationTick = simulation.view.tick;
-  const simulationRevision = `${simulation.seed.toString()}:${simulationTick.toString()}`;
+  const simulationRevision = `${simulation.scenario.scenarioId}@${simulation.scenario.scenarioVersion.toString()}/${simulation.scenario.mapGenerationVersion.toString()}:${simulation.seed.toString()}:${simulationTick.toString()}`;
   const storageRef = useRef(createExperimentStorage());
-  const experimentRef = useRef<ExperimentV1>(
-    createExperiment(createScenarioReference(DEFAULT_SCENARIO_PRESET.seed)),
-  );
+  const experimentRef = useRef<ExperimentV1>(createExperiment(simulation.scenario));
   const activeBranchRef = useRef(experimentRef.current.rootBranchId);
   const replayAbortRef = useRef<AbortController | null>(null);
   const causalAbortRef = useRef<AbortController | null>(null);
@@ -843,7 +860,9 @@ export function useExperimentWorkspace({
   const operationSequenceRef = useRef(0);
   const [experiment, setExperimentState] = useState(experimentRef.current);
   const [activeBranchId, setActiveBranchState] = useState(activeBranchRef.current);
-  const [scenarioPresetId, setScenarioPresetId] = useState(DEFAULT_SCENARIO_PRESET.id);
+  const [scenarioPresetId, setScenarioPresetId] = useState<string>(
+    simulation.scenario.scenarioId,
+  );
   const [setupOpen, setSetupOpen] = useState(() => {
     try {
       return localStorage.getItem(ONBOARDING_KEY) !== "complete";
@@ -851,8 +870,10 @@ export function useExperimentWorkspace({
       return true;
     }
   });
-  const [setupScenarioId, setSetupScenarioId] = useState(DEFAULT_SCENARIO_PRESET.id);
-  const [setupSeed, setSetupSeed] = useState(DEFAULT_SCENARIO_PRESET.seed.toString());
+  const [setupScenarioId, setSetupScenarioId] = useState<string>(
+    simulation.scenario.scenarioId,
+  );
+  const [setupSeed, setSetupSeed] = useState(simulation.seed.toString());
   const [setupError, setSetupError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [section, setSection] = useState<ExperimentSection>("record");
@@ -916,7 +937,7 @@ export function useExperimentWorkspace({
 
   const replayInIsolation = useCallback(
     async (
-      replay: SimulationReplayV1,
+      replay: RuntimeReplay,
       options?: LongRunningOperationOptions,
     ): Promise<ReplayResult> => {
       const engine = createIsolatedReplayEngine();
@@ -1004,10 +1025,13 @@ export function useExperimentWorkspace({
     if (!operation) return;
     try {
       const nextSeed = normalizeSeed(Number(setupSeed));
+      const preset = scenarioPresetById(setupScenarioId);
+      if (!preset) throw new Error("Choose a supported scenario.");
+      const reference = createScenarioReference(preset.id, nextSeed);
       setSetupError(null);
-      const nextView = await simulation.restart(nextSeed);
+      const nextView = await simulation.restart(reference);
       if (!nextView) throw new Error("The new experiment could not start.");
-      const next = createExperiment(createScenarioReference(nextSeed));
+      const next = createExperiment(reference);
       commitExperiment(next);
       commitActiveBranch(next.rootBranchId);
       setScenarioPresetId(setupScenarioId);
@@ -1045,9 +1069,9 @@ export function useExperimentWorkspace({
   }, [markOrientationComplete]);
 
   const recoverExperiment = useCallback(async (): Promise<boolean> => {
-    const nextView = await simulation.restart(simulation.seed);
+    const nextView = await simulation.restart(simulation.scenario);
     if (!nextView) return false;
-    const next = createExperiment(createScenarioReference(simulation.seed));
+    const next = createExperiment(simulation.scenario);
     commitExperiment(next);
     commitActiveBranch(next.rootBranchId);
     preservedSignatureRef.current = preservedFrameSignature(
@@ -1359,10 +1383,9 @@ export function useExperimentWorkspace({
       const checkpoint = await simulation.getCheckpoint();
       if (!checkpoint) throw new Error("The simulation is not ready to checkpoint.");
       const next = branchWithCheckpointResult(checkpoint);
-      const workspace: PersistedWorkspaceV1 = {
+      const workspace: PersistedWorkspaceV2 = {
         kind: WORKSPACE_KIND,
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
-        scenarioPresetId,
         activeBranchId: activeBranchRef.current,
         experiment: next,
         simulationSave,
@@ -1389,7 +1412,6 @@ export function useExperimentWorkspace({
     branchWithCheckpointResult,
     commitExperiment,
     releaseOperation,
-    scenarioPresetId,
     simulation,
   ]);
 
@@ -1415,7 +1437,7 @@ export function useExperimentWorkspace({
         workspace.activeBranchId,
         checkpoint.tick,
       );
-      setScenarioPresetId(workspace.scenarioPresetId);
+      setScenarioPresetId(workspace.experiment.scenario.scenarioId);
       setDirty(false);
       setSetupOpen(false);
       setActionStatus({
@@ -1461,7 +1483,7 @@ export function useExperimentWorkspace({
         .replace(/^-|-$/g, "");
       downloadExperimentFile(
         serializeExperiment(next),
-        `${safeName || "experiment"}-seed-${next.scenario.seed}.tinyciv.json`,
+        `${safeName || "experiment"}-v${next.scenario.scenarioVersion.toString()}-map${next.scenario.mapGenerationVersion.toString()}-seed-${next.scenario.seed}.tinyciv.json`,
       );
       preservedSignatureRef.current = preservedFrameSignature(
         activeBranchRef.current,
@@ -1531,15 +1553,12 @@ export function useExperimentWorkspace({
           branchId,
           result.frame.tick,
         );
-        setScenarioPresetId(
-          SCENARIO_PRESETS.find((preset) => preset.seed === imported.scenario.seed)?.id ??
-            DEFAULT_SCENARIO_PRESET.id,
-        );
+        setScenarioPresetId(imported.scenario.scenarioId);
         setDirty(false);
         setSetupOpen(false);
         setActionStatus({
           phase: "success",
-          message: `Imported seed ${imported.scenario.seed} at tick ${result.frame.tick}.`,
+          message: `Imported ${result.frame.snapshot.scenario.name} / seed ${imported.scenario.seed} at tick ${result.frame.tick}.`,
         });
       } catch (error) {
         let preserved = true;
@@ -1594,7 +1613,7 @@ export function useExperimentWorkspace({
     if (!operation) return;
     const abort = new AbortController();
     replayAbortRef.current = abort;
-    let replay: SimulationReplayV1 | null = null;
+    let replay: RuntimeReplay | null = null;
     let liveTick = simulation.view.tick;
     let liveHash = "";
     setMomentReplay(null);
@@ -2099,18 +2118,32 @@ export function useExperimentWorkspace({
         id: preset.id,
         label: preset.name,
         description: preset.prompt,
+        role: preset.role,
+        startingFacts: preset.startingFacts,
+        observableTensions: preset.observableTensions,
       })),
     [],
   );
-  const seedPresets = useMemo<SeedPreset[]>(
-    () =>
-      SCENARIO_PRESETS.map((preset) => ({
-        seed: preset.seed,
-        label: preset.name,
-        description: preset.prompt,
-      })),
-    [],
-  );
+  const seedPresets = useMemo<SeedPreset[]>(() => {
+    const selected = scenarioPresetById(setupScenarioId);
+    const seeds: SeedPreset[] = [
+      ...(selected
+        ? [
+            {
+              seed: selected.seed,
+              label: "Canonical story",
+              description: `The fixed browser-review seed for ${selected.name}.`,
+            },
+          ]
+        : []),
+      { seed: 1, label: "Calibration 1", description: "First locked calibration seed." },
+      { seed: 1_001, label: "Holdout 1", description: "First locked holdout seed." },
+    ];
+    return seeds.filter(
+      (preset, index) =>
+        seeds.findIndex((candidate) => candidate.seed === preset.seed) === index,
+    );
+  }, [setupScenarioId]);
   const creatures = useMemo<PickerOption[]>(
     () =>
       simulation.view.creatures.map((creature) => ({
@@ -2162,7 +2195,7 @@ export function useExperimentWorkspace({
     [commitExperiment],
   );
   const interventionResponseTraces = useInterventionResponseTraces({
-    streamKey: `${simulation.seed}:${activeBranchId}`,
+    streamKey: `${simulation.scenario.scenarioId}@${simulation.scenario.scenarioVersion.toString()}/${simulation.scenario.mapGenerationVersion.toString()}:${simulation.seed.toString()}:${activeBranchId}`,
     commandLog: activeCommandLog,
     view: simulation.view,
     onMaterialChange: persistInterventionResponseTrace,
@@ -2254,8 +2287,6 @@ export function useExperimentWorkspace({
     ...(setupError ? { error: setupError } : {}),
     onScenarioChange: (id) => {
       setSetupScenarioId(id);
-      const preset = scenarioPresetById(id);
-      if (preset) setSetupSeed(preset.seed.toString());
     },
     onSeedChange: setSetupSeed,
     onStart: () => void startExperiment(),
@@ -2378,6 +2409,13 @@ export function useExperimentWorkspace({
       if (last) void focusCausalRef(parseRef(last.id), false);
     },
   };
+  const visibleGroupCount = simulation.view.groups.length;
+  const completedStoreCount = simulation.view.structures.filter(
+    (structure) => structure.progress >= 99,
+  ).length;
+  const foodSiteCount = simulation.view.resources.filter(
+    (resource) => resource.kind === "FOOD",
+  ).length;
 
   return {
     props: {
@@ -2385,6 +2423,9 @@ export function useExperimentWorkspace({
       section,
       experimentName: `${selectedPreset.name} experiment`,
       scenarioLabel: selectedPreset.name,
+      scenarioQuestion: selectedPreset.prompt,
+      startingFacts: selectedPreset.startingFacts,
+      developedSummary: `${simulation.view.population} creatures are alive; ${visibleGroupCount} ${visibleGroupCount === 1 ? "group" : "groups"} and ${completedStoreCount} completed ${completedStoreCount === 1 ? "store is" : "stores are"} visible; wild food totals ${simulation.view.foodStock} units at ${foodSiteCount} ${foodSiteCount === 1 ? "site" : "sites"}.`,
       seed: simulation.seed,
       currentTick: simulation.view.tick,
       dirty,

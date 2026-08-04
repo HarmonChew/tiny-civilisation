@@ -6,6 +6,7 @@ import {
 } from "@tiny-civ/sim-core";
 import { describe, expect, it, vi } from "vitest";
 import type { WorldView } from "../model";
+import { DEFAULT_SCENARIO_VIEW } from "../experiment/scenario-presets";
 import { useInterventionResponseTraces } from "./useInterventionResponseTraces";
 
 const commandLog: readonly InterventionLogEntryV1[] = [
@@ -33,6 +34,7 @@ const commandLog: readonly InterventionLogEntryV1[] = [
 
 function view(tick: number, downstream = false): WorldView {
   return {
+    scenario: DEFAULT_SCENARIO_VIEW,
     tick,
     timeLabel: "00:01",
     hash: "abcdef1234567890",

@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CreatureView, WorldView } from "../model";
+import { DEFAULT_SCENARIO_VIEW } from "../experiment/scenario-presets";
 import { InspectorPanel } from "./InspectorPanel";
 
 const creature: CreatureView = {
@@ -53,6 +54,7 @@ const creature: CreatureView = {
 };
 
 const view: WorldView = {
+  scenario: DEFAULT_SCENARIO_VIEW,
   tick: 120,
   timeLabel: "Day 1 · 00:12",
   hash: "0123456789abcdef",

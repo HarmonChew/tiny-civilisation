@@ -1,3 +1,5 @@
+import type { ScenarioReferenceV2 } from "@tiny-civ/sim-core";
+
 export type EntityId = number;
 
 export type TimelineCategory =
@@ -162,7 +164,26 @@ export interface TimelineEventView {
   decisionCandidates?: CandidateView[] | undefined;
 }
 
+export interface ScenarioView {
+  reference: ScenarioReferenceV2;
+  compiledMapHash: string;
+  name: string;
+  role: string;
+  dramaticQuestion: string;
+  startingFacts: string[];
+  observableTensions: string[];
+  landmarks: readonly ScenarioLandmarkView[];
+}
+
+export interface ScenarioLandmarkView {
+  kind: "REGION" | "CHOKEPOINT";
+  id: string;
+  label: string;
+  tileIndices: readonly number[];
+}
+
 export interface WorldView {
+  scenario: ScenarioView;
   tick: number;
   timeLabel: string;
   hash: string;

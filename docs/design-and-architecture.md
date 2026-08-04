@@ -31,7 +31,7 @@ The signature interaction is evidence-to-world selection: choosing an event or r
 ```text
 React controls ── PlayerCommand ──▶ Worker engine ──▶ deterministic sim-core
                                                               │
-                                            read-only RenderSnapshot v2 frames
+                                            read-only RenderSnapshot v3 frames
                                                               │
                                           ┌───────────────────┴──────────────┐
                                           ▼                                  ▼
@@ -42,7 +42,7 @@ On-demand hash/checkpoint/evidence/detail/outcomes ─────────�
 Experiment verification/moment replay ──▶ fresh disposable engine
 ```
 
-React and Pixi never mutate authoritative entities. A world-edit click becomes a command scheduled for a simulation tick. Full state, canonical hash, checkpoint, evidence, detail, outcome, comparison, save/load, and replay work are explicit engine operations; the live web view is built from a typed observation snapshot. Ordinary frames carry a nullable hash rather than recomputing the canonical state hash. The footer identifies the tick of the latest explicitly verified hash. The headless runner imports the same core and reaches the same state hash for the same behavior version, seed, tick, and command log.
+React and Pixi never mutate authoritative entities. A world-edit click becomes a command scheduled for a simulation tick. Full state, canonical hash, checkpoint, evidence, detail, outcome, comparison, save/load, and replay work are explicit engine operations; the live web view is built from a typed observation snapshot. Ordinary frames carry a nullable hash rather than recomputing the canonical state hash. The footer identifies the tick of the latest explicitly verified hash. The headless runner imports the same core and reaches the same state hash for the same supported scenario reference, behavior version, seed, tick, and command log.
 
 ## Simulation invariants
 
@@ -113,6 +113,16 @@ The implemented decisions are summarized here; [`phase-2.5-implementation.md`](p
 | D7 — shared focus                       | `focus/` owns typed transient/persistent focus shared by the dish, navigator, chronicle, inspector, evidence, and moments.                                                                                                          |
 | D8 — isolated replay                    | A disposable engine captures the four 20/1/20 replay beats for the dish. Event-aware framing is temporary; exit/failure restores the exact live viewport, world focus, play, follow, region, and DOM focus.                         |
 
+## Phase 3 scenario boundaries
+
+- `sim-core/scenarios/` owns the immutable four-entry catalog, executable definitions, deterministic compiler, structural/topological validation, seed corpora, and stable compiled-map hashes.
+- A scenario reference contains scenario ID, definition version, map-generation version, and seed. It is authoritative in state and is copied through snapshot, save, replay, experiment, outcome, causal-evidence, browser workspace, and Worker protocol boundaries.
+- Scenario definitions compile only existing starting facts: terrain/walk cost, resources, creature positions, initial hunger/fatigue, and bounded trait/skill inputs. They cannot inject desires, plans, actions, memories, relationships, groups, or events.
+- Generic desire selection, candidate scoring, action execution, social updates, event attention, and causal evidence never branch on scenario ID. The Petri-specific startup sentence is presentation-compatible initialization, not a behavior branch.
+- Static snapshot frames include catalog facts and compiled regions/chokepoints. Hot frames omit static tiles and landmark geometry. The browser retains the static scenario projection across hot updates.
+- `headless matrix` runs catalog × locked seed corpora in catalog-then-seed order with one live simulation/collector at a time. It retains bounded raw primary profiles and derives hard invariants, contract bands, factual multi-label outcomes, Wilson incidence, paired descriptive effects, and convergence diagnostics.
+- Cross-scenario analysis is descriptive and non-causal. Controlled experiment deltas remain restricted to the same scenario reference, seed, behavior version, and horizon.
+
 Additional Phase 2.5 presentation modules remain downstream of these contracts:
 
 - Pixi visual grammar/mark modules render identity, direction, destination/route, inventory, work, construction, guard, social, conflict, flight, rest, and intervention-preview facts.
@@ -126,18 +136,18 @@ Additional Phase 2.5 presentation modules remain downstream of these contracts:
 - `SIMULATION_BEHAVIOR_VERSION` changes when the same seed and command log intentionally produces a different result.
 - `SIMULATION_STATE_VERSION` changes when authoritative serialized state changes shape.
 - Command, snapshot, replay, save, scenario, experiment, outcome, and causal-evidence schema versions change independently at their transport boundaries.
-- Phase 2.5 uses behavior version 3 and authoritative state version 2. Behavior v3 corrects reason-fact measurements without changing action outcomes, so authoritative hashes intentionally differ from v2. Snapshot, causal-evidence, and experiment envelopes are version 2. The nested intervention-response trace is version 1; command, replay, save, scenario, and outcome envelopes remain version 1 and carry behavior/state compatibility tags where applicable.
+- Phase 3 retains behavior version 3 and advances authoritative state to 3. Snapshot, replay, save, scenario, experiment, outcome, and causal-evidence schemas are 3, 2, 2, 2, 3, 2, and 3 respectively. Browser workspace and Worker runtime protocol are both version 2. The nested intervention-response trace remains version 1 and command remains version 1.
 - Save, replay, and experiment parsing/migration happens only at `sim-core` contract boundaries; applications do not probe or silently alias incompatible fields.
-- V1 saves derive the v2 observation/intent shape deterministically. V1 replays keep seed/commands but lose their old target/hash. A behavior/state-v2 experiment schema 1 keeps its outcomes and verification metadata while gaining `responseTrace: null`; a behavior/state-v1 experiment also retains branches, commands, labels, and bookmarks, but resets command outcomes and clears branch hashes/checkpoints before v2 replay establishes new evidence.
+- Supported seed-only artifacts migrate to `petri-world@1`. Legacy verification hashes/checkpoints are cleared when the added authoritative identity makes the old claim unverifiable. Candidate state and scenario identity are fully validated before an active browser run is replaced.
 - Unknown versions, malformed nested shapes, extra fields, invalid references, and oversized persisted JSON are rejected before replacing the active run.
 
-See the [version matrix and migration table](phase-2.5-implementation.md#version-matrix) for the current constants and exact effects.
+See the [Phase 3 contract](phase-3-contract.md#compatibility-and-versions) for the current matrix and [Phase 2.5 implementation record](phase-2.5-implementation.md#version-matrix) for the historical migration source.
 
 ## Vertical-slice boundary
 
 Implemented now:
 
-- a 48 × 32 seeded map with a chokepoint, two food patches, material, and obstacles;
+- four versioned 48 × 32 starting worlds with distinct topology, resource access, proximity, and need/trait distributions;
 - eight autonomous creatures with needs, traits, skills, inventory, persistent desires/plans, actions, and retained factual reasons;
 - deterministic A* movement and resource gathering;
 - authoritative interaction slots, readable endpoints/routes, and deterministic claim validation/repair;
@@ -145,7 +155,7 @@ Implemented now:
 - pause, tick, speed, restart, typed shared focus, following, and environmental interventions;
 - a semantic world navigator, attention/moment queue, progressive creature inspector, relationship evidence, and top-alternative decision breakdown;
 - typed intervention outcomes and bounded response traces;
-- state hashing, compatibility migrations, isolated replay, JSON snapshot continuity, deterministic scenario tests, and streaming headless activity metrics.
+- state hashing, compatibility migrations, isolated replay, JSON snapshot continuity, deterministic scenario tests, and a scenario-aware streaming headless matrix.
 
 Intentionally deferred:
 
@@ -153,4 +163,4 @@ Intentionally deferred:
 
 The deferred systems should extend the same event and utility contracts only after the social feedback loop remains compelling across multi-seed runs.
 
-The Phase 2.5 implementation has automated deterministic, contract, runtime, and component evidence. The Chromium project includes real-Worker/Pixi journeys, touch input, reduced motion, forced colors, 200% text, 400% effective-zoom reflow, and an 18-image matrix covering six story states at narrow, medium, and wide viewports. The stable final build, bundle gate, and whole-file Chromium run pass 26/26; the targeted touch/text/reflow checks pass 3/3 and all 18 matrix cases pass. Manual NVDA or VoiceOver coverage and the planned formative/confirmatory usability sessions are still required release evidence. Firefox and WebKit have not been run and are not implied by the Chromium results.
+Phase 3 adds automated deterministic, contract, runtime, component, and portable 32-run smoke evidence across all four identities. The Chromium project retains the 18-image Petri story matrix, adds tick-zero narrow/medium/wide coverage for every additional scenario, and captures one 2,000-tick developed state per new scenario. The production suite passes 38/38 with 30 visual baselines. Manual NVDA or VoiceOver coverage, Firefox/WebKit release runs, full calibration/holdout evidence, and the planned formative/confirmatory usability sessions remain release gates until their artifacts are attached.

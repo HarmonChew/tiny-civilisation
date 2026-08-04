@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CreatureView, TimelineEventView, WorldView } from "../model";
+import { DEFAULT_SCENARIO_VIEW } from "../experiment/scenario-presets";
 import { WorldAttentionAnnouncer, WorldNavigator } from "./WorldNavigator";
 
 const makeCreature = (
@@ -62,6 +63,7 @@ const makeEvent = (
 });
 
 const baseView: WorldView = {
+  scenario: DEFAULT_SCENARIO_VIEW,
   tick: 10,
   timeLabel: "Dawn",
   hash: "navigator",
@@ -139,6 +141,15 @@ describe("WorldNavigator", () => {
     ]);
     expect(screen.queryByRole("button", { name: /^Gone,/ })).toBeNull();
     expect(screen.getByText(/2 living creatures across 2 occupied tiles/)).toBeTruthy();
+    expect(
+      screen.getByText(/Named places: West bank, East bank, Central passage/),
+    ).toBeTruthy();
+    const westBank = screen.getByRole("button", { name: /^Inspect West bank,/ });
+    fireEvent.click(westBank);
+    expect(actions.onSelect).toHaveBeenCalledWith({
+      kind: "tile",
+      tileIndex: DEFAULT_SCENARIO_VIEW.landmarks[0]?.tileIndices[0],
+    });
     const betaName = screen
       .getByRole("button", { name: /^Beta,/ })
       .getAttribute("aria-label");

@@ -16,25 +16,32 @@ import {
 } from "./intervention-response.js";
 import {
   EXPERIMENT_SCHEMA_VERSION,
-  SCENARIO_SCHEMA_VERSION,
+  REPLAY_SCHEMA_VERSION,
   SIMULATION_BEHAVIOR_VERSION,
   SIMULATION_STATE_VERSION,
 } from "./versions.js";
+import {
+  DEFAULT_SCENARIO_ID,
+  DEFAULT_SCENARIO_VERSION,
+  assertScenarioReference,
+  createScenarioReference,
+  type ScenarioReferenceV2,
+} from "./scenarios/index.js";
+
+export {
+  DEFAULT_SCENARIO_ID,
+  DEFAULT_SCENARIO_VERSION,
+  assertScenarioReference,
+  createScenarioReference,
+};
+export type { ScenarioReferenceV2 } from "./scenarios/index.js";
 
 type UnknownRecord = Record<string, unknown>;
 
-export const DEFAULT_SCENARIO_ID = "petri-world" as const;
-export const DEFAULT_SCENARIO_VERSION = 1 as const;
 export const DEFAULT_EXPERIMENT_BRANCH_ID = "baseline" as const;
 
-export interface ScenarioReferenceV1 {
-  readonly kind: "tiny-civilisation/scenario";
-  readonly schemaVersion: typeof SCENARIO_SCHEMA_VERSION;
-  readonly behaviorVersion: typeof SIMULATION_BEHAVIOR_VERSION;
-  readonly scenarioId: typeof DEFAULT_SCENARIO_ID;
-  readonly scenarioVersion: typeof DEFAULT_SCENARIO_VERSION;
-  readonly seed: number;
-}
+/** @deprecated Use ScenarioReferenceV2. Retained as a source-compatible alias. */
+export type ScenarioReferenceV1 = ScenarioReferenceV2;
 
 export interface PendingInterventionOutcomeV1 {
   readonly status: "PENDING";
@@ -173,56 +180,6 @@ function assertVersion(
   }
 }
 
-export function assertScenarioReference(
-  value: unknown,
-): asserts value is ScenarioReferenceV1 {
-  const scenario = exactObject(
-    value,
-    ["kind", "schemaVersion", "behaviorVersion", "scenarioId", "scenarioVersion", "seed"],
-    "Scenario",
-  );
-  if (scenario.kind !== "tiny-civilisation/scenario") {
-    throw new Error("Invalid Tiny Civilisation scenario envelope.");
-  }
-  assertVersion(
-    scenario,
-    "schemaVersion",
-    SCENARIO_SCHEMA_VERSION,
-    "Scenario schema version",
-  );
-  assertVersion(
-    scenario,
-    "behaviorVersion",
-    SIMULATION_BEHAVIOR_VERSION,
-    "Scenario behavior version",
-  );
-  if (scenario.scenarioId !== DEFAULT_SCENARIO_ID) {
-    throw new Error(`Unsupported scenario ${String(scenario.scenarioId)}.`);
-  }
-  assertVersion(
-    scenario,
-    "scenarioVersion",
-    DEFAULT_SCENARIO_VERSION,
-    "Scenario definition version",
-  );
-  const seed = nonnegativeInteger(scenario.seed, "Scenario seed");
-  if (seed > 0xffffffff)
-    throw new Error("Scenario seed must be an unsigned 32-bit integer.");
-}
-
-export function createScenarioReference(seed: number): ScenarioReferenceV1 {
-  const scenario: ScenarioReferenceV1 = {
-    kind: "tiny-civilisation/scenario",
-    schemaVersion: SCENARIO_SCHEMA_VERSION,
-    behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
-    scenarioId: DEFAULT_SCENARIO_ID,
-    scenarioVersion: DEFAULT_SCENARIO_VERSION,
-    seed,
-  };
-  assertScenarioReference(scenario);
-  return Object.freeze(scenario);
-}
-
 export function serializeScenarioReference(scenario: ScenarioReferenceV1): string {
   assertScenarioReference(scenario);
   const serialized = JSON.stringify(scenario);
@@ -238,8 +195,26 @@ export function deserializeScenarioReference(serialized: string): ScenarioRefere
   } catch (error) {
     throw new Error("Scenario data is not valid JSON.", { cause: error });
   }
+  if (!isRecord(value)) throw new Error("Scenario must be an object.");
+  if (isRecord(value) && value.schemaVersion === 1) {
+    const legacy = exactObject(
+      value,
+      ["kind", "schemaVersion", "behaviorVersion", "scenarioId", "scenarioVersion", "seed"],
+      "Scenario",
+    );
+    if (
+      legacy.kind !== "tiny-civilisation/scenario" ||
+      (legacy.behaviorVersion !== 1 &&
+        legacy.behaviorVersion !== SIMULATION_BEHAVIOR_VERSION) ||
+      legacy.scenarioId !== DEFAULT_SCENARIO_ID ||
+      legacy.scenarioVersion !== DEFAULT_SCENARIO_VERSION
+    ) {
+      throw new Error("Legacy scenario uses an unsupported definition or behavior.");
+    }
+    return createScenarioReference(nonnegativeInteger(legacy.seed, "Scenario seed"));
+  }
   assertScenarioReference(value);
-  return createScenarioReference(value.seed);
+  return createScenarioReference(value.scenarioId, value.seed);
 }
 
 function assertOutcome(
@@ -594,7 +569,10 @@ function frozenExperiment(experiment: ExperimentV1): ExperimentV1 {
   assertExperiment(experiment);
   return Object.freeze({
     ...experiment,
-    scenario: createScenarioReference(experiment.scenario.seed),
+    scenario: createScenarioReference(
+      experiment.scenario.scenarioId,
+      experiment.scenario.seed,
+    ),
     branches: Object.freeze(experiment.branches.map(frozenBranch)),
     bookmarks: Object.freeze(
       experiment.bookmarks.map((bookmark) => Object.freeze({ ...bookmark })),
@@ -849,9 +827,13 @@ export function createBranchReplay(
   if (!branch) throw new Error(`Experiment branch ${branchId} does not exist.`);
   return {
     kind: "tiny-civilisation/replay",
-    schemaVersion: 1,
+    schemaVersion: REPLAY_SCHEMA_VERSION,
     behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
     stateSchemaVersion: SIMULATION_STATE_VERSION,
+    scenario: createScenarioReference(
+      experiment.scenario.scenarioId,
+      experiment.scenario.seed,
+    ),
     seed: experiment.scenario.seed,
     commands: branch.commandLog.map((entry) => ({ ...entry.command })),
     ...(branch.targetTick !== null && branch.expectedHash !== null
@@ -871,8 +853,9 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
   if (
     isRecord(value) &&
     value.kind === "tiny-civilisation/experiment" &&
-    value.schemaVersion === 1
+    (value.schemaVersion === 1 || value.schemaVersion === 2)
   ) {
+    const legacySchemaVersion = value.schemaVersion;
     const legacy = exactObject(
       value,
       [
@@ -896,12 +879,11 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
     const legacyBehavior = legacy.behaviorVersion;
     const legacyState = legacy.stateSchemaVersion;
     const isBehaviorV1 = legacyBehavior === 1 && legacyState === 1;
-    const isCurrentBehavior =
-      legacyBehavior === SIMULATION_BEHAVIOR_VERSION &&
-      legacyState === SIMULATION_STATE_VERSION;
-    if (!isBehaviorV1 && !isCurrentBehavior) {
+    const isPhaseTwoBehavior =
+      legacyBehavior === SIMULATION_BEHAVIOR_VERSION && legacyState === 2;
+    if (!isBehaviorV1 && !isPhaseTwoBehavior) {
       throw new Error(
-        `Experiment schema version 1 has incompatible behavior/state versions ${String(legacyBehavior)}/${String(legacyState)}.`,
+        `Experiment schema version ${legacySchemaVersion.toString()} has incompatible behavior/state versions ${String(legacyBehavior)}/${String(legacyState)}.`,
       );
     }
     const expectedScenarioBehavior = isBehaviorV1 ? 1 : SIMULATION_BEHAVIOR_VERSION;
@@ -910,6 +892,17 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
         `Legacy experiment scenario behavior version must be ${expectedScenarioBehavior.toString()}.`,
       );
     }
+    if (
+      scenario.kind !== "tiny-civilisation/scenario" ||
+      scenario.schemaVersion !== 1 ||
+      scenario.scenarioId !== DEFAULT_SCENARIO_ID ||
+      scenario.scenarioVersion !== DEFAULT_SCENARIO_VERSION
+    ) {
+      throw new Error("Legacy experiment uses an unsupported scenario definition.");
+    }
+    const migratedScenario = createScenarioReference(
+      nonnegativeInteger(scenario.seed, "Scenario seed"),
+    );
     const branches = boundedArray(legacy.branches, "Experiment.branches").map(
       (branchValue, branchIndex) => {
         const branch = exactObject(
@@ -931,19 +924,23 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
         ).map((entryValue, entryIndex) => {
           const entry = exactObject(
             entryValue,
-            ["command", "outcome"],
+            legacySchemaVersion === 1
+              ? ["command", "outcome"]
+              : ["command", "outcome", "responseTrace"],
             `Experiment.branches[${branchIndex.toString()}].commandLog[${entryIndex.toString()}]`,
           );
           return {
             command: entry.command,
             outcome: isBehaviorV1 ? { status: "PENDING" as const } : entry.outcome,
-            responseTrace: null,
+            responseTrace: legacySchemaVersion === 1 ? null : (entry.responseTrace ?? null),
           };
         });
         return {
           ...branch,
-          targetTick: isBehaviorV1 ? null : branch.targetTick,
-          expectedHash: isBehaviorV1 ? null : branch.expectedHash,
+          // Adding authoritative scenario identity changes state hashes. Older
+          // horizons remain replayable, but their verification claims do not.
+          targetTick: null,
+          expectedHash: null,
           commandLog,
         };
       },
@@ -953,12 +950,9 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
       schemaVersion: EXPERIMENT_SCHEMA_VERSION,
       behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
       stateSchemaVersion: SIMULATION_STATE_VERSION,
-      scenario: {
-        ...scenario,
-        behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
-      },
+      scenario: migratedScenario,
       branches,
-      checkpoints: isBehaviorV1 ? [] : legacy.checkpoints,
+      checkpoints: [],
     };
     assertExperiment(migrated);
     return frozenExperiment(migrated);

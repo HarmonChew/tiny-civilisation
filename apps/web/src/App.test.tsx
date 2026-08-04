@@ -8,8 +8,10 @@ import {
   type WorldFocusState,
 } from "./focus";
 import type { WorldView } from "./model";
+import { DEFAULT_SCENARIO_VIEW } from "./experiment/scenario-presets";
 
 const view = {
+  scenario: DEFAULT_SCENARIO_VIEW,
   tick: 120,
   timeLabel: "00:12",
   hash: "abcdef1234567890",

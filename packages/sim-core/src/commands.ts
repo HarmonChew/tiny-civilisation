@@ -14,9 +14,17 @@ function resolveCommandTile(state: SimulationState, command: PlayerCommand): num
     return tileIndexAt(state.world, Math.floor(command.x), Math.floor(command.y));
   }
   if (command.type === "ADD_FOOD" || command.type === "REMOVE_FOOD") {
-    return tileIndexAt(state.world, 10, 7);
+    const foodNode = state.resourceNodes
+      .filter((node) => node.kind === "FOOD")
+      .sort((left, right) => left.id - right.id)[0];
+    if (foodNode) return foodNode.tileIndex;
   }
-  return tileIndexAt(state.world, 24, 15);
+  const center = tileIndexAt(
+    state.world,
+    Math.floor(state.world.width / 2),
+    Math.floor(state.world.height / 2),
+  );
+  return findNearestWalkable(state, center);
 }
 
 export function queuePlayerCommand(

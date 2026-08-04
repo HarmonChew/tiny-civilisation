@@ -1,6 +1,6 @@
 {
-  "replaySchemaVersion": 1,
-  "simulationSchemaVersion": 2,
+  "replaySchemaVersion": 2,
+  "simulationSchemaVersion": 3,
   "simulationBehaviorVersion": 3,
   "scenarios": [
     {
@@ -11,8 +11,8 @@
       "checkpoints": [
         {
           "tick": 0,
-          "hash": "36cba3187551d1ec",
-          "schemaVersion": 2,
+          "hash": "bab1ef059a47a308",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 0,
           "metrics": {
@@ -31,8 +31,8 @@
         },
         {
           "tick": 51,
-          "hash": "44c3da873d706e2d",
-          "schemaVersion": 2,
+          "hash": "1ec3ec9510bd6821",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 0,
           "metrics": {
@@ -51,8 +51,8 @@
         },
         {
           "tick": 166,
-          "hash": "46d8c3157663eabc",
-          "schemaVersion": 2,
+          "hash": "381214b54d667280",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -71,8 +71,8 @@
         },
         {
           "tick": 473,
-          "hash": "e0025ce22ab091c2",
-          "schemaVersion": 2,
+          "hash": "61de3782c91a3d1e",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -91,8 +91,8 @@
         },
         {
           "tick": 1000,
-          "hash": "be96084f97f35d3e",
-          "schemaVersion": 2,
+          "hash": "3fbae9b2ed5584b4",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -111,8 +111,8 @@
         },
         {
           "tick": 5000,
-          "hash": "34b7278a8db0eee8",
-          "schemaVersion": 2,
+          "hash": "971d3fe26fa53bb8",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -141,8 +141,8 @@
       "checkpoints": [
         {
           "tick": 0,
-          "hash": "84528dc544d58fb3",
-          "schemaVersion": 2,
+          "hash": "e27b97997a6c91ca",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 0,
           "metrics": {
@@ -161,8 +161,8 @@
         },
         {
           "tick": 181,
-          "hash": "b33de379fad8ae4c",
-          "schemaVersion": 2,
+          "hash": "fce717a8c280edc5",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -181,8 +181,8 @@
         },
         {
           "tick": 1200,
-          "hash": "89681b8f13e54e8f",
-          "schemaVersion": 2,
+          "hash": "2b05ec35c0abadbc",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -201,8 +201,8 @@
         },
         {
           "tick": 2400,
-          "hash": "1101dd596e117a59",
-          "schemaVersion": 2,
+          "hash": "f8184444d7a4b4cf",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -254,8 +254,8 @@
       "checkpoints": [
         {
           "tick": 0,
-          "hash": "36cba3187551d1ec",
-          "schemaVersion": 2,
+          "hash": "bab1ef059a47a308",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 0,
           "metrics": {
@@ -274,8 +274,8 @@
         },
         {
           "tick": 25,
-          "hash": "881af7b8170d2786",
-          "schemaVersion": 2,
+          "hash": "7b05487570994a5a",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 0,
           "metrics": {
@@ -294,8 +294,8 @@
         },
         {
           "tick": 26,
-          "hash": "77641183ec45cb34",
-          "schemaVersion": 2,
+          "hash": "3845a52378158f38",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 0,
           "metrics": {
@@ -314,8 +314,8 @@
         },
         {
           "tick": 80,
-          "hash": "0d31090fae1bc228",
-          "schemaVersion": 2,
+          "hash": "f3fa0b4932ed4154",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 0,
           "metrics": {
@@ -334,8 +334,8 @@
         },
         {
           "tick": 81,
-          "hash": "460bf0655bab0bc0",
-          "schemaVersion": 2,
+          "hash": "092f090e31e2499c",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 0,
           "metrics": {
@@ -354,8 +354,8 @@
         },
         {
           "tick": 240,
-          "hash": "14f6221b36a4e41e",
-          "schemaVersion": 2,
+          "hash": "352d699596b41242",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -374,8 +374,8 @@
         },
         {
           "tick": 241,
-          "hash": "45894917c3908860",
-          "schemaVersion": 2,
+          "hash": "3a7f0278f0864f44",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -394,8 +394,8 @@
         },
         {
           "tick": 1000,
-          "hash": "3fe66238ec01d94c",
-          "schemaVersion": 2,
+          "hash": "bbf85d9521753a5e",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -463,8 +463,8 @@
       "checkpoints": [
         {
           "tick": 0,
-          "hash": "740807a44346fdd0",
-          "schemaVersion": 2,
+          "hash": "4364e9024b81dfd2",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 0,
           "metrics": {
@@ -483,8 +483,8 @@
         },
         {
           "tick": 1,
-          "hash": "ecb1947caa239102",
-          "schemaVersion": 2,
+          "hash": "ea8650c0ded05008",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 0,
           "metrics": {
@@ -503,8 +503,8 @@
         },
         {
           "tick": 120,
-          "hash": "986e2c7d9937761b",
-          "schemaVersion": 2,
+          "hash": "d4bc6093b295cb71",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -523,8 +523,8 @@
         },
         {
           "tick": 121,
-          "hash": "e6597d96dac64498",
-          "schemaVersion": 2,
+          "hash": "76dfd597e6552a92",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {
@@ -543,8 +543,8 @@
         },
         {
           "tick": 600,
-          "hash": "05b3c19c5834986c",
-          "schemaVersion": 2,
+          "hash": "ed1b515532f77036",
+          "schemaVersion": 3,
           "population": 8,
           "groups": 1,
           "metrics": {

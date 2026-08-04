@@ -368,7 +368,7 @@ export default function App() {
     speed,
     preference: pacingPreference,
     playing,
-    streamKey: `${seed.toString()}:${simulation.timelineRevision.toString()}`,
+    streamKey: `${simulation.scenario.scenarioId}@${simulation.scenario.scenarioVersion.toString()}:${simulation.scenario.mapGenerationVersion.toString()}:${seed.toString()}:${simulation.timelineRevision.toString()}`,
     onInspect: inspectTimelineEvent,
     onPacingRequest: (request) => {
       if (automaticPacingRef.current !== null) return;
