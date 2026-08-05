@@ -106,7 +106,7 @@ describe("intervention response evidence", () => {
   it("versions, freezes, and strictly validates persisted traces", () => {
     const trace = createInterventionResponseTrace(command(), [2, 1, 2]);
 
-    expect(trace.schemaVersion).toBe(1);
+    expect(trace.schemaVersion).toBe(2);
     expect(Object.isFrozen(trace)).toBe(true);
     expect(Object.isFrozen(trace.command)).toBe(true);
     expect(Object.isFrozen(trace.participantIds)).toBe(true);
@@ -462,6 +462,39 @@ describe("intervention response evidence", () => {
       sourceEventIds: [COMMAND_EVENT_ID],
     });
   });
+
+  it.each([
+    ["REPLENISH_WATER", "NO_WATER_SOURCE", "PLAYER_REPLENISHED_WATER"],
+    ["REPLENISH_WATER", "SOURCE_FULL", "PLAYER_REPLENISHED_WATER"],
+    ["DRAIN_WATER", "SOURCE_EMPTY", "PLAYER_DRAINED_WATER"],
+  ] as const)(
+    "strictly validates %s traces rejected with %s",
+    (commandType, rejectionReason, eventType) => {
+      const trace = classifyInterventionResponses(
+        command({ type: commandType }),
+        [1],
+        [
+          observation(12, {
+            events: [
+              event({
+                type: eventType,
+                commandOutcome: "REJECTED",
+                commandRejectionReason: rejectionReason,
+                targetIds: [],
+              }),
+            ],
+          }),
+        ],
+      );
+
+      expect(() => assertInterventionResponseTrace(trace)).not.toThrow();
+      expect(trace).toMatchObject({
+        phase: "CLOSED",
+        outcome: { status: "REJECTED", rejectionReason },
+        closureReason: { code: "COMMAND_REJECTED" },
+      });
+    },
+  );
 
   it("ignores failure evidence whose event tick is beyond the bounded window", () => {
     const trace = classifyInterventionResponses(

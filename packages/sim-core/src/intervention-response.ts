@@ -11,7 +11,7 @@ export interface InterventionResponsePoint {
 
 export const DEFAULT_INTERVENTION_RESPONSE_WINDOW_TICKS = 120;
 export const MAX_INTERVENTION_RESPONSE_WINDOW_TICKS = 5_000;
-export const INTERVENTION_RESPONSE_SCHEMA_VERSION = 1 as const;
+export const INTERVENTION_RESPONSE_SCHEMA_VERSION = 2 as const;
 
 export const INTERVENTION_RESPONSE_STATUSES = [
   "NOTICED",
@@ -185,6 +185,15 @@ const RESPONSE_COMMAND_TYPES = new Set<ScheduledPlayerCommand["type"]>([
   "ADD_FOOD",
   "REMOVE_FOOD",
   "TOGGLE_OBSTACLE",
+  "REPLENISH_WATER",
+  "DRAIN_WATER",
+]);
+
+const RESPONSE_REJECTION_REASONS = new Set<Exclude<CommandRejectionReason, null>>([
+  "OCCUPIED_TILE",
+  "NO_WATER_SOURCE",
+  "SOURCE_FULL",
+  "SOURCE_EMPTY",
 ]);
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -441,7 +450,10 @@ export function assertInterventionResponseTrace(
     }
     if (
       outcomeRecord.rejectionReason !== null &&
-      outcomeRecord.rejectionReason !== "OCCUPIED_TILE"
+      (typeof outcomeRecord.rejectionReason !== "string" ||
+        !RESPONSE_REJECTION_REASONS.has(
+          outcomeRecord.rejectionReason as Exclude<CommandRejectionReason, null>,
+        ))
     ) {
       throw new Error(`${label}.outcome.rejectionReason is not supported.`);
     }
@@ -919,8 +931,9 @@ function isUsedEvent(
   if (NON_ACTION_RESPONSE_EVENT_TYPES.has(event.type)) return false;
   if (event.causedByEventIds.includes(outcome.eventId)) return true;
   return (
-    trace.command.type === "ADD_FOOD" &&
-    event.type === "FOOD_GATHERED" &&
+    ((trace.command.type === "ADD_FOOD" && event.type === "FOOD_GATHERED") ||
+      ((trace.command.type === "REPLENISH_WATER" || trace.command.type === "DRAIN_WATER") &&
+        event.type === "WATER_GATHERED")) &&
     event.locationTileIndex === trace.command.tileIndex &&
     event.targetIds.some((id) => outcome.targetEntityIds.includes(id))
   );

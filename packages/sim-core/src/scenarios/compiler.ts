@@ -159,6 +159,11 @@ export function compileScenario(reference: ScenarioReferenceV2): CompiledScenari
         definition.interventionDefaults.food.x,
         definition.interventionDefaults.food.y,
       ),
+      waterTileIndex: tileIndexAt(
+        world,
+        definition.interventionDefaults.water.x,
+        definition.interventionDefaults.water.y,
+      ),
       obstacleTileIndex: tileIndexAt(
         world,
         definition.interventionDefaults.obstacle.x,

@@ -5,6 +5,19 @@ import { PALETTE } from "./runtime";
 const boundedRatio = (value: number, capacity: number): number =>
   capacity > 0 ? Math.max(0, Math.min(1, value / capacity)) : 0;
 
+export type ResourceDepletionLevel = "depleted" | "low" | "available" | "full";
+
+export function resourceDepletionLevel(
+  stock: number,
+  capacity: number,
+): ResourceDepletionLevel {
+  const ratio = boundedRatio(stock, capacity);
+  if (stock <= 0 || ratio <= 0) return "depleted";
+  if (ratio <= 0.25) return "low";
+  if (ratio >= 1) return "full";
+  return "available";
+}
+
 export function drawResourceMark(
   mark: Graphics,
   resource: ResourceView,
@@ -14,6 +27,7 @@ export function drawResourceMark(
   const alpha = emphasized ? 0.98 : 0.7;
   mark.clear();
 
+  const waterSource = /WATER/i.test(resource.kind);
   if (/FOOD/i.test(resource.kind)) {
     mark
       .circle(-0.13, 0.03, 0.13)
@@ -26,6 +40,39 @@ export function drawResourceMark(
       .lineTo(0.1, -0.35)
       .lineTo(0.19, -0.3)
       .stroke({ color: PALETTE.paper, width: 0.045, alpha });
+  } else if (waterSource) {
+    const filledSegments = Math.ceil(ratio * 4);
+    mark
+      .moveTo(0, -0.36)
+      .bezierCurveTo(0.08, -0.21, 0.25, -0.05, 0.25, 0.1)
+      .bezierCurveTo(0.25, 0.27, 0.14, 0.37, 0, 0.37)
+      .bezierCurveTo(-0.14, 0.37, -0.25, 0.27, -0.25, 0.1)
+      .bezierCurveTo(-0.25, -0.05, -0.08, -0.21, 0, -0.36)
+      .closePath()
+      .fill({ color: PALETTE.water, alpha: 0.18 + ratio * 0.72 })
+      .stroke({ color: PALETTE.paper, width: 0.055, alpha });
+
+    for (let index = 0; index < 4; index += 1) {
+      const x = -0.25 + index * 0.13;
+      mark.rect(x, 0.43, 0.1, 0.075).stroke({
+        color: PALETTE.paper,
+        width: 0.025,
+        alpha: 0.78,
+      });
+      if (index < filledSegments) {
+        mark.rect(x + 0.018, 0.448, 0.064, 0.039).fill({
+          color: PALETTE.water,
+          alpha: 0.95,
+        });
+      }
+    }
+
+    if (ratio === 0) {
+      mark
+        .moveTo(-0.24, -0.24)
+        .lineTo(0.24, 0.28)
+        .stroke({ color: PALETTE.danger, width: 0.075, alpha: 0.95 });
+    }
   } else {
     mark
       .moveTo(-0.29, 0.16)
@@ -48,7 +95,7 @@ export function drawResourceMark(
     alpha: emphasized ? 0.9 : 0.58,
   });
   mark.position.set(resource.x + 0.5, resource.y + 0.5);
-  mark.visible = resource.stock > 0;
+  mark.visible = waterSource || resource.stock > 0;
 }
 
 export function drawStructureMark(mark: Graphics, structure: StructureView): void {

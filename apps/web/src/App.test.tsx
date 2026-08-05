@@ -99,6 +99,7 @@ const view = {
       health: 92,
       hunger: 58,
       fatigue: 22,
+      thirst: 44,
       traits: [
         { key: "generosity", label: "Generosity", value: 72 },
         { key: "loyalty", label: "Loyalty", value: 61 },
@@ -178,6 +179,7 @@ const view = {
       health: 84,
       hunger: 91,
       fatigue: 31,
+      thirst: 76,
       traits: [{ key: "sociability", label: "Sociability", value: 65 }],
       inventory: [{ kind: "FOOD", quantity: 1 }],
       candidates: [],

@@ -4,6 +4,7 @@ export type CreatureActionFamily =
   | "travel"
   | "gather"
   | "eat"
+  | "drink"
   | "build"
   | "share"
   | "guard"
@@ -20,6 +21,7 @@ export interface DirectionVector extends Point {
 export interface CarriedAmounts {
   readonly food: number;
   readonly material: number;
+  readonly water: number;
 }
 
 export const IDENTITY_GLYPHS = ["●", "▲", "■", "◆", "✦", "+", "×", "="] as const;
@@ -33,12 +35,18 @@ function normalizedAction(action: string): string {
 
 export function actionFamily(action: string, phase = ""): CreatureActionFamily {
   const normalized = normalizedAction(action);
-  if (normalized === "GATHER_FOOD" || normalized === "GATHER_MATERIAL") {
+  if (
+    normalized === "GATHER_FOOD" ||
+    normalized === "GATHER_MATERIAL" ||
+    normalized === "GATHER_WATER"
+  ) {
     return "gather";
   }
   if (normalized === "EAT") return "eat";
+  if (normalized === "DRINK") return "drink";
   if (normalized === "BUILD_STORAGE") return "build";
-  if (normalized === "SHARE" || normalized === "JOIN_GROUP") return "share";
+  if (normalized === "SHARE" || normalized === "SHARE_WATER" || normalized === "JOIN_GROUP")
+    return "share";
   if (normalized === "GUARD") return "guard";
   if (normalized === "ATTACK" || normalized === "STEAL") return "conflict";
   if (normalized === "FLEE") return "flee";
@@ -82,11 +90,13 @@ export function directionForCreature(creature: CreatureView): DirectionVector | 
 export function carriedAmounts(creature: CreatureView): CarriedAmounts {
   let food = 0;
   let material = 0;
+  let water = 0;
   for (const stack of creature.inventory) {
     if (/FOOD/i.test(stack.kind)) food += Math.max(0, stack.quantity);
     if (/MATERIAL/i.test(stack.kind)) material += Math.max(0, stack.quantity);
+    if (/WATER/i.test(stack.kind)) water += Math.max(0, stack.quantity);
   }
-  return { food, material };
+  return { food, material, water };
 }
 
 export function compactLabel(value: string, maximumLength = 24): string {

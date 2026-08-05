@@ -66,6 +66,7 @@ function view(tick: number, downstream = false): WorldView {
         health: 100,
         hunger: 50,
         fatigue: 10,
+        thirst: 30,
         traits: [],
         inventory: [],
         candidates: [],

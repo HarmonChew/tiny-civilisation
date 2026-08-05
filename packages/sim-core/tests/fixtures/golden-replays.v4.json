@@ -1,0 +1,682 @@
+{
+  "replaySchemaVersion": 3,
+  "simulationSchemaVersion": 4,
+  "simulationBehaviorVersion": 4,
+  "scenarios": [
+    {
+      "id": "default-social-loop",
+      "seed": 4182,
+      "scheduledCommands": [],
+      "jsonRoundTripAtTicks": [],
+      "checkpoints": [
+        {
+          "tick": 0,
+          "hash": "871cc930ea04d4ab",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 0,
+            "foodShared": 0,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 0,
+            "failedInteractionClaims": 0
+          }
+        },
+        {
+          "tick": 51,
+          "hash": "2211c217f30f15c4",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 34,
+            "foodShared": 0,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 18,
+            "failedInteractionClaims": 0
+          }
+        },
+        {
+          "tick": 166,
+          "hash": "76a4c6784320bcb2",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 47,
+            "foodShared": 2,
+            "waterGathered": 7,
+            "waterDrunk": 3,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 6,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 28,
+            "failedInteractionClaims": 3
+          }
+        },
+        {
+          "tick": 473,
+          "hash": "9dc69bc6ad277d14",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 47,
+            "foodShared": 2,
+            "waterGathered": 16,
+            "waterDrunk": 9,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 11,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 34,
+            "failedInteractionClaims": 7
+          }
+        },
+        {
+          "tick": 1000,
+          "hash": "211d3e0e7bacd7f1",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 47,
+            "foodShared": 2,
+            "waterGathered": 29,
+            "waterDrunk": 24,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 19,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 42,
+            "failedInteractionClaims": 154
+          }
+        },
+        {
+          "tick": 5000,
+          "hash": "bd91646070114618",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 95,
+            "foodShared": 2,
+            "waterGathered": 51,
+            "waterDrunk": 51,
+            "waterShared": 1,
+            "severeThirstCreatureTicks": 7922,
+            "waterGatherContentions": 63,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 198,
+            "failedInteractionClaims": 1034
+          }
+        }
+      ]
+    },
+    {
+      "id": "peaceful-save-resume",
+      "seed": 921,
+      "scheduledCommands": [],
+      "jsonRoundTripAtTicks": [
+        1200
+      ],
+      "checkpoints": [
+        {
+          "tick": 0,
+          "hash": "f33b57d754bb5711",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 0,
+            "foodShared": 0,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 0,
+            "failedInteractionClaims": 0
+          }
+        },
+        {
+          "tick": 181,
+          "hash": "4342b0ab3b1c9efd",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 47,
+            "foodShared": 2,
+            "waterGathered": 6,
+            "waterDrunk": 3,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 7,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 28,
+            "failedInteractionClaims": 15
+          }
+        },
+        {
+          "tick": 1200,
+          "hash": "f02bd06411eafabf",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 47,
+            "foodShared": 2,
+            "waterGathered": 30,
+            "waterDrunk": 26,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 19,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 53,
+            "failedInteractionClaims": 241
+          }
+        },
+        {
+          "tick": 2400,
+          "hash": "21a8de9dce5995ef",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 54,
+            "foodShared": 2,
+            "waterGathered": 37,
+            "waterDrunk": 37,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 33,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 67,
+            "failedInteractionClaims": 697
+          }
+        }
+      ]
+    },
+    {
+      "id": "food-shock",
+      "seed": 4182,
+      "scheduledCommands": [
+        {
+          "commandId": 1,
+          "applyAtTick": 25,
+          "type": "REMOVE_FOOD",
+          "tileIndex": 346,
+          "amount": 20,
+          "blocked": null
+        },
+        {
+          "commandId": 2,
+          "applyAtTick": 80,
+          "type": "ADD_FOOD",
+          "tileIndex": 496,
+          "amount": 30,
+          "blocked": null
+        },
+        {
+          "commandId": 3,
+          "applyAtTick": 240,
+          "type": "ADD_FOOD",
+          "tileIndex": 346,
+          "amount": 12,
+          "blocked": null
+        }
+      ],
+      "jsonRoundTripAtTicks": [],
+      "checkpoints": [
+        {
+          "tick": 0,
+          "hash": "871cc930ea04d4ab",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 0,
+            "foodShared": 0,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 0,
+            "failedInteractionClaims": 0
+          }
+        },
+        {
+          "tick": 25,
+          "hash": "283baa23d4eff6ae",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 7,
+            "foodShared": 0,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 9,
+            "failedInteractionClaims": 0
+          }
+        },
+        {
+          "tick": 26,
+          "hash": "b2796fa560cc9fd6",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 12,
+            "foodShared": 0,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 1,
+            "invalidPathFailures": 0,
+            "interactionContentions": 9,
+            "failedInteractionClaims": 0
+          }
+        },
+        {
+          "tick": 80,
+          "hash": "cb91698e1eb0ae7d",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 15,
+            "foodShared": 0,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 2,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 1,
+            "invalidPathFailures": 0,
+            "interactionContentions": 15,
+            "failedInteractionClaims": 0
+          }
+        },
+        {
+          "tick": 81,
+          "hash": "2e5a67846ed6e582",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 15,
+            "foodShared": 0,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 2,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 2,
+            "invalidPathFailures": 0,
+            "interactionContentions": 15,
+            "failedInteractionClaims": 0
+          }
+        },
+        {
+          "tick": 240,
+          "hash": "2b722cb515f92a11",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 37,
+            "foodShared": 3,
+            "waterGathered": 22,
+            "waterDrunk": 6,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 11,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 0,
+            "playerInterventions": 2,
+            "invalidPathFailures": 0,
+            "interactionContentions": 43,
+            "failedInteractionClaims": 1
+          }
+        },
+        {
+          "tick": 241,
+          "hash": "d99de5d59eded91e",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 37,
+            "foodShared": 3,
+            "waterGathered": 22,
+            "waterDrunk": 6,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 11,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 0,
+            "playerInterventions": 3,
+            "invalidPathFailures": 0,
+            "interactionContentions": 44,
+            "failedInteractionClaims": 1
+          }
+        },
+        {
+          "tick": 1000,
+          "hash": "f39de51c7717001f",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 54,
+            "foodShared": 3,
+            "waterGathered": 29,
+            "waterDrunk": 20,
+            "waterShared": 2,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 19,
+            "thefts": 1,
+            "witnessedThefts": 1,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 1,
+            "playerInterventions": 3,
+            "invalidPathFailures": 0,
+            "interactionContentions": 135,
+            "failedInteractionClaims": 15
+          }
+        }
+      ]
+    },
+    {
+      "id": "chokepoint-close-reopen",
+      "seed": 23,
+      "scheduledCommands": [
+        {
+          "commandId": 1,
+          "applyAtTick": 0,
+          "type": "TOGGLE_OBSTACLE",
+          "tileIndex": 696,
+          "amount": 0,
+          "blocked": true
+        },
+        {
+          "commandId": 2,
+          "applyAtTick": 0,
+          "type": "TOGGLE_OBSTACLE",
+          "tileIndex": 744,
+          "amount": 0,
+          "blocked": true
+        },
+        {
+          "commandId": 3,
+          "applyAtTick": 0,
+          "type": "TOGGLE_OBSTACLE",
+          "tileIndex": 792,
+          "amount": 0,
+          "blocked": true
+        },
+        {
+          "commandId": 4,
+          "applyAtTick": 0,
+          "type": "TOGGLE_OBSTACLE",
+          "tileIndex": 840,
+          "amount": 0,
+          "blocked": true
+        },
+        {
+          "commandId": 5,
+          "applyAtTick": 120,
+          "type": "TOGGLE_OBSTACLE",
+          "tileIndex": 744,
+          "amount": 0,
+          "blocked": false
+        }
+      ],
+      "jsonRoundTripAtTicks": [],
+      "checkpoints": [
+        {
+          "tick": 0,
+          "hash": "d9e9b4af316a9d9b",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 0,
+            "foodShared": 0,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 0,
+            "invalidPathFailures": 0,
+            "interactionContentions": 0,
+            "failedInteractionClaims": 0
+          }
+        },
+        {
+          "tick": 1,
+          "hash": "4cd375236177d247",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 0,
+          "metrics": {
+            "foodGathered": 0,
+            "foodShared": 0,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 0,
+            "storagesCompleted": 0,
+            "playerInterventions": 4,
+            "invalidPathFailures": 0,
+            "interactionContentions": 1,
+            "failedInteractionClaims": 0
+          }
+        },
+        {
+          "tick": 120,
+          "hash": "cd4a0e6bb1cb455d",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 36,
+            "foodShared": 11,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 0,
+            "playerInterventions": 4,
+            "invalidPathFailures": 0,
+            "interactionContentions": 32,
+            "failedInteractionClaims": 4
+          }
+        },
+        {
+          "tick": 121,
+          "hash": "6b1691b105cbf8ae",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 36,
+            "foodShared": 11,
+            "waterGathered": 0,
+            "waterDrunk": 0,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 0,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 0,
+            "playerInterventions": 5,
+            "invalidPathFailures": 0,
+            "interactionContentions": 32,
+            "failedInteractionClaims": 4
+          }
+        },
+        {
+          "tick": 600,
+          "hash": "2674661e49959f8c",
+          "schemaVersion": 4,
+          "population": 8,
+          "groups": 1,
+          "metrics": {
+            "foodGathered": 43,
+            "foodShared": 11,
+            "waterGathered": 22,
+            "waterDrunk": 9,
+            "waterShared": 0,
+            "severeThirstCreatureTicks": 0,
+            "waterGatherContentions": 12,
+            "thefts": 0,
+            "witnessedThefts": 0,
+            "attacks": 0,
+            "groupsFormed": 1,
+            "storagesCompleted": 1,
+            "playerInterventions": 5,
+            "invalidPathFailures": 0,
+            "interactionContentions": 112,
+            "failedInteractionClaims": 28
+          }
+        }
+      ]
+    }
+  ]
+}

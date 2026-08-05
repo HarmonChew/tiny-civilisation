@@ -10,7 +10,7 @@ export const SCENARIO_IDS = [
 export type ScenarioId = (typeof SCENARIO_IDS)[number];
 
 export const DEFAULT_SCENARIO_ID = "petri-world" as const satisfies ScenarioId;
-export const SCENARIO_DEFINITION_VERSION = 1 as const;
+export const SCENARIO_DEFINITION_VERSION = 2 as const;
 export const DEFAULT_SCENARIO_VERSION = SCENARIO_DEFINITION_VERSION;
 export const SCENARIO_MAP_GENERATION_VERSION = 1 as const;
 

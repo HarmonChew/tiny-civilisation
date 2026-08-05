@@ -26,6 +26,7 @@ import {
   assertScenarioReference,
   cloneScenarioReference,
   createScenarioReference,
+  isScenarioId,
   type ScenarioReferenceV2,
 } from "./scenarios/index.js";
 
@@ -122,6 +123,46 @@ export function assertStateHash(
   }
 }
 
+function migratePhaseThreeScenarioReference(
+  value: unknown,
+  expectedSeed: number,
+): ScenarioReferenceV2 {
+  if (!isRecord(value)) throw new Error("Legacy scenario must be an object.");
+  assertExactKeys(
+    value,
+    [
+      "kind",
+      "schemaVersion",
+      "behaviorVersion",
+      "scenarioId",
+      "scenarioVersion",
+      "mapGenerationVersion",
+      "seed",
+    ],
+    "Legacy scenario",
+  );
+  if (
+    value.kind !== "tiny-civilisation/scenario" ||
+    value.schemaVersion !== 2 ||
+    value.behaviorVersion !== 3 ||
+    value.scenarioVersion !== 1 ||
+    value.mapGenerationVersion !== 1 ||
+    !isScenarioId(value.scenarioId)
+  ) {
+    throw new Error(
+      "Legacy scenario must use the behavior 3 / scenario 1 / map-generation 1 compatibility tuple.",
+    );
+  }
+  assertNonnegativeInteger(value.seed, "Legacy scenario seed");
+  if (value.seed > 0xffffffff) {
+    throw new Error("Legacy scenario seed must be an unsigned 32-bit integer.");
+  }
+  if (value.seed !== expectedSeed) {
+    throw new Error("Legacy scenario seed must match its envelope seed.");
+  }
+  return createScenarioReference(value.scenarioId, value.seed);
+}
+
 export function assertScheduledPlayerCommand(
   value: unknown,
   label = "Scheduled command",
@@ -139,6 +180,8 @@ export function assertScheduledPlayerCommand(
   if (
     value.type !== "ADD_FOOD" &&
     value.type !== "REMOVE_FOOD" &&
+    value.type !== "REPLENISH_WATER" &&
+    value.type !== "DRAIN_WATER" &&
     value.type !== "TOGGLE_OBSTACLE"
   ) {
     throw new Error(`${label}.type is not supported.`);
@@ -150,13 +193,17 @@ export function assertScheduledPlayerCommand(
       throw new Error(`${label}.blocked must be boolean or null.`);
     }
   } else {
-    if (value.amount < 1) throw new Error(`${label}.amount must be positive for food.`);
+    if (value.amount < 1) {
+      throw new Error(`${label}.amount must be positive for a resource intervention.`);
+    }
     if (value.amount > MAX_PLAYER_COMMAND_AMOUNT) {
       throw new Error(
         `${label}.amount must not exceed ${MAX_PLAYER_COMMAND_AMOUNT.toString()}.`,
       );
     }
-    if (value.blocked !== null) throw new Error(`${label}.blocked must be null for food.`);
+    if (value.blocked !== null) {
+      throw new Error(`${label}.blocked must be null for a resource intervention.`);
+    }
   }
 }
 
@@ -228,11 +275,11 @@ export function assertSimulationReplay(
       throw new Error("Replay finalTick must be after its last command tick.");
     }
   }
-  if (value.finalHash !== undefined) assertStateHash(value.finalHash, "Replay finalHash");
-  if ((value.finalTick === undefined) !== (value.finalHash === undefined)) {
-    throw new Error(
-      "Replay finalTick and finalHash must either both be present or both be absent.",
-    );
+  if (value.finalHash !== undefined) {
+    assertStateHash(value.finalHash, "Replay finalHash");
+    if (value.finalTick === undefined) {
+      throw new Error("Replay finalHash requires finalTick.");
+    }
   }
 }
 
@@ -289,11 +336,11 @@ export function serializeSimulationReplay(replay: SimulationReplayV1): string {
 }
 
 export function migrateSimulationReplay(value: unknown): SimulationReplayV1 {
-  if (
-    isRecord(value) &&
-    value.kind === "tiny-civilisation/replay" &&
-    readVersion(value, "schemaVersion") === 1
-  ) {
+  if (!isRecord(value) || value.kind !== "tiny-civilisation/replay") {
+    throw new Error("Invalid Tiny Civilisation replay envelope.");
+  }
+  const schemaVersion = readVersion(value, "schemaVersion");
+  if (schemaVersion === 1) {
     assertExactKeys(
       value,
       [
@@ -312,7 +359,7 @@ export function migrateSimulationReplay(value: unknown): SimulationReplayV1 {
     const stateSchemaVersion = readVersion(value, "stateSchemaVersion");
     const supportedLegacyVersion =
       (behaviorVersion === 1 && stateSchemaVersion === 1) ||
-      (behaviorVersion === SIMULATION_BEHAVIOR_VERSION && stateSchemaVersion === 2);
+      (behaviorVersion === 3 && stateSchemaVersion === 2);
     if (!supportedLegacyVersion) {
       throw new Error(
         `Replay schema version 1 has incompatible behavior/state versions ${String(behaviorVersion)}/${String(stateSchemaVersion)}.`,
@@ -322,14 +369,69 @@ export function migrateSimulationReplay(value: unknown): SimulationReplayV1 {
     if (value.seed > 0xffffffff) {
       throw new Error("Replay seed must be an unsigned 32-bit integer.");
     }
-    const migrated = {
+    const migrated: SimulationReplayV1 = {
       kind: "tiny-civilisation/replay" as const,
       schemaVersion: REPLAY_SCHEMA_VERSION,
       behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
       stateSchemaVersion: SIMULATION_STATE_VERSION,
       scenario: createScenarioReference(value.seed),
       seed: value.seed,
-      commands: value.commands,
+      commands: Array.isArray(value.commands)
+        ? value.commands.map((command) =>
+            isRecord(command)
+              ? ({ ...command } as unknown as ScheduledPlayerCommand)
+              : command,
+          )
+        : (value.commands as readonly ScheduledPlayerCommand[]),
+      ...(value.finalTick === undefined ? {} : { finalTick: value.finalTick as number }),
+    };
+    assertSimulationReplay(migrated);
+    return migrated;
+  }
+  if (schemaVersion === 2) {
+    assertExactKeys(
+      value,
+      [
+        "kind",
+        "schemaVersion",
+        "behaviorVersion",
+        "stateSchemaVersion",
+        "scenario",
+        "seed",
+        "commands",
+        "finalTick",
+        "finalHash",
+      ],
+      "Replay",
+    );
+    if (
+      readVersion(value, "behaviorVersion") !== 3 ||
+      readVersion(value, "stateSchemaVersion") !== 3
+    ) {
+      throw new Error(
+        `Replay schema version 2 has incompatible behavior/state versions ${String(value.behaviorVersion)}/${String(value.stateSchemaVersion)}.`,
+      );
+    }
+    assertNonnegativeInteger(value.seed, "Replay seed");
+    if (value.seed > 0xffffffff) {
+      throw new Error("Replay seed must be an unsigned 32-bit integer.");
+    }
+    const scenario = migratePhaseThreeScenarioReference(value.scenario, value.seed);
+    const migrated: SimulationReplayV1 = {
+      kind: "tiny-civilisation/replay",
+      schemaVersion: REPLAY_SCHEMA_VERSION,
+      behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
+      stateSchemaVersion: SIMULATION_STATE_VERSION,
+      scenario,
+      seed: value.seed,
+      commands: Array.isArray(value.commands)
+        ? value.commands.map((command) =>
+            isRecord(command)
+              ? ({ ...command } as unknown as ScheduledPlayerCommand)
+              : command,
+          )
+        : (value.commands as readonly ScheduledPlayerCommand[]),
+      ...(value.finalTick === undefined ? {} : { finalTick: value.finalTick as number }),
     };
     assertSimulationReplay(migrated);
     return migrated;
@@ -432,11 +534,12 @@ export function migrateSimulationSave(value: unknown): SimulationSaveV1 {
   const schemaVersion = readVersion(value, "schemaVersion");
   const behaviorVersion = readVersion(value, "behaviorVersion");
   const stateSchemaVersion = readVersion(value, "stateSchemaVersion");
-  if (
-    schemaVersion === 1 &&
-    ((behaviorVersion === 1 && stateSchemaVersion === 1) ||
-      (behaviorVersion === SIMULATION_BEHAVIOR_VERSION && stateSchemaVersion === 2))
-  ) {
+  const supportedLegacyEnvelope =
+    (schemaVersion === 1 &&
+      ((behaviorVersion === 1 && stateSchemaVersion === 1) ||
+        (behaviorVersion === 3 && stateSchemaVersion === 2))) ||
+    (schemaVersion === 2 && behaviorVersion === 3 && stateSchemaVersion === 3);
+  if (supportedLegacyEnvelope) {
     const state = migrateSimulationState(value.state);
     assertCompatibleSimulationState(state);
     return {
@@ -446,6 +549,11 @@ export function migrateSimulationSave(value: unknown): SimulationSaveV1 {
       stateSchemaVersion: SIMULATION_STATE_VERSION,
       state,
     };
+  }
+  if (schemaVersion === 1 || schemaVersion === 2) {
+    throw new Error(
+      `Save schema version ${String(schemaVersion)} has incompatible behavior/state versions ${String(behaviorVersion)}/${String(stateSchemaVersion)}.`,
+    );
   }
   if (schemaVersion !== SAVE_SCHEMA_VERSION) {
     throw new Error(

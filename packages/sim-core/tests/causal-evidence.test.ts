@@ -137,7 +137,7 @@ function evidenceState(): SimulationState {
     materialRequired: 8,
     progress: 10_000,
     workRequired: 10_000,
-    inventory: { capacity: 100, food: 2, material: 0 },
+    inventory: { capacity: 100, food: 2, material: 0, water: 0 },
     guardIds: [actor.id],
     completedTick: 2,
   });

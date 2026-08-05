@@ -303,7 +303,7 @@ describe("golden deterministic replays", () => {
     };
 
     await expect(`${JSON.stringify(corpus, null, 2)}\n`).toMatchFileSnapshot(
-      "./fixtures/golden-replays.v3.json",
+      "./fixtures/golden-replays.v4.json",
     );
   }, 15_000);
 });

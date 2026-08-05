@@ -11,9 +11,12 @@ const EXPECTED_ACTIONS = [
   "EXPLORE",
   "GATHER_FOOD",
   "GATHER_MATERIAL",
+  "GATHER_WATER",
   "EAT",
+  "DRINK",
   "REST",
   "SHARE",
+  "SHARE_WATER",
   "KEEP",
   "STEAL",
   "DEPOSIT",
@@ -45,13 +48,15 @@ describe("focused authoritative systems", () => {
     const creature = state.creatures[0]!;
     creature.needs.hunger = 9_399;
     creature.needs.fatigue = 9_499;
+    creature.needs.thirst = 9_399;
     const health = creature.health;
 
     updateNeeds(state);
 
     expect(creature.needs.hunger).toBe(9_403);
     expect(creature.needs.fatigue).toBe(9_500);
-    expect(creature.health).toBe(health - 3);
+    expect(creature.needs.thirst).toBe(9_404);
+    expect(creature.health).toBe(health - 6);
   });
 
   it("regenerates resources only on their declared cadence", () => {
@@ -73,10 +78,20 @@ describe("focused authoritative systems", () => {
     creature.inventory.capacity = 2;
     creature.inventory.food = 3.8;
     creature.inventory.material = 2.4;
+    creature.inventory.water = 1.7;
     maintainBoundedSocialState(state);
     validateAuthoritativeInvariants(state);
-    expect(creature.inventory.food + creature.inventory.material).toBeLessThanOrEqual(2);
+    expect(creature.inventory).toMatchObject({
+      capacity: 2,
+      material: 0,
+      water: 0,
+      food: 2,
+    });
+    expect(
+      creature.inventory.food + creature.inventory.material + creature.inventory.water,
+    ).toBeLessThanOrEqual(2);
     expect(Number.isInteger(creature.inventory.food)).toBe(true);
     expect(Number.isInteger(creature.inventory.material)).toBe(true);
+    expect(Number.isInteger(creature.inventory.water)).toBe(true);
   });
 });

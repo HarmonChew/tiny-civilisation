@@ -7,8 +7,11 @@ import {
 } from "../desires.js";
 import {
   attemptInteractionSlotClaim,
+  createInteractionTravelEstimator,
   interactionCrowding,
   requiresInteractionClaim,
+  type InteractionTravelEstimate,
+  type InteractionTravelEstimator,
 } from "../interaction-slots.js";
 import { findNearestWalkable } from "../navigation.js";
 import {
@@ -80,6 +83,21 @@ function implementationFactor(key: string, contribution: number): UtilityFactor 
     evidenceEventIds: [],
     fact: null,
   };
+}
+
+function travelFactor(
+  estimate: InteractionTravelEstimate,
+  penaltyPerGroundStep: number,
+  target: FactorSource = "TARGET",
+): PendingUtilityFactor {
+  return factor(
+    "weighted travel cost",
+    -(estimate.cost / 10) * penaltyPerGroundStep,
+    [],
+    estimate.cost,
+    "MOVE_COST",
+    target,
+  );
 }
 
 function scoredCandidate(
@@ -156,20 +174,31 @@ function scoredCandidate(
   };
 }
 
+interface ReachableResourceCandidate {
+  readonly node: ResourceNode;
+  readonly travel: InteractionTravelEstimate;
+}
+
 function nearestResourceCandidates(
   state: SimulationState,
-  creature: CreatureState,
   kind: ResourceKind,
-): ResourceNode[] {
+  action: ActionKind,
+  estimateTravel: InteractionTravelEstimator,
+  limit = 2,
+): ReachableResourceCandidate[] {
   return state.resourceNodes
     .filter((node) => node.kind === kind && node.currentStock > 0)
-    .sort(
-      (left, right) =>
-        manhattanDistance(state.world, creature.tileIndex, left.tileIndex) -
-          manhattanDistance(state.world, creature.tileIndex, right.tileIndex) ||
-        left.id - right.id,
+    .map((node) => ({
+      node,
+      travel: estimateTravel(action, node.id, node.tileIndex),
+    }))
+    .filter(
+      (candidate): candidate is ReachableResourceCandidate => candidate.travel !== null,
     )
-    .slice(0, 2);
+    .sort(
+      (left, right) => left.travel.cost - right.travel.cost || left.node.id - right.node.id,
+    )
+    .slice(0, limit);
 }
 
 function recentEvidence(edge: RelationshipEdge | null): number[] {
@@ -237,10 +266,12 @@ function generateCandidates(
 ): DecisionCandidate[] {
   const candidates: DecisionCandidate[] = [];
   const hunger = creature.needs.hunger;
+  const thirst = creature.needs.thirst;
   const fatigue = creature.needs.fatigue;
   const space = inventorySpace(creature.inventory);
   const ownGroup = getGroup(state, creature.groupId ?? -1);
   const ownStorage = groupStorage(state, creature.groupId);
+  const estimateTravel = createInteractionTravelEstimator(state, creature);
 
   if (creature.inventory.food > 0 && hunger >= 2_000) {
     candidates.push(
@@ -252,9 +283,23 @@ function generateCandidates(
     );
   }
 
+  if (creature.inventory.water > 0 && thirst >= 2_000) {
+    candidates.push(
+      scoredCandidate(state, creature, "DRINK", null, creature.tileIndex, [
+        factor("drinking opportunity", 1_000),
+        factor("personal thirst", (thirst * 5) / 4, [], thirst, "UNIT"),
+        factor("low health", (UNIT_MAX - creature.health) / 5, [], creature.health, "UNIT"),
+      ]),
+    );
+  }
+
   if (space > 0 && (hunger >= 2_500 || creature.inventory.food === 0)) {
-    for (const node of nearestResourceCandidates(state, creature, "FOOD")) {
-      const distance = manhattanDistance(state.world, creature.tileIndex, node.tileIndex);
+    for (const { node, travel } of nearestResourceCandidates(
+      state,
+      "FOOD",
+      "GATHER_FOOD",
+      estimateTravel,
+    )) {
       candidates.push(
         scoredCandidate(state, creature, "GATHER_FOOD", node.id, node.tileIndex, [
           factor("survival work", 1_300),
@@ -281,7 +326,39 @@ function generateCandidates(
             "COUNT",
             "TARGET",
           ),
-          factor("travel cost", -distance * 52, [], distance, "TILES", "TARGET"),
+          travelFactor(travel, 52),
+        ]),
+      );
+    }
+  }
+
+  if (space > 0 && (thirst >= 2_500 || creature.inventory.water === 0)) {
+    for (const { node, travel } of nearestResourceCandidates(
+      state,
+      "WATER",
+      "GATHER_WATER",
+      estimateTravel,
+    )) {
+      candidates.push(
+        scoredCandidate(state, creature, "GATHER_WATER", node.id, node.tileIndex, [
+          factor("hydration work", 1_700),
+          factor("personal thirst", (thirst * 9) / 10, [], thirst, "UNIT"),
+          factor(
+            "empty water reserve",
+            creature.inventory.water === 0 ? 1_600 : 0,
+            [],
+            creature.inventory.water,
+            "COUNT",
+          ),
+          factor(
+            "known water stock",
+            Math.min(1_200, node.currentStock * 45),
+            recentInterventionEvidence(state, node.id),
+            node.currentStock,
+            "COUNT",
+            "TARGET",
+          ),
+          travelFactor(travel, 54),
         ]),
       );
     }
@@ -289,22 +366,24 @@ function generateCandidates(
 
   if (fatigue >= 2_400) {
     const restTile = ownGroup?.homeTileIndex ?? creature.tileIndex;
-    const distance = manhattanDistance(state.world, creature.tileIndex, restTile);
-    candidates.push(
-      scoredCandidate(state, creature, "REST", null, restTile, [
-        factor("need for rest", fatigue, [], fatigue, "UNIT"),
-        factor(
-          "familiar home",
-          ownGroup ? 700 : 100,
-          [],
-          ownGroup?.name ?? null,
-          ownGroup ? "LABEL" : null,
-          ownGroup?.id ?? null,
-        ),
-        factor("travel cost", -distance * 35, [], distance, "TILES"),
-        factor("urgent hunger", hunger > 8_000 ? -2_500 : 0, [], hunger, "UNIT"),
-      ]),
-    );
+    const travel = estimateTravel("REST", null, restTile);
+    if (travel) {
+      candidates.push(
+        scoredCandidate(state, creature, "REST", null, restTile, [
+          factor("need for rest", fatigue, [], fatigue, "UNIT"),
+          factor(
+            "familiar home",
+            ownGroup ? 700 : 100,
+            [],
+            ownGroup?.name ?? null,
+            ownGroup ? "LABEL" : null,
+            ownGroup?.id ?? null,
+          ),
+          travelFactor(travel, 35, null),
+          factor("urgent hunger", hunger > 8_000 ? -2_500 : 0, [], hunger, "UNIT"),
+        ]),
+      );
+    }
   }
 
   if (creature.inventory.food > 0) {
@@ -315,18 +394,29 @@ function generateCandidates(
           other.id !== creature.id &&
           other.needs.hunger >= 5_300 &&
           (creature.traits.generosity >= 3_200 ||
-            (relationshipFrom(state, creature.id, other.id)?.trust ?? 0) >= 2_500) &&
-          manhattanDistance(state.world, creature.tileIndex, other.tileIndex) <= 7,
+            (relationshipFrom(state, creature.id, other.id)?.trust ?? 0) >= 2_500),
       )
-      .sort((left, right) => right.needs.hunger - left.needs.hunger || left.id - right.id)
+      .map((recipient) => ({
+        recipient,
+        travel: estimateTravel("SHARE", recipient.id, recipient.tileIndex),
+      }))
+      .filter(
+        (
+          candidate,
+        ): candidate is {
+          recipient: CreatureState;
+          travel: InteractionTravelEstimate;
+        } => candidate.travel !== null && candidate.travel.cost <= 70,
+      )
+      .sort(
+        (left, right) =>
+          right.recipient.needs.hunger - left.recipient.needs.hunger ||
+          left.travel.cost - right.travel.cost ||
+          left.recipient.id - right.recipient.id,
+      )
       .slice(0, 2);
-    for (const recipient of recipients) {
+    for (const { recipient, travel } of recipients) {
       const edge = relationshipFrom(state, creature.id, recipient.id);
-      const distance = manhattanDistance(
-        state.world,
-        creature.tileIndex,
-        recipient.tileIndex,
-      );
       candidates.push(
         scoredCandidate(state, creature, "SHARE", recipient.id, recipient.tileIndex, [
           factor("sharing opportunity", 450, [], null, null, "TARGET"),
@@ -362,7 +452,7 @@ function generateCandidates(
             ownGroup?.id ?? null,
           ),
           factor("own hunger", (-hunger * 7) / 20, [], hunger, "UNIT"),
-          factor("travel cost", -distance * 45, [], distance, "TILES", "TARGET"),
+          travelFactor(travel, 45),
         ]),
       );
     }
@@ -392,53 +482,122 @@ function generateCandidates(
     }
   }
 
+  if (creature.inventory.water > 0 && thirst < 7_000) {
+    const recipients = state.creatures
+      .filter(
+        (other) =>
+          other.alive &&
+          other.id !== creature.id &&
+          other.needs.thirst >= 6_000 &&
+          (creature.traits.generosity >= 3_200 ||
+            (relationshipFrom(state, creature.id, other.id)?.trust ?? 0) >= 2_500),
+      )
+      .map((recipient) => ({
+        recipient,
+        travel: estimateTravel("SHARE_WATER", recipient.id, recipient.tileIndex),
+      }))
+      .filter(
+        (
+          candidate,
+        ): candidate is {
+          recipient: CreatureState;
+          travel: InteractionTravelEstimate;
+        } => candidate.travel !== null && candidate.travel.cost <= 70,
+      )
+      .sort(
+        (left, right) =>
+          right.recipient.needs.thirst - left.recipient.needs.thirst ||
+          left.travel.cost - right.travel.cost ||
+          left.recipient.id - right.recipient.id,
+      )
+      .slice(0, 2);
+    for (const { recipient, travel } of recipients) {
+      const edge = relationshipFrom(state, creature.id, recipient.id);
+      candidates.push(
+        scoredCandidate(state, creature, "SHARE_WATER", recipient.id, recipient.tileIndex, [
+          factor("water sharing opportunity", 650, [], null, null, "TARGET"),
+          factor(
+            "generous disposition",
+            (creature.traits.generosity * 2) / 5,
+            [],
+            creature.traits.generosity,
+            "UNIT",
+          ),
+          factor(
+            "recipient thirst",
+            (recipient.needs.thirst * 9) / 20,
+            [],
+            recipient.needs.thirst,
+            "UNIT",
+            "TARGET",
+          ),
+          factor(
+            "trust in recipient",
+            (edge?.trust ?? 0) / 5,
+            recentEvidence(edge),
+            edge?.trust ?? 0,
+            "UNIT",
+            "TARGET",
+          ),
+          factor(
+            "communal expectation",
+            (ownGroup?.sharingNorm ?? 0) / 4,
+            [],
+            ownGroup?.sharingNorm ?? null,
+            ownGroup ? "UNIT" : null,
+            ownGroup?.id ?? null,
+          ),
+          factor("own thirst", (-thirst * 2) / 5, [], thirst, "UNIT"),
+          travelFactor(travel, 45),
+        ]),
+      );
+    }
+  }
+
   const storageComplete = ownStorage?.kind === "STORAGE" ? ownStorage : null;
   if (
     storageComplete &&
     creature.inventory.food >= 2 &&
     storageComplete.inventory.food < storageComplete.inventory.capacity
   ) {
-    const distance = manhattanDistance(
-      state.world,
-      creature.tileIndex,
-      storageComplete.tileIndex,
-    );
-    candidates.push(
-      scoredCandidate(
-        state,
-        creature,
-        "DEPOSIT",
-        storageComplete.id,
-        storageComplete.tileIndex,
-        [
-          factor("communal contribution", 1_000),
-          factor(
-            "group loyalty",
-            (creature.traits.loyalty * 2) / 5,
-            [],
-            creature.traits.loyalty,
-            "UNIT",
-          ),
-          factor(
-            "sharing norm",
-            (ownGroup?.sharingNorm ?? 0) / 3,
-            [],
-            ownGroup?.sharingNorm ?? null,
-            ownGroup ? "UNIT" : null,
-            ownGroup?.id ?? null,
-          ),
-          factor(
-            "surplus food",
-            creature.inventory.food * 350,
-            [],
-            creature.inventory.food,
-            "COUNT",
-          ),
-          factor("own hunger", (-hunger * 3) / 10, [], hunger, "UNIT"),
-          factor("travel cost", -distance * 40, [], distance, "TILES", "TARGET"),
-        ],
-      ),
-    );
+    const travel = estimateTravel("DEPOSIT", storageComplete.id, storageComplete.tileIndex);
+    if (travel)
+      candidates.push(
+        scoredCandidate(
+          state,
+          creature,
+          "DEPOSIT",
+          storageComplete.id,
+          storageComplete.tileIndex,
+          [
+            factor("communal contribution", 1_000),
+            factor(
+              "group loyalty",
+              (creature.traits.loyalty * 2) / 5,
+              [],
+              creature.traits.loyalty,
+              "UNIT",
+            ),
+            factor(
+              "sharing norm",
+              (ownGroup?.sharingNorm ?? 0) / 3,
+              [],
+              ownGroup?.sharingNorm ?? null,
+              ownGroup ? "UNIT" : null,
+              ownGroup?.id ?? null,
+            ),
+            factor(
+              "surplus food",
+              creature.inventory.food * 350,
+              [],
+              creature.inventory.food,
+              "COUNT",
+            ),
+            factor("own hunger", (-hunger * 3) / 10, [], hunger, "UNIT"),
+            travelFactor(travel, 40),
+          ],
+        ),
+      );
   }
   if (
     storageComplete &&
@@ -446,42 +605,45 @@ function generateCandidates(
     hunger >= 5_800 &&
     storageComplete.inventory.food > 0
   ) {
-    const distance = manhattanDistance(
-      state.world,
-      creature.tileIndex,
+    const travel = estimateTravel(
+      "WITHDRAW",
+      storageComplete.id,
       storageComplete.tileIndex,
     );
-    candidates.push(
-      scoredCandidate(
-        state,
-        creature,
-        "WITHDRAW",
-        storageComplete.id,
-        storageComplete.tileIndex,
-        [
-          factor("authorized access", 1_200, [], null, null, "TARGET"),
-          factor("personal hunger", hunger, [], hunger, "UNIT"),
-          factor(
-            "available group food",
-            storageComplete.inventory.food * 180,
-            [],
-            storageComplete.inventory.food,
-            "COUNT",
-            "TARGET",
-          ),
-          factor("travel cost", -distance * 45, [], distance, "TILES", "TARGET"),
-        ],
-      ),
-    );
+    if (travel)
+      candidates.push(
+        scoredCandidate(
+          state,
+          creature,
+          "WITHDRAW",
+          storageComplete.id,
+          storageComplete.tileIndex,
+          [
+            factor("authorized access", 1_200, [], null, null, "TARGET"),
+            factor("personal hunger", hunger, [], hunger, "UNIT"),
+            factor(
+              "available group food",
+              storageComplete.inventory.food * 180,
+              [],
+              storageComplete.inventory.food,
+              "COUNT",
+              "TARGET",
+            ),
+            travelFactor(travel, 45),
+          ],
+        ),
+      );
   }
 
   if (ownGroup && (!ownStorage || ownStorage.kind === "STORAGE_SITE")) {
     if (space > 0 && creature.inventory.material < 3) {
-      for (const node of nearestResourceCandidates(state, creature, "MATERIAL").slice(
-        0,
+      for (const { node, travel } of nearestResourceCandidates(
+        state,
+        "MATERIAL",
+        "GATHER_MATERIAL",
+        estimateTravel,
         1,
       )) {
-        const distance = manhattanDistance(state.world, creature.tileIndex, node.tileIndex);
         candidates.push(
           scoredCandidate(state, creature, "GATHER_MATERIAL", node.id, node.tileIndex, [
             factor(
@@ -501,7 +663,7 @@ function generateCandidates(
             ),
             factor("material opportunity", 1_000, [], node.currentStock, "COUNT", "TARGET"),
             factor("urgent hunger", hunger > 7_000 ? -3_500 : 0, [], hunger, "UNIT"),
-            factor("travel cost", -distance * 40, [], distance, "TILES", "TARGET"),
+            travelFactor(travel, 40),
           ]),
         );
       }
@@ -512,60 +674,71 @@ function generateCandidates(
         creature.inventory.material > 0);
     if (creature.inventory.material > 0 || siteReadyForWork) {
       const targetTile = ownStorage?.tileIndex ?? ownGroup.homeTileIndex;
-      const distance = manhattanDistance(state.world, creature.tileIndex, targetTile);
-      candidates.push(
-        scoredCandidate(
-          state,
-          creature,
-          "BUILD_STORAGE",
-          ownStorage?.id ?? null,
-          targetTile,
-          [
-            factor(
-              "shared storage opportunity",
-              2_800,
-              [],
-              ownStorage?.kind ?? "NO_STORAGE",
-              "LABEL",
-              ownGroup.id,
-            ),
-            factor(
-              "carried material",
-              creature.inventory.material * 650,
-              [],
-              creature.inventory.material,
-              "COUNT",
-            ),
-            factor(
-              "group loyalty",
-              (creature.traits.loyalty * 2) / 5,
-              [],
-              creature.traits.loyalty,
-              "UNIT",
-            ),
-            factor(
-              "construction progress",
-              (ownStorage?.progress ?? 0) / 5,
-              [],
-              ownStorage?.progress ?? 0,
-              "UNIT",
-              ownStorage?.id ?? null,
-            ),
-            factor("urgent hunger", hunger > 7_500 ? -4_000 : 0, [], hunger, "UNIT"),
-            factor("travel cost", -distance * 42, [], distance, "TILES", "TARGET"),
-          ],
-        ),
-      );
+      const travel = estimateTravel("BUILD_STORAGE", ownStorage?.id ?? null, targetTile);
+      if (travel)
+        candidates.push(
+          scoredCandidate(
+            state,
+            creature,
+            "BUILD_STORAGE",
+            ownStorage?.id ?? null,
+            targetTile,
+            [
+              factor(
+                "shared storage opportunity",
+                2_800,
+                [],
+                ownStorage?.kind ?? "NO_STORAGE",
+                "LABEL",
+                ownGroup.id,
+              ),
+              factor(
+                "carried material",
+                creature.inventory.material * 650,
+                [],
+                creature.inventory.material,
+                "COUNT",
+              ),
+              factor(
+                "group loyalty",
+                (creature.traits.loyalty * 2) / 5,
+                [],
+                creature.traits.loyalty,
+                "UNIT",
+              ),
+              factor(
+                "construction progress",
+                (ownStorage?.progress ?? 0) / 5,
+                [],
+                ownStorage?.progress ?? 0,
+                "UNIT",
+                ownStorage?.id ?? null,
+              ),
+              factor("urgent hunger", hunger > 7_500 ? -4_000 : 0, [], hunger, "UNIT"),
+              travelFactor(travel, 42),
+            ],
+          ),
+        );
     }
   }
 
   const completedStorages = state.structures
     .filter((structure) => structure.kind === "STORAGE" && structure.inventory.food > 0)
+    .map((structure) => ({
+      structure,
+      travel: estimateTravel("STEAL", structure.id, structure.tileIndex),
+    }))
+    .filter(
+      (
+        candidate,
+      ): candidate is {
+        structure: SimulationState["structures"][number];
+        travel: InteractionTravelEstimate;
+      } => candidate.travel !== null,
+    )
     .sort(
       (left, right) =>
-        manhattanDistance(state.world, creature.tileIndex, left.tileIndex) -
-          manhattanDistance(state.world, creature.tileIndex, right.tileIndex) ||
-        left.id - right.id,
+        left.travel.cost - right.travel.cost || left.structure.id - right.structure.id,
     );
   const theftCoolingDown =
     ticksSinceActorEvent(state, "THEFT_COMMITTED", creature.id) < 1_800;
@@ -576,8 +749,9 @@ function generateCandidates(
     !theftCoolingDown &&
     completedStorages.length > 0
   ) {
-    const target = completedStorages[0];
-    if (target) {
+    const targetCandidate = completedStorages[0];
+    if (targetCandidate) {
+      const { structure: target, travel } = targetCandidate;
       const targetGroup = getGroup(state, target.groupId);
       const unauthorized = creature.groupId !== target.groupId;
       if (unauthorized || hunger >= 8_300) {
@@ -594,11 +768,6 @@ function generateCandidates(
           ...(targetGroup?.memberIds.map(
             (memberId) => relationshipFrom(state, creature.id, memberId)?.fear ?? 0,
           ) ?? []),
-        );
-        const distance = manhattanDistance(
-          state.world,
-          creature.tileIndex,
-          target.tileIndex,
         );
         candidates.push(
           scoredCandidate(state, creature, "STEAL", target.id, target.tileIndex, [
@@ -664,7 +833,7 @@ function generateCandidates(
               creature.traits.loyalty,
               "UNIT",
             ),
-            factor("travel cost", -distance * 48, [], distance, "TILES", "TARGET"),
+            travelFactor(travel, 48),
           ]),
         );
       }
@@ -678,49 +847,46 @@ function generateCandidates(
     creature.traits.loyalty >= 4_000 &&
     (storageComplete.guardIds.length < 2 || storageComplete.guardIds.includes(creature.id))
   ) {
-    const distance = manhattanDistance(
-      state.world,
-      creature.tileIndex,
-      storageComplete.tileIndex,
-    );
-    candidates.push(
-      scoredCandidate(
-        state,
-        creature,
-        "GUARD",
-        storageComplete.id,
-        storageComplete.tileIndex,
-        [
-          factor("protect shared storage", 1_250),
-          factor(
-            "group loyalty",
-            creature.traits.loyalty / 3,
-            [],
-            creature.traits.loyalty,
-            "UNIT",
-          ),
-          factor(
-            "stored wealth",
-            storageComplete.inventory.food * 170,
-            [],
-            storageComplete.inventory.food,
-            "COUNT",
-            "TARGET",
-          ),
-          factor(
-            "guard already present",
-            -storageComplete.guardIds.length * 900,
-            [],
-            storageComplete.guardIds.length,
-            "COUNT",
-            "TARGET",
-          ),
-          factor("personal fatigue", -fatigue / 4, [], fatigue, "UNIT"),
-          factor("urgent hunger", hunger > 7_000 ? -3_000 : 0, [], hunger, "UNIT"),
-          factor("travel cost", -distance * 35, [], distance, "TILES", "TARGET"),
-        ],
-      ),
-    );
+    const travel = estimateTravel("GUARD", storageComplete.id, storageComplete.tileIndex);
+    if (travel)
+      candidates.push(
+        scoredCandidate(
+          state,
+          creature,
+          "GUARD",
+          storageComplete.id,
+          storageComplete.tileIndex,
+          [
+            factor("protect shared storage", 1_250),
+            factor(
+              "group loyalty",
+              creature.traits.loyalty / 3,
+              [],
+              creature.traits.loyalty,
+              "UNIT",
+            ),
+            factor(
+              "stored wealth",
+              storageComplete.inventory.food * 170,
+              [],
+              storageComplete.inventory.food,
+              "COUNT",
+              "TARGET",
+            ),
+            factor(
+              "guard already present",
+              -storageComplete.guardIds.length * 900,
+              [],
+              storageComplete.guardIds.length,
+              "COUNT",
+              "TARGET",
+            ),
+            factor("personal fatigue", -fatigue / 4, [], fatigue, "UNIT"),
+            factor("urgent hunger", hunger > 7_000 ? -3_000 : 0, [], hunger, "UNIT"),
+            travelFactor(travel, 35),
+          ],
+        ),
+      );
   }
 
   for (const edge of state.relationships) {
@@ -735,8 +901,8 @@ function generateCandidates(
       ticksSinceActorEvent(state, "CREATURE_ATTACKED", creature.id, target.id) < 90;
     const grievanceSettling =
       ticksSinceActorEvent(state, "THEFT_WITNESSED", creature.id, target.id) < 30;
-    const distance = manhattanDistance(state.world, creature.tileIndex, target.tileIndex);
-    if (distance > 8) {
+    const travel = estimateTravel("ATTACK", target.id, target.tileIndex);
+    if (!travel || travel.cost > 80) {
       continue;
     }
     if (
@@ -792,50 +958,49 @@ function generateCandidates(
             creature.health,
             "UNIT",
           ),
-          factor("travel cost", -distance * 55, [], distance, "TILES", "TARGET"),
+          travelFactor(travel, 55),
         ]),
       );
     }
     if (edge.fear >= 1_600 || creature.health < 5_000) {
       const fleeTile = findFleeTile(state, creature, target);
-      candidates.push(
-        scoredCandidate(state, creature, "FLEE", target.id, fleeTile, [
-          factor(
-            "fear of aggressor",
-            (edge.fear * 3) / 5,
-            recentEvidence(edge),
-            edge.fear,
-            "UNIT",
-            "TARGET",
-          ),
-          factor(
-            "injury",
-            UNIT_MAX - creature.health,
-            [],
-            UNIT_MAX - creature.health,
-            "UNIT",
-          ),
-          factor("escape route", 1_200),
-          factor(
-            "aggressive disposition",
-            -creature.traits.aggression / 4,
-            [],
-            creature.traits.aggression,
-            "UNIT",
-          ),
-        ]),
-      );
+      const fleeTravel = estimateTravel("FLEE", target.id, fleeTile);
+      if (fleeTravel)
+        candidates.push(
+          scoredCandidate(state, creature, "FLEE", target.id, fleeTile, [
+            factor(
+              "fear of aggressor",
+              (edge.fear * 3) / 5,
+              recentEvidence(edge),
+              edge.fear,
+              "UNIT",
+              "TARGET",
+            ),
+            factor(
+              "injury",
+              UNIT_MAX - creature.health,
+              [],
+              UNIT_MAX - creature.health,
+              "UNIT",
+            ),
+            factor("escape route", 1_200),
+            travelFactor(fleeTravel, 12),
+            factor(
+              "aggressive disposition",
+              -creature.traits.aggression / 4,
+              [],
+              creature.traits.aggression,
+              "UNIT",
+            ),
+          ]),
+        );
     }
   }
 
   if (creature.groupId === null && creature.traits.sociability >= 3_500) {
     for (const group of state.groups) {
-      const distance = manhattanDistance(
-        state.world,
-        creature.tileIndex,
-        group.homeTileIndex,
-      );
-      if (distance > 14) {
+      const travel = estimateTravel("JOIN_GROUP", group.id, group.homeTileIndex);
+      if (!travel || travel.cost > 140) {
         continue;
       }
       let affinity = 0;
@@ -867,7 +1032,7 @@ function generateCandidates(
             UNIT_MAX - creature.traits.loyalty,
             "UNIT",
           ),
-          factor("travel cost", -distance * 55, [], distance, "TILES", "TARGET"),
+          travelFactor(travel, 55),
         ]),
       );
     }
@@ -887,11 +1052,16 @@ function generateCandidates(
         clamp(point.y + yOffset, 1, state.world.height - 2),
       ),
     );
+    const travel =
+      estimateTravel("EXPLORE", null, target) ??
+      estimateTravel("EXPLORE", null, creature.tileIndex);
+    const exploreTarget = travel?.destinationTileIndex ?? creature.tileIndex;
     candidates.push(
-      scoredCandidate(state, creature, "EXPLORE", null, target, [
-        factor("no pressing need", 900, [], Math.max(hunger, fatigue), "UNIT"),
+      scoredCandidate(state, creature, "EXPLORE", null, exploreTarget, [
+        factor("no pressing need", 900, [], Math.max(hunger, thirst, fatigue), "UNIT"),
         factor("nearby novelty", 400),
         factor("fatigue", -fatigue / 8, [], fatigue, "UNIT"),
+        ...(travel ? [travelFactor(travel, 18, null)] : []),
       ]),
     );
   }
@@ -1005,7 +1175,10 @@ function beginAction(
   );
   const claim = claimAttempt.claim;
   const needsClaim = requiresInteractionClaim(candidate.action);
-  if (claimAttempt.contended) state.metrics.interactionContentions += 1;
+  if (claimAttempt.contended) {
+    state.metrics.interactionContentions += 1;
+    if (candidate.action === "GATHER_WATER") state.metrics.waterGatherContentions += 1;
+  }
   if (claimAttempt.failed) state.metrics.failedInteractionClaims += 1;
   if (needsClaim && !claim) {
     creature.activePlan = {
@@ -1240,7 +1413,12 @@ function hasEmergency(creature: CreatureState): boolean {
     creature.activeGoal.kind === "WITHDRAW" ||
     creature.activeGoal.kind === "STEAL" ||
     creature.activeGoal.kind === "FLEE";
-  return creature.needs.hunger >= 9_200 && !survivalAction;
+  const hydrationAction =
+    creature.activeGoal.kind === "DRINK" || creature.activeGoal.kind === "GATHER_WATER";
+  return (
+    (creature.needs.hunger >= 9_200 && !survivalAction) ||
+    (creature.needs.thirst >= 9_000 && !hydrationAction)
+  );
 }
 
 function decideCreature(state: SimulationState, creature: CreatureState): void {

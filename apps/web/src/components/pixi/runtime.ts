@@ -3,6 +3,7 @@ import type { EntityId, WorldView } from "../../model";
 
 export interface RenderLayers {
   terrain: Graphics;
+  traffic: Graphics;
   groupInfluence: Graphics;
   intentions: Graphics;
   interaction: Graphics;
@@ -36,6 +37,7 @@ export const PALETTE = {
   ground: 0x69725a,
   groundAlternate: 0x606a53,
   shallowWater: 0x52757a,
+  water: 0x79b6bc,
   rock: 0x353c36,
   frame: 0xe8d8b8,
   food: 0xd98a55,
@@ -46,6 +48,7 @@ export const PALETTE = {
   danger: 0xce6450,
   paper: 0xfff3d3,
   action: 0xf0b86e,
+  traffic: 0xe3c68b,
 } as const;
 
 export const GROUP_COLORS = [0x8ea66c, 0xd4775f, 0x71a0a6, 0xc4a461, 0xa68bb1] as const;
@@ -53,6 +56,7 @@ export const GROUP_COLORS = [0x8ea66c, 0xd4775f, 0x71a0a6, 0xc4a461, 0xa68bb1] a
 export function createRenderLayers(): RenderLayers {
   return {
     terrain: new Graphics(),
+    traffic: new Graphics(),
     groupInfluence: new Graphics(),
     intentions: new Graphics(),
     interaction: new Graphics(),

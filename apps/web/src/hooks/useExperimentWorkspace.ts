@@ -72,7 +72,7 @@ import { useInterventionResponseTraces } from "./useInterventionResponseTraces";
 
 const ONBOARDING_KEY = "tiny-civilisation/orientation-complete/v1";
 const WORKSPACE_KIND = "tiny-civilisation/workspace";
-const WORKSPACE_SCHEMA_VERSION = 2;
+const WORKSPACE_SCHEMA_VERSION = 3;
 const INTERVENTION_BRANCH_BASE_ID = "intervention";
 const MAX_INTERACTIVE_REPLAY_TICK = 100_000;
 const MAX_IMPORTED_REPLAY_COMMANDS = 10_000;
@@ -145,6 +145,20 @@ const INTERVENTION_TOOLS: readonly InterventionToolOption[] = [
     supportsQuantity: true,
   },
   {
+    id: "replenish-water",
+    label: "Replenish water",
+    description: "Add water to an existing source without directing any creature.",
+    targetKind: "tile",
+    supportsQuantity: true,
+  },
+  {
+    id: "drain-water",
+    label: "Drain water",
+    description: "Remove water from an existing source without directing any creature.",
+    targetKind: "tile",
+    supportsQuantity: true,
+  },
+  {
     id: "obstacle",
     label: "Toggle obstacle",
     description: "Open or close a passage when the target tile is safe to change.",
@@ -170,12 +184,16 @@ const EMPTY_COMPARISON: ComparisonState = {
   message: "Bookmark a baseline, introduce one condition, then compare both runs.",
 };
 
-interface PersistedWorkspaceV2 {
+interface PersistedWorkspaceV3 {
   kind: typeof WORKSPACE_KIND;
   schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
   activeBranchId: string;
   experiment: ExperimentV1;
   simulationSave: string;
+}
+
+interface ParsedWorkspace extends PersistedWorkspaceV3 {
+  verificationUnavailable: boolean;
 }
 
 interface UseExperimentWorkspaceOptions {
@@ -653,7 +671,8 @@ export function createMomentReplayPresentation(
       id: "AFTERMATH",
       label: "Aftermath",
       tick: window.aftermathEndTick,
-      summary: (view) => replayParticipantSummary(view, event),
+      summary: (view) =>
+        `Aftermath retained the factual state: ${replayParticipantSummary(view, event)}`,
     },
   ];
   const beats: MomentReplayBeat[] = [];
@@ -680,66 +699,154 @@ function metricDisplay(
   key: keyof ExperimentOutcomeMetrics,
   value: number,
 ): string | number {
-  return key === "averageTrust" ? (value / 1_000).toFixed(2) : value;
+  if (key === "averageTrust") return (value / 1_000).toFixed(2);
+  if (key === "routeConcentration") return `${(value * 100).toFixed(1)}%`;
+  if (key === "averageThirst" || key === "averageWaterAccessCost") {
+    return Math.round(value);
+  }
+  return value;
 }
 
 const METRIC_DEFINITIONS: ReadonlyArray<{
   key: keyof ExperimentOutcomeMetrics;
   label: string;
-  lowerIsBetter?: boolean;
+  note?: string;
 }> = [
   { key: "population", label: "Living population" },
   { key: "wildFood", label: "Wild food" },
   { key: "wildMaterial", label: "Wild material" },
   { key: "storedFood", label: "Stored food" },
   { key: "storedMaterial", label: "Stored material" },
+  { key: "wildWater", label: "Potable source stock" },
+  { key: "carriedWater", label: "Carried water" },
+  { key: "averageThirst", label: "Average thirst at horizon" },
+  {
+    key: "severeThirst",
+    label: "Creatures currently in severe thirst",
+    note: "Count at the equal-horizon tick",
+  },
+  {
+    key: "severeThirstExposureTicks",
+    label: "Cumulative severe-thirst exposure",
+    note: "Creature-ticks since the run began",
+  },
+  { key: "waterGathered", label: "Water gathered" },
+  { key: "waterDrunk", label: "Water drunk" },
+  { key: "waterShared", label: "Water shared" },
+  {
+    key: "waterGatherContentions",
+    label: "Water-gather contention attempts",
+    note: "Attempts that encountered at least one occupied water-source slot",
+  },
+  {
+    key: "averageWaterAccessCost",
+    label: "Mean nearest-source travel cost",
+  },
+  {
+    key: "unreachableWaterAccessPairs",
+    label: "Unreachable creature/source pairs",
+  },
+  {
+    key: "routeConcentration",
+    label: "Recent route concentration (all traffic)",
+    note: "Dominant-edge share across all creatures' recent routes",
+  },
   { key: "groups", label: "Groups" },
   { key: "averageTrust", label: "Average directed trust" },
   { key: "foodShared", label: "Food shared" },
-  { key: "thefts", label: "Thefts", lowerIsBetter: true },
-  { key: "attacks", label: "Confrontations", lowerIsBetter: true },
+  { key: "thefts", label: "Thefts" },
+  { key: "attacks", label: "Confrontations" },
   { key: "storagesCompleted", label: "Storage completed" },
 ];
 
-function comparisonMetrics(
+export function comparisonMetrics(
   baseline: ExperimentOutcomeMetrics,
   intervention: ExperimentOutcomeMetrics,
   delta: ExperimentOutcomeMetrics,
 ): ComparisonMetric[] {
-  return METRIC_DEFINITIONS.map(({ key, label, lowerIsBetter }) => {
+  return METRIC_DEFINITIONS.map(({ key, label, note }) => {
     const difference = delta[key];
-    const tone =
-      difference === 0
-        ? "neutral"
-        : lowerIsBetter
-          ? difference < 0
-            ? "positive"
-            : "negative"
-          : difference > 0
-            ? "positive"
-            : "negative";
-    const formattedDelta = metricDisplay(key, difference);
     return {
       id: key,
       label,
       baseline: metricDisplay(key, baseline[key]),
       branch: metricDisplay(key, intervention[key]),
-      delta:
-        typeof formattedDelta === "number" && formattedDelta > 0
-          ? `+${formattedDelta}`
-          : typeof formattedDelta === "string" && difference > 0
-            ? `+${formattedDelta}`
-            : formattedDelta,
-      deltaTone: tone,
+      delta: metricDisplay(key, Math.abs(difference)),
+      deltaDirection:
+        difference > 0 ? "increase" : difference < 0 ? "decrease" : "unchanged",
+      ...(note ? { note } : {}),
     };
   });
 }
 
-function serializeWorkspace(workspace: PersistedWorkspaceV2): string {
+function serializeWorkspace(workspace: PersistedWorkspaceV3): string {
   return JSON.stringify(workspace);
 }
 
-function parseWorkspace(serialized: string): PersistedWorkspaceV2 {
+function persistedRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function importedExperimentVerificationUnavailable(serialized: string): boolean {
+  let record: Record<string, unknown> | null;
+  try {
+    record = persistedRecord(JSON.parse(serialized) as unknown);
+  } catch {
+    return false;
+  }
+  if (record?.kind !== "tiny-civilisation/experiment") return false;
+  if (
+    record.schemaVersion === 3 &&
+    record.behaviorVersion === 3 &&
+    record.stateSchemaVersion === 3
+  ) {
+    return true;
+  }
+  return (
+    (record.schemaVersion === 1 || record.schemaVersion === 2) &&
+    ((record.behaviorVersion === 1 && record.stateSchemaVersion === 1) ||
+      (record.behaviorVersion === 3 && record.stateSchemaVersion === 2))
+  );
+}
+
+function assertLegacyWorkspaceTuple(record: Record<string, unknown>): void {
+  if (record.schemaVersion === WORKSPACE_SCHEMA_VERSION) return;
+  const experiment = persistedRecord(record.experiment);
+  let save: Record<string, unknown> | null;
+  try {
+    save = persistedRecord(JSON.parse(record.simulationSave as string) as unknown);
+  } catch {
+    throw new Error("Saved workspace simulation data is not valid JSON.");
+  }
+  const phaseOneOrTwo = (artifact: Record<string, unknown> | null): boolean =>
+    artifact !== null &&
+    ((artifact.behaviorVersion === 1 && artifact.stateSchemaVersion === 1) ||
+      (artifact.behaviorVersion === 3 && artifact.stateSchemaVersion === 2));
+  const supported =
+    record.schemaVersion === 2
+      ? experiment?.kind === "tiny-civilisation/experiment" &&
+        experiment.schemaVersion === 3 &&
+        experiment.behaviorVersion === 3 &&
+        experiment.stateSchemaVersion === 3 &&
+        save?.kind === "tiny-civilisation/save" &&
+        save.schemaVersion === 2 &&
+        save.behaviorVersion === 3 &&
+        save.stateSchemaVersion === 3
+      : record.schemaVersion === 1 &&
+        experiment?.kind === "tiny-civilisation/experiment" &&
+        (experiment?.schemaVersion === 1 || experiment?.schemaVersion === 2) &&
+        phaseOneOrTwo(experiment) &&
+        save?.kind === "tiny-civilisation/save" &&
+        save.schemaVersion === 1 &&
+        phaseOneOrTwo(save);
+  if (!supported) {
+    throw new Error("That browser save uses an incompatible legacy version tuple.");
+  }
+}
+
+function parseWorkspace(serialized: string): ParsedWorkspace {
   let value: unknown;
   try {
     value = JSON.parse(serialized) as unknown;
@@ -752,7 +859,9 @@ function parseWorkspace(serialized: string): PersistedWorkspaceV2 {
   const record = value as Record<string, unknown>;
   if (
     record.kind !== WORKSPACE_KIND ||
-    (record.schemaVersion !== 1 && record.schemaVersion !== WORKSPACE_SCHEMA_VERSION)
+    (record.schemaVersion !== 1 &&
+      record.schemaVersion !== 2 &&
+      record.schemaVersion !== WORKSPACE_SCHEMA_VERSION)
   ) {
     throw new Error("That browser save uses an incompatible workspace version.");
   }
@@ -765,6 +874,7 @@ function parseWorkspace(serialized: string): PersistedWorkspaceV2 {
   if (record.schemaVersion === 1 && typeof record.scenarioPresetId !== "string") {
     throw new Error("Saved workspace metadata is incomplete.");
   }
+  assertLegacyWorkspaceTuple(record);
   const experiment = deserializeExperiment(JSON.stringify(record.experiment));
   const branch = experiment.branches.find(
     (candidate) => candidate.id === record.activeBranchId,
@@ -776,11 +886,12 @@ function parseWorkspace(serialized: string): PersistedWorkspaceV2 {
     activeBranchId: record.activeBranchId,
     experiment,
     simulationSave: record.simulationSave,
+    verificationUnavailable: record.schemaVersion !== WORKSPACE_SCHEMA_VERSION,
   };
 }
 
 function assertWorkspaceCheckpoint(
-  workspace: PersistedWorkspaceV2,
+  workspace: ParsedWorkspace,
   checkpoint: RuntimeCheckpoint,
 ): void {
   const branch = workspace.experiment.branches.find(
@@ -797,6 +908,7 @@ function assertWorkspaceCheckpoint(
   ) {
     throw new Error("The saved experiment scenario does not match its simulation state.");
   }
+  if (workspace.verificationUnavailable) return;
   if (
     branch.targetTick !== checkpoint.tick ||
     branch.expectedHash === null ||
@@ -1383,7 +1495,7 @@ export function useExperimentWorkspace({
       const checkpoint = await simulation.getCheckpoint();
       if (!checkpoint) throw new Error("The simulation is not ready to checkpoint.");
       const next = branchWithCheckpointResult(checkpoint);
-      const workspace: PersistedWorkspaceV2 = {
+      const workspace: PersistedWorkspaceV3 = {
         kind: WORKSPACE_KIND,
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activeBranchId: activeBranchRef.current,
@@ -1433,6 +1545,7 @@ export function useExperimentWorkspace({
       assertWorkspaceCheckpoint(workspace, checkpoint);
       commitExperiment(workspace.experiment);
       commitActiveBranch(workspace.activeBranchId);
+      setComparison(EMPTY_COMPARISON);
       preservedSignatureRef.current = preservedFrameSignature(
         workspace.activeBranchId,
         checkpoint.tick,
@@ -1442,7 +1555,9 @@ export function useExperimentWorkspace({
       setSetupOpen(false);
       setActionStatus({
         phase: "success",
-        message: `Restored tick ${restoredView.tick} without changing its hash.`,
+        message: workspace.verificationUnavailable
+          ? `Upgraded; prior verification unavailable. Restored tick ${restoredView.tick} under Phase 4. Rerun comparisons before drawing conclusions.`
+          : `Restored tick ${restoredView.tick} without changing its hash.`,
       });
     } catch (error) {
       let preserved = true;
@@ -1516,7 +1631,10 @@ export function useExperimentWorkspace({
       let oldSave: string | null = null;
       let replayStarted = false;
       try {
-        const imported = deserializeExperiment(await readExperimentFile(file));
+        const serialized = await readExperimentFile(file);
+        const verificationUnavailable =
+          importedExperimentVerificationUnavailable(serialized);
+        const imported = deserializeExperiment(serialized);
         const branchId = selectedImportedBranch(imported);
         const replay = createBranchReplay(imported, branchId);
         if (replay.finalTick === undefined) {
@@ -1558,7 +1676,9 @@ export function useExperimentWorkspace({
         setSetupOpen(false);
         setActionStatus({
           phase: "success",
-          message: `Imported ${result.frame.snapshot.scenario.name} / seed ${imported.scenario.seed} at tick ${result.frame.tick}.`,
+          message: verificationUnavailable
+            ? `Imported ${result.frame.snapshot.scenario.name} / seed ${imported.scenario.seed} at tick ${result.frame.tick}. Upgraded; prior verification unavailable.`
+            : `Imported ${result.frame.snapshot.scenario.name} / seed ${imported.scenario.seed} at tick ${result.frame.tick}.`,
         });
       } catch (error) {
         let preserved = true;
@@ -1783,6 +1903,7 @@ export function useExperimentWorkspace({
           );
         }
         setMomentReplay(presentation);
+        if (presentation) setDrawerOpen(false);
         setReplayState({
           phase: result.cancelled ? "cancelled" : "complete",
           currentTick: result.frame.tick,
@@ -2027,7 +2148,10 @@ export function useExperimentWorkspace({
     }
     const amount = Number(quantity);
     if (
-      (composerTool === "add-food" || composerTool === "remove-food") &&
+      (composerTool === "add-food" ||
+        composerTool === "remove-food" ||
+        composerTool === "replenish-water" ||
+        composerTool === "drain-water") &&
       (!Number.isInteger(amount) || amount < 1 || amount > 999)
     ) {
       setComposerValidation("Quantity must be a whole number from 1 to 999.");
@@ -2234,9 +2358,13 @@ export function useExperimentWorkspace({
             ? "Food added"
             : entry.command.type === "REMOVE_FOOD"
               ? "Food removed"
-              : entry.command.blocked
-                ? "Passage closed"
-                : "Passage opened",
+              : entry.command.type === "REPLENISH_WATER"
+                ? "Water replenished"
+                : entry.command.type === "DRAIN_WATER"
+                  ? "Water drained"
+                  : entry.command.blocked
+                    ? "Passage closed"
+                    : "Passage opened",
         target: `tile ${x}, ${y}`,
         status,
         selectable,
@@ -2337,6 +2465,8 @@ export function useExperimentWorkspace({
     if (
       composerTool !== "add-food" &&
       composerTool !== "remove-food" &&
+      composerTool !== "replenish-water" &&
+      composerTool !== "drain-water" &&
       composerTool !== "obstacle"
     ) {
       return undefined;
@@ -2364,9 +2494,13 @@ export function useExperimentWorkspace({
           ? `Add ${amount.toLocaleString()} food units at the target tile.`
           : composerTool === "remove-food"
             ? `Remove up to ${amount.toLocaleString()} food units from the target tile.`
-            : tile.blocked
-              ? "Open the target passage."
-              : "Close the target passage if the authoritative occupancy check permits it.",
+            : composerTool === "replenish-water"
+              ? `Add up to ${amount.toLocaleString()} units to the water source at the target tile.`
+              : composerTool === "drain-water"
+                ? `Remove up to ${amount.toLocaleString()} units from the water source at the target tile.`
+                : tile.blocked
+                  ? "Open the target passage."
+                  : "Close the target passage if the authoritative occupancy check permits it.",
     };
   }, [
     composerTool,

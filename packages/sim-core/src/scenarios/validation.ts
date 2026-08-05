@@ -42,6 +42,7 @@ export interface CompiledScenarioStructure {
   readonly chokepoints: readonly CompiledScenarioChokepoint[];
   readonly interventionDefaults: {
     readonly foodTileIndex: number;
+    readonly waterTileIndex: number;
     readonly obstacleTileIndex: number;
   };
 }
@@ -203,6 +204,7 @@ export function scenarioValidationErrors(compiled: CompiledScenarioStructure): s
     }
     const boundedValues = [
       creature.hunger,
+      creature.thirst,
       creature.generosity,
       creature.aggression,
       creature.sociability,
@@ -225,6 +227,7 @@ export function scenarioValidationErrors(compiled: CompiledScenarioStructure): s
   const resourcesByKind = new Map<ResourceNodePrototype["kind"], ResourceNodePrototype[]>([
     ["FOOD", []],
     ["MATERIAL", []],
+    ["WATER", []],
   ]);
   for (const [index, resource] of compiled.resourceNodes.entries()) {
     if (
@@ -245,6 +248,11 @@ export function scenarioValidationErrors(compiled: CompiledScenarioStructure): s
     const tileIndex = tileIndexAt(world, resource.x, resource.y);
     if (world.tiles[tileIndex]?.blocked !== false) {
       errors.push(`Scenario resource ${index.toString()} is on a blocked tile.`);
+    }
+    if (resource.kind === "WATER" && world.tiles[tileIndex]?.terrain !== "SHALLOW_WATER") {
+      errors.push(
+        `Scenario water resource ${index.toString()} must be on shallow-water terrain.`,
+      );
     }
     if (
       !Number.isSafeInteger(resource.currentStock) ||
@@ -268,7 +276,7 @@ export function scenarioValidationErrors(compiled: CompiledScenarioStructure): s
       );
     }
   }
-  for (const kind of ["FOOD", "MATERIAL"] as const) {
+  for (const kind of ["FOOD", "MATERIAL", "WATER"] as const) {
     if ((resourcesByKind.get(kind)?.length ?? 0) === 0) {
       errors.push(`Scenario must contain at least one ${kind.toLowerCase()} resource.`);
     }
@@ -350,7 +358,7 @@ export function scenarioValidationErrors(compiled: CompiledScenarioStructure): s
       ) {
         errors.push(`Scenario creature ${creature.name} has no reachable rest footprint.`);
       }
-      for (const kind of ["FOOD", "MATERIAL"] as const) {
+      for (const kind of ["FOOD", "MATERIAL", "WATER"] as const) {
         const hasReachableResource = (resourcesByKind.get(kind) ?? []).some((resource) =>
           interactionFootprint(world, resource.x, resource.y).some((tileIndex) =>
             reachable.has(tileIndex),
@@ -367,12 +375,23 @@ export function scenarioValidationErrors(compiled: CompiledScenarioStructure): s
 
   const defaultIndices = [
     ["food", compiled.interventionDefaults.foodTileIndex],
+    ["water", compiled.interventionDefaults.waterTileIndex],
     ["obstacle", compiled.interventionDefaults.obstacleTileIndex],
   ] as const;
   for (const [label, tileIndex] of defaultIndices) {
     if (world.tiles[tileIndex]?.blocked !== false) {
       errors.push(`Scenario ${label} intervention default must be a walkable tile.`);
     }
+  }
+  const waterDefault = compiled.interventionDefaults.waterTileIndex;
+  if (
+    !compiled.resourceNodes.some(
+      (resource) =>
+        resource.kind === "WATER" &&
+        tileIndexAt(world, resource.x, resource.y) === waterDefault,
+    )
+  ) {
+    errors.push("Scenario water intervention default must target a water resource.");
   }
   if (
     creatureTileIndices.includes(compiled.interventionDefaults.obstacleTileIndex) ||

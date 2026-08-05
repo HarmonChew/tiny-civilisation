@@ -27,20 +27,20 @@ import {
 } from "../src/scenarios/index.js";
 
 const EXPECTED_MAP_HASHES = {
-  "petri-world": "838df3795ee9e8e0",
-  "split-banks": "e989021f3827f7a9",
-  "scattered-plenty": "88e1e124f15c3910",
-  "unequal-table": "a3c914ef494ffaff",
+  "petri-world": "f21ecdb935f2bc8e",
+  "split-banks": "06541eb2e89525ca",
+  "scattered-plenty": "1626166bcf24ce83",
+  "unequal-table": "6f16475a03ba40dc",
 } as const;
 
 const EXPECTED_CANONICAL_STATE_HASHES = {
-  "petri-world": { tick0: "bab1ef059a47a308", tick2000: "701e0639692de551" },
-  "split-banks": { tick0: "772eaa8af56f8388", tick2000: "a47a3a64865a6901" },
+  "petri-world": { tick0: "871cc930ea04d4ab", tick2000: "6679af5deb9edd92" },
+  "split-banks": { tick0: "3516765c3026bd7c", tick2000: "881fd2b2153f9e0a" },
   "scattered-plenty": {
-    tick0: "1d3700dbab6e662a",
-    tick2000: "f604fd0f89dbbecb",
+    tick0: "24425d9bc3f7e32c",
+    tick2000: "9f078c57d55ced42",
   },
-  "unequal-table": { tick0: "7ead261906c971ad", tick2000: "cf0b710424f9cf3d" },
+  "unequal-table": { tick0: "ab1614171e7e0400", tick2000: "41308c6a4f4ba239" },
 } as const;
 
 function populationHarness(world: WorldState, seed = 4_182): SimulationState {
@@ -141,7 +141,7 @@ describe("deterministic scenario compilation", () => {
 
     expect(extracted.randomState).toBe(3_228_164_019);
     expect(extracted.randomState).toBe(established.randomState);
-    expect(extracted.nextEntityId).toBe(12);
+    expect(extracted.nextEntityId).toBe(13);
     expect(extracted.creatures).toEqual(established.creatures);
     expect(extracted.resourceNodes).toEqual(established.resourceNodes);
     expect(extracted.creatures.map((creature) => creature.name)).toEqual([
@@ -186,10 +186,76 @@ describe("deterministic scenario compilation", () => {
     expect(split.creatures.filter((creature) => creature.x < 24)).toHaveLength(4);
     expect(split.creatures.filter((creature) => creature.x > 24)).toHaveLength(4);
     expect(unequal.world).toEqual(petri.world);
-    expect(unequal.resourceNodes).toEqual(petri.resourceNodes);
+    expect(unequal.resourceNodes.filter((resource) => resource.kind !== "WATER")).toEqual(
+      petri.resourceNodes.filter((resource) => resource.kind !== "WATER"),
+    );
     expect(unequal.creatures.map((creature) => [creature.x, creature.y])).not.toEqual(
       petri.creatures.map((creature) => [creature.x, creature.y]),
     );
+  });
+
+  it("locks Phase 4 water placement and scenario-specific initial thirst", () => {
+    const expected = {
+      "petri-world": {
+        sources: [[34, 20, 24, 40, 180]],
+        thirst: () => 2_500,
+      },
+      "split-banks": {
+        sources: [[22, 16, 18, 30, 240]],
+        thirst: () => 3_200,
+      },
+      "scattered-plenty": {
+        sources: [
+          [20, 12, 18, 24, 140],
+          [27, 12, 18, 24, 140],
+          [20, 19, 18, 24, 140],
+          [27, 19, 18, 24, 140],
+        ],
+        thirst: () => 1_800,
+      },
+      "unequal-table": {
+        sources: [
+          [34, 18, 16, 28, 220],
+          [34, 22, 16, 28, 220],
+        ],
+        thirst: (x: number) => (x < 24 ? 4_500 : 2_200),
+      },
+    } as const;
+
+    for (const scenarioId of SCENARIO_IDS) {
+      const compiled = compileScenario(createScenarioReference(scenarioId, 17));
+      const water = compiled.resourceNodes.filter((resource) => resource.kind === "WATER");
+      expect(
+        water.map((resource) => [
+          resource.x,
+          resource.y,
+          resource.currentStock,
+          resource.maximumStock,
+          resource.regenerationEveryTicks,
+        ]),
+      ).toEqual(expected[scenarioId].sources);
+      expect(
+        water.every(
+          (resource) =>
+            compiled.world.tiles[resource.y * compiled.world.width + resource.x]
+              ?.terrain === "SHALLOW_WATER",
+        ),
+      ).toBe(true);
+      expect(compiled.creatures.map((creature) => creature.thirst)).toEqual(
+        compiled.creatures.map((creature) => expected[scenarioId].thirst(creature.x)),
+      );
+
+      const state = createSimulation(createScenarioReference(scenarioId, 17));
+      expect(
+        state.creatures.every((creature, index) => {
+          const baseline = compiled.creatures[index]!.thirst;
+          return (
+            creature.needs.thirst >= baseline - 700 &&
+            creature.needs.thirst <= baseline + 700
+          );
+        }),
+      ).toBe(true);
+    }
   });
 
   it("hashes compiled structure rather than the mutable object identity", () => {
@@ -295,6 +361,16 @@ describe("scenario structural validation", () => {
         error.includes("has no legal interaction footprint"),
       ),
     ).toBe(true);
+  });
+
+  it("rejects potable water sources that are detached from shallow-water terrain", () => {
+    const compiled = compileScenario(createScenarioReference("petri-world", 4_182));
+    const resources = compiled.resourceNodes.map((resource) =>
+      resource.kind === "WATER" ? { ...resource, x: 33, y: 20 } : resource,
+    );
+    expect(scenarioValidationErrors({ ...compiled, resourceNodes: resources })).toContain(
+      "Scenario water resource 3 must be on shallow-water terrain.",
+    );
   });
 
   it("verifies declared chokepoints against the navigation graph", () => {

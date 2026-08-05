@@ -10,7 +10,9 @@ import type {
 
 const EMERGENCY_ACTIONS = new Set<ActionKind>([
   "EAT",
+  "DRINK",
   "GATHER_FOOD",
+  "GATHER_WATER",
   "WITHDRAW",
   "STEAL",
   "FLEE",

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CreatureView, WorldView } from "../model";
 import { DEFAULT_SCENARIO_VIEW } from "../experiment/scenario-presets";
@@ -37,6 +37,7 @@ const makeCreature = (id: number, name: string, action: string): CreatureView =>
   health: 90,
   hunger: 30,
   fatigue: 20,
+  thirst: 40,
   traits: [],
   inventory: [],
   candidates: [],
@@ -79,7 +80,7 @@ describe("WorldStage dish subject label", () => {
         focusedId={2}
         followedId={null}
         tool="inspect"
-        overlays={{ resources: true, intentions: false, groups: false }}
+        overlays={{ resources: true, intentions: false, groups: false, traffic: true }}
         feedback="Ready"
         {...callbacks}
       />,
@@ -100,7 +101,7 @@ describe("WorldStage dish subject label", () => {
         focusedId={2}
         followedId={null}
         tool="inspect"
-        overlays={{ resources: true, intentions: false, groups: false }}
+        overlays={{ resources: true, intentions: false, groups: false, traffic: true }}
         feedback="Ready"
         {...callbacks}
       />,
@@ -120,7 +121,7 @@ describe("WorldStage dish subject label", () => {
         focusedId={null}
         followedId={null}
         tool="inspect"
-        overlays={{ resources: true, intentions: false, groups: false }}
+        overlays={{ resources: true, intentions: false, groups: false, traffic: true }}
         feedback="Showing the action beat"
         replayCamera={{
           eventId: 91,
@@ -140,5 +141,29 @@ describe("WorldStage dish subject label", () => {
     expect(
       (screen.getByRole("button", { name: "Inspect" }) as HTMLButtonElement).disabled,
     ).toBe(true);
+  });
+
+  it("offers water interventions and a pressed traffic overlay control", () => {
+    render(
+      <WorldStage
+        seed={11}
+        view={view}
+        selectedId={null}
+        focusedId={null}
+        followedId={null}
+        tool="inspect"
+        overlays={{ resources: true, intentions: false, groups: false, traffic: true }}
+        feedback="Ready"
+        {...callbacks}
+      />,
+    );
+
+    const trails = screen.getByRole("button", { name: "Toggle traffic trails" });
+    expect(trails.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Replenish water" }));
+    expect(callbacks.onTool).toHaveBeenLastCalledWith("replenish-water");
+    expect(screen.getByRole("button", { name: "Drain water" })).toBeTruthy();
+    expect(screen.getByText("water source")).toBeTruthy();
+    expect(screen.getByText("recent traffic")).toBeTruthy();
   });
 });

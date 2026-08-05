@@ -31,7 +31,7 @@ The signature interaction is evidence-to-world selection: choosing an event or r
 ```text
 React controls ── PlayerCommand ──▶ Worker engine ──▶ deterministic sim-core
                                                               │
-                                            read-only RenderSnapshot v3 frames
+                                            read-only RenderSnapshot v4 frames
                                                               │
                                           ┌───────────────────┴──────────────┐
                                           ▼                                  ▼
@@ -113,11 +113,11 @@ The implemented decisions are summarized here; [`phase-2.5-implementation.md`](p
 | D7 — shared focus                       | `focus/` owns typed transient/persistent focus shared by the dish, navigator, chronicle, inspector, evidence, and moments.                                                                                                          |
 | D8 — isolated replay                    | A disposable engine captures the four 20/1/20 replay beats for the dish. Event-aware framing is temporary; exit/failure restores the exact live viewport, world focus, play, follow, region, and DOM focus.                         |
 
-## Phase 3 scenario boundaries
+## Scenario and Phase 4.1 system boundaries
 
 - `sim-core/scenarios/` owns the immutable four-entry catalog, executable definitions, deterministic compiler, structural/topological validation, seed corpora, and stable compiled-map hashes.
 - A scenario reference contains scenario ID, definition version, map-generation version, and seed. It is authoritative in state and is copied through snapshot, save, replay, experiment, outcome, causal-evidence, browser workspace, and Worker protocol boundaries.
-- Scenario definitions compile only existing starting facts: terrain/walk cost, resources, creature positions, initial hunger/fatigue, and bounded trait/skill inputs. They cannot inject desires, plans, actions, memories, relationships, groups, or events.
+- Scenario definitions compile starting facts: terrain/walk cost, resources, creature positions, initial hunger/fatigue/thirst, and bounded trait/skill inputs. They cannot inject desires, plans, actions, memories, relationships, groups, or events.
 - Generic desire selection, candidate scoring, action execution, social updates, event attention, and causal evidence never branch on scenario ID. The Petri-specific startup sentence is presentation-compatible initialization, not a behavior branch.
 - Static snapshot frames include catalog facts and compiled regions/chokepoints. Hot frames omit static tiles and landmark geometry. The browser retains the static scenario projection across hot updates.
 - `headless matrix` runs catalog × locked seed corpora in catalog-then-seed order with one live simulation/collector at a time. It retains bounded raw primary profiles and derives hard invariants, contract bands, factual multi-label outcomes, Wilson incidence, paired descriptive effects, and convergence diagnostics.
@@ -136,12 +136,12 @@ Additional Phase 2.5 presentation modules remain downstream of these contracts:
 - `SIMULATION_BEHAVIOR_VERSION` changes when the same seed and command log intentionally produces a different result.
 - `SIMULATION_STATE_VERSION` changes when authoritative serialized state changes shape.
 - Command, snapshot, replay, save, scenario, experiment, outcome, and causal-evidence schema versions change independently at their transport boundaries.
-- Phase 3 retains behavior version 3 and advances authoritative state to 3. Snapshot, replay, save, scenario, experiment, outcome, and causal-evidence schemas are 3, 2, 2, 2, 3, 2, and 3 respectively. Browser workspace and Worker runtime protocol are both version 2. The nested intervention-response trace remains version 1 and command remains version 1.
+- Phase 4.1 uses behavior/state 4/4; command/snapshot 2/4; replay/save 3/3; scenario envelope/definition/map generation 2/2/1; experiment/outcome/causal-evidence 4/3/4; intervention response/activity profile 2/4; and browser workspace/Worker protocol 3/3.
 - Save, replay, and experiment parsing/migration happens only at `sim-core` contract boundaries; applications do not probe or silently alias incompatible fields.
-- Supported seed-only artifacts migrate to `petri-world@1`. Legacy verification hashes/checkpoints are cleared when the added authoritative identity makes the old claim unverifiable. Candidate state and scenario identity are fully validated before an active browser run is replaced.
+- Supported seed-only artifacts migrate through the historical `petri-world` definition before the Phase 4 upgrade. Phase 3 artifacts are accepted only under explicit behavior-3/state-3 tuples. Their verification hashes, checkpoints, outcomes, and response traces are cleared; candidate state and scenario identity are fully validated before an active browser run is replaced.
 - Unknown versions, malformed nested shapes, extra fields, invalid references, and oversized persisted JSON are rejected before replacing the active run.
 
-See the [Phase 3 contract](phase-3-contract.md#compatibility-and-versions) for the current matrix and [Phase 2.5 implementation record](phase-2.5-implementation.md#version-matrix) for the historical migration source.
+See the [Phase 4.1 contract](phase-4.1-contract.md#compatibility-versions) for the current matrix, the [Phase 3 contract](phase-3-contract.md#compatibility-and-versions) for its migration source, and the [Phase 2.5 implementation record](phase-2.5-implementation.md#version-matrix) for earlier history.
 
 ## Vertical-slice boundary
 
@@ -150,6 +150,7 @@ Implemented now:
 - four versioned 48 × 32 starting worlds with distinct topology, resource access, proximity, and need/trait distributions;
 - eight autonomous creatures with needs, traits, skills, inventory, persistent desires/plans, actions, and retained factual reasons;
 - deterministic A* movement and resource gathering;
+- thirst, finite renewable potable-water nodes, drinking, water sharing, deterministic weighted travel scoring, and observational traffic trails;
 - authoritative interaction slots, readable endpoints/routes, and deterministic claim validation/repair;
 - sharing, theft, memories, directed relationships, group formation, leadership, communal storage, guarding, confrontation, and flight;
 - pause, tick, speed, restart, typed shared focus, following, and environmental interventions;
@@ -159,8 +160,10 @@ Implemented now:
 
 Intentionally deferred:
 
-- water, shelter, birth, ageing, death, culture, migration, territory, trade, seasons, disease, predators, technology, and LLM narration.
+- shelter, birth, ageing, death, culture, migration, territory, trade, seasons, disease, predators, technology, and LLM narration.
 
 The deferred systems should extend the same event and utility contracts only after the social feedback loop remains compelling across multi-seed runs.
 
-Phase 3 adds automated deterministic, contract, runtime, component, and portable 32-run smoke evidence across all four identities. The Chromium project retains the 18-image Petri story matrix, adds tick-zero narrow/medium/wide coverage for every additional scenario, and captures one 2,000-tick developed state per new scenario. The production suite passes 38/38 with 30 visual baselines. Manual NVDA or VoiceOver coverage, Firefox/WebKit release runs, full calibration/holdout evidence, and the planned formative/confirmatory usability sessions remain release gates until their artifacts are attached.
+Phase 4.1 engineering and automated simulation evidence are complete, but automated coverage alone does not close its release gate. The discovery [review](baselines/phase-4.1-calibration-review-v1.md) froze outcome-classifier v2 plus the selected scenario and macro bands. The unchanged [frozen calibration](baselines/phase-4.1-calibration-v2.md) and [untouched holdout](baselines/phase-4.1-holdout-v2.md) each cover four scenarios × 64 seeds × 10,000 ticks and pass their automated hard, contract, outcome-incidence, dominance-rationale, and paired macro-difference gates. Deterministic, migration, golden, coverage, visual, payload, bundle, four-scenario throughput, and aggregate 12/12 Chromium/Firefox/WebKit release evidence also pass. The manual assistive-technology pass and fresh usability session remain open. The [release ledger](baselines/phase-4.1-release-status-v1.md) records this boundary.
+
+Phase 3 adds automated deterministic, contract, runtime, component, and portable 32-run smoke evidence across all four identities. Its historical 64-seed calibration and untouched 64-seed holdout from immutable commit `4ff604e` pass the frozen hard, label, and macro gates without behavior tuning; the [release ledger](baselines/phase-3-release-status-v1.md) links their compressed artifacts, checksums, and pre-holdout review. The Chromium project retains the existing 30-scene snapshot matrix; Phase 4.1 adds four medium-width water states. The aggregate release suite passes all 12 current stories across Chromium, Firefox, and WebKit. The Phase 3 manual NVDA pass and planned formative/confirmatory usability sessions also remain release gates, so neither Phase 3 nor Phase 4.1 is release-complete.

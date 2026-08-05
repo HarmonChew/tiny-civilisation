@@ -32,7 +32,7 @@ function humanize(value: string): string {
 }
 
 function kindForKey(key: string): ReasonFactKind {
-  if (/hunger|fatigue|injury|health|rest/i.test(key)) return "NEED";
+  if (/hunger|thirst|fatigue|injury|health|rest|hydration/i.test(key)) return "NEED";
   if (/carried|reserve|surplus|inventory/i.test(key)) return "INVENTORY";
   if (/remember|grievance/i.test(key)) return "MEMORY";
   if (/trust|fear|rivalry|affinity/i.test(key)) return "RELATIONSHIP";
@@ -41,7 +41,7 @@ function kindForKey(key: string): ReasonFactKind {
   }
   if (/group|communal|member/i.test(key)) return "GROUP";
   if (/storage|store|guard/i.test(key)) return "STRUCTURE";
-  if (/food|material|stock|forag|resource/i.test(key)) return "RESOURCE";
+  if (/food|water|material|stock|forag|resource|source/i.test(key)) return "RESOURCE";
   if (/travel|distance|route/i.test(key)) return "TRAVEL";
   if (/crowd|slot|witness/i.test(key)) return "CROWDING";
   return "WORLD";
@@ -91,11 +91,16 @@ export function reasonFactText(fact: ReasonFact | null): string {
     case "personal hunger":
     case "urgent hunger":
       return "hunger is pressing";
+    case "personal thirst":
+    case "urgent thirst":
+      return "thirst is pressing";
     case "need for rest":
     case "personal fatigue":
       return "fatigue is rising";
     case "recipient hunger":
       return "someone nearby is hungry";
+    case "recipient thirst":
+      return "someone nearby is severely thirsty";
     case "remembered grievance":
       return "a recent grievance is still vivid";
     case "fear of aggressor":
@@ -110,6 +115,8 @@ export function reasonFactText(fact: ReasonFact | null): string {
       return "they have no food in reserve";
     case "known stock":
       return "food is known to be available there";
+    case "known water stock":
+      return "potable water is known to be available there";
     case "keep a reserve":
       return "keeping a reserve matters to them";
     default:

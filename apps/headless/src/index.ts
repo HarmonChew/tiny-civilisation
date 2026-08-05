@@ -40,8 +40,14 @@ import {
   summarizeScenarioIdentity,
 } from "./scenario-reporting.js";
 import {
+  matrixEvidenceStdoutChunks,
+  writeMatrixEvidence,
+  type MatrixEvidenceReport,
+} from "./matrix-evidence.js";
+import {
   analyzeScenarioRuns,
   convergenceDiagnostics,
+  evaluateFrozenPairedMacroBands,
   pairedScenarioComparisons,
   type RunHardInvariantReport,
   type RunOutcomeSummary,
@@ -75,6 +81,7 @@ export interface MatrixOptions {
   corpus: MatrixCorpusName;
   seeds: readonly number[];
   ticks: number;
+  outputPath?: string;
 }
 
 interface PerformanceMetrics {
@@ -127,7 +134,7 @@ function usage(): string {
     "  npm run headless -- [run] [--scenario ID] [--seed N] [--ticks N]",
     "  npm run headless -- batch [--scenario ID] [--seeds 1..100|1,4,8] [--count N] [--ticks N]",
     "  npm run headless -- profile [--scenario ID] [--seed N|--seeds 4182,921,23|--count N] [--ticks N]",
-    "  npm run headless -- matrix [--corpus smoke|nightly|calibration|holdout] [--ticks N]",
+    "  npm run headless -- matrix [--corpus smoke|nightly|calibration|holdout] [--ticks N] [--output PATH.json.gz]",
     "",
     "Options:",
     `  --scenario ID  Scenario definition (default: ${DEFAULT_SCENARIO_ID}; ${scenarioIds})`,
@@ -136,6 +143,7 @@ function usage(): string {
     "  --seeds SPEC   Inclusive range, comma-separated list, or both",
     "  --count N      Run seeds 1 through N when --seeds is omitted",
     "  --corpus NAME   Locked matrix corpus (default: smoke)",
+    "  --output PATH   Also write deterministic .json.gz, .sha256, and .md evidence files",
     "  --help, -h     Show this help",
   ].join("\n");
 }
@@ -347,6 +355,7 @@ export function parseProfileOptions(args: readonly string[]): ProfileOptions {
 export function parseMatrixOptions(args: readonly string[]): MatrixOptions {
   let corpus: MatrixCorpusName = "smoke";
   let ticks: number | undefined;
+  let outputPath: string | undefined;
 
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
@@ -355,6 +364,12 @@ export function parseMatrixOptions(args: readonly string[]): MatrixOptions {
       index++;
     } else if (argument === "--ticks") {
       ticks = parseInteger(optionValue(args, index, argument), argument, 0);
+      index++;
+    } else if (argument === "--output") {
+      outputPath = optionValue(args, index, argument);
+      if (!outputPath.toLowerCase().endsWith(".json.gz")) {
+        throw new CliError("--output must end with .json.gz.");
+      }
       index++;
     } else {
       throw new CliError(`Unknown matrix option: ${String(argument)}`);
@@ -365,6 +380,7 @@ export function parseMatrixOptions(args: readonly string[]): MatrixOptions {
     corpus,
     seeds: [...matrixCorpusSeeds(corpus)].sort((left, right) => left - right),
     ticks: ticks ?? matrixCorpusTicks(corpus),
+    ...(outputPath === undefined ? {} : { outputPath }),
   };
 }
 
@@ -451,6 +467,12 @@ export function runBatch(options: BatchOptions): object {
       meanPopulation: round(mean(runs.map((run) => run.metrics.population)), 2),
       meanGroups: round(mean(runs.map((run) => run.metrics.groups)), 2),
       sharingEvents: runs.reduce((sum, run) => sum + run.metrics.sharingEvents, 0),
+      waterGatheredUnits: runs.reduce(
+        (sum, run) => sum + run.metrics.waterGatheredUnits,
+        0,
+      ),
+      waterDrunkUnits: runs.reduce((sum, run) => sum + run.metrics.waterDrunkUnits, 0),
+      waterSharedUnits: runs.reduce((sum, run) => sum + run.metrics.waterSharedUnits, 0),
       theftEvents: runs.reduce((sum, run) => sum + run.metrics.theftEvents, 0),
       conflictEvents: runs.reduce((sum, run) => sum + run.metrics.conflictEvents, 0),
       storageEvents: runs.reduce((sum, run) => sum + run.metrics.storageEvents, 0),
@@ -596,6 +618,11 @@ export function runMatrix(options: MatrixOptions): object {
     return { ...run, ...analysis };
   });
   const pairedComparisons = pairedScenarioComparisons(runs);
+  const frozenPairedMacroBands = evaluateFrozenPairedMacroBands(
+    runs,
+    pairedComparisons,
+    analysisContext,
+  );
   const convergence = convergenceDiagnostics(pairedComparisons);
   const allRepeatComparisonsMatch = determinismComparisons.every(
     (comparison) => comparison.exactMatch,
@@ -648,6 +675,7 @@ export function runMatrix(options: MatrixOptions): object {
         comparisons: determinismComparisons,
       },
       pairedComparisons,
+      frozenPairedMacroBands,
       convergence,
       rawProfileRetention: {
         policy: "RETAIN_ALL_PRIMARY_PROFILES",
@@ -659,7 +687,7 @@ export function runMatrix(options: MatrixOptions): object {
           "Four catalog scenarios times at most 64 locked seeds equals 256 retained primary profiles.",
       },
     },
-  };
+  } satisfies MatrixEvidenceReport;
 }
 
 export function main(args: readonly string[]): void {
@@ -680,9 +708,16 @@ export function main(args: readonly string[]): void {
     return;
   }
   if (first === "matrix") {
-    process.stdout.write(
-      `${JSON.stringify(runMatrix(parseMatrixOptions(rest)), null, 2)}\n`,
-    );
+    const options = parseMatrixOptions(rest);
+    const report = runMatrix(options) as MatrixEvidenceReport;
+    if (options.outputPath !== undefined) {
+      writeMatrixEvidence(
+        report,
+        options.outputPath,
+        process.env.INIT_CWD ?? process.cwd(),
+      );
+    }
+    for (const chunk of matrixEvidenceStdoutChunks(report)) process.stdout.write(chunk);
     return;
   }
 

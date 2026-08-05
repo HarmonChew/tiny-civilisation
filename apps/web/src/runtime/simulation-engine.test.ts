@@ -246,13 +246,14 @@ describe("simulation engines", () => {
       const createRequest = requestMessages(workerPort)[0];
       expect(createRequest?.operation).toEqual({ type: "create", scenario: reference });
 
-      const [firstAdvanced, secondAdvanced, workerAdvanced] = await Promise.all([
-        firstDirect.step(32),
-        secondDirect.step(32),
-        worker.step(32),
+      const [firstRun, secondRun, workerRun] = await Promise.all([
+        firstDirect.runToTick(96, { chunkSize: 96 }),
+        secondDirect.runToTick(96, { chunkSize: 7 }),
+        worker.runToTick(96, { chunkSize: 11 }),
       ]);
-      expect(secondAdvanced).toEqual(firstAdvanced);
-      expect(workerAdvanced).toEqual(firstAdvanced);
+      expect(firstRun.cancelled).toBe(false);
+      expect(secondRun.frame).toEqual(firstRun.frame);
+      expect(workerRun.frame).toEqual(firstRun.frame);
 
       const [firstHash, secondHash, workerHash] = await Promise.all([
         firstDirect.getCanonicalHash(),
@@ -262,9 +263,34 @@ describe("simulation engines", () => {
       expect(secondHash).toEqual(firstHash);
       expect(workerHash).toEqual(firstHash);
 
+      const [directSave, workerSave] = await Promise.all([
+        firstDirect.save(),
+        worker.save(),
+      ]);
+      expect(workerSave).toBe(directSave);
+      const loaded = new DirectSimulationEngine();
+      const loadedFrame = await loaded.load(directSave);
+      expect(loadedFrame.hash).toBe(firstHash.hash);
+
+      const replay = createSimulationReplay(reference, [], {
+        finalTick: 96,
+        finalHash: firstHash.hash,
+      });
+      const replayDirect = new DirectSimulationEngine();
+      const replayWorker = new WorkerSimulationEngine({ worker: new InProcessWorker() });
+      const [directReplay, workerReplay] = await Promise.all([
+        replayDirect.replay(replay, { chunkSize: 96 }),
+        replayWorker.replay(replay, { chunkSize: 13 }),
+      ]);
+      expect(directReplay.hashMatches).toBe(true);
+      expect(workerReplay).toEqual(directReplay);
+
       firstDirect.dispose();
       secondDirect.dispose();
       worker.dispose();
+      loaded.dispose();
+      replayDirect.dispose();
+      replayWorker.dispose();
     }
 
     expect(new Set(mapHashes).size).toBe(SCENARIO_IDS.length);

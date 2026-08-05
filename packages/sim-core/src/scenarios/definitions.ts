@@ -41,6 +41,7 @@ export interface ScenarioDefinition {
   readonly chokepoints: readonly ScenarioChokepointDefinition[];
   readonly interventionDefaults: {
     readonly food: ScenarioCoordinate;
+    readonly water: ScenarioCoordinate;
     readonly obstacle: ScenarioCoordinate;
   };
 }
@@ -102,12 +103,19 @@ function centralPassage(
 
 function atPositions(
   positions: Readonly<Record<string, ScenarioCoordinate>>,
+  thirst:
+    | number
+    | ((creature: CreaturePrototype, position: ScenarioCoordinate) => number) = 2_500,
 ): readonly CreaturePrototype[] {
   return frozenCreatures(
     PETRI_CREATURE_PROTOTYPES.map((creature) => {
       const position = positions[creature.name];
       if (!position) throw new Error(`Missing start position for ${creature.name}.`);
-      return { ...creature, ...position };
+      return {
+        ...creature,
+        ...position,
+        thirst: typeof thirst === "function" ? thirst(creature, position) : thirst,
+      };
     }),
   );
 }
@@ -165,6 +173,7 @@ function definition(
     chokepoints: Object.freeze([...values.chokepoints]),
     interventionDefaults: Object.freeze({
       food: Object.freeze({ ...values.interventionDefaults.food }),
+      water: Object.freeze({ ...values.interventionDefaults.water }),
       obstacle: Object.freeze({ ...values.interventionDefaults.obstacle }),
     }),
   });
@@ -183,21 +192,28 @@ const PETRI_WORLD = definition("petri-world", {
   resourceNodes: PETRI_RESOURCE_PROTOTYPES,
   regions: regions(),
   chokepoints: centralPassage(14, 17),
-  interventionDefaults: { food: { x: 10, y: 7 }, obstacle: { x: 24, y: 15 } },
+  interventionDefaults: {
+    food: { x: 10, y: 7 },
+    water: { x: 34, y: 20 },
+    obstacle: { x: 24, y: 15 },
+  },
 });
 
 const SPLIT_BANKS = definition("split-banks", {
   resolveTile: splitBanksTileAt,
-  creatures: atPositions({
-    Iri: { x: 8, y: 10 },
-    Nalo: { x: 11, y: 10 },
-    Ves: { x: 8, y: 13 },
-    Aro: { x: 37, y: 18 },
-    Meka: { x: 11, y: 13 },
-    Sori: { x: 40, y: 18 },
-    Pela: { x: 37, y: 21 },
-    Taro: { x: 40, y: 21 },
-  }),
+  creatures: atPositions(
+    {
+      Iri: { x: 8, y: 10 },
+      Nalo: { x: 11, y: 10 },
+      Ves: { x: 8, y: 13 },
+      Aro: { x: 37, y: 18 },
+      Meka: { x: 11, y: 13 },
+      Sori: { x: 40, y: 18 },
+      Pela: { x: 37, y: 21 },
+      Taro: { x: 40, y: 21 },
+    },
+    3_200,
+  ),
   resourceNodes: [
     {
       kind: "FOOD",
@@ -226,24 +242,40 @@ const SPLIT_BANKS = definition("split-banks", {
       regenerationEveryTicks: 80,
       regenerationAmount: 1,
     },
+    {
+      kind: "WATER",
+      x: 22,
+      y: 16,
+      currentStock: 18,
+      maximumStock: 30,
+      regenerationEveryTicks: 240,
+      regenerationAmount: 1,
+    },
   ],
   regions: regions(),
   chokepoints: centralPassage(15, 16, [23, 24]),
-  interventionDefaults: { food: { x: 10, y: 8 }, obstacle: { x: 23, y: 15 } },
+  interventionDefaults: {
+    food: { x: 10, y: 8 },
+    water: { x: 22, y: 16 },
+    obstacle: { x: 23, y: 15 },
+  },
 });
 
 const SCATTERED_PLENTY = definition("scattered-plenty", {
   resolveTile: scatteredPlentyTileAt,
-  creatures: atPositions({
-    Iri: { x: 7, y: 7 },
-    Nalo: { x: 10, y: 7 },
-    Ves: { x: 37, y: 7 },
-    Aro: { x: 40, y: 7 },
-    Meka: { x: 7, y: 24 },
-    Sori: { x: 10, y: 24 },
-    Pela: { x: 37, y: 24 },
-    Taro: { x: 40, y: 24 },
-  }),
+  creatures: atPositions(
+    {
+      Iri: { x: 7, y: 7 },
+      Nalo: { x: 10, y: 7 },
+      Ves: { x: 37, y: 7 },
+      Aro: { x: 40, y: 7 },
+      Meka: { x: 7, y: 24 },
+      Sori: { x: 10, y: 24 },
+      Pela: { x: 37, y: 24 },
+      Taro: { x: 40, y: 24 },
+    },
+    1_800,
+  ),
   resourceNodes: [
     {
       kind: "FOOD",
@@ -290,6 +322,19 @@ const SCATTERED_PLENTY = definition("scattered-plenty", {
       regenerationEveryTicks: 80,
       regenerationAmount: 1,
     },
+    ...[
+      { x: 20, y: 12 },
+      { x: 27, y: 12 },
+      { x: 20, y: 19 },
+      { x: 27, y: 19 },
+    ].map((coordinate) => ({
+      kind: "WATER" as const,
+      ...coordinate,
+      currentStock: 18,
+      maximumStock: 24,
+      regenerationEveryTicks: 140,
+      regenerationAmount: 1,
+    })),
   ],
   regions: Object.freeze([
     Object.freeze({
@@ -317,25 +362,56 @@ const SCATTERED_PLENTY = definition("scattered-plenty", {
     }),
   ]),
   chokepoints: Object.freeze([]),
-  interventionDefaults: { food: { x: 8, y: 10 }, obstacle: { x: 24, y: 15 } },
+  interventionDefaults: {
+    food: { x: 8, y: 10 },
+    water: { x: 20, y: 12 },
+    obstacle: { x: 24, y: 15 },
+  },
 });
 
 const UNEQUAL_TABLE = definition("unequal-table", {
   resolveTile: petriWorldTileAt,
-  creatures: atPositions({
-    Iri: { x: 8, y: 9 },
-    Nalo: { x: 11, y: 9 },
-    Ves: { x: 8, y: 12 },
-    Aro: { x: 37, y: 19 },
-    Meka: { x: 11, y: 12 },
-    Sori: { x: 39, y: 22 },
-    Pela: { x: 10, y: 15 },
-    Taro: { x: 36, y: 22 },
-  }),
-  resourceNodes: PETRI_RESOURCE_PROTOTYPES,
+  creatures: atPositions(
+    {
+      Iri: { x: 8, y: 9 },
+      Nalo: { x: 11, y: 9 },
+      Ves: { x: 8, y: 12 },
+      Aro: { x: 37, y: 19 },
+      Meka: { x: 11, y: 12 },
+      Sori: { x: 39, y: 22 },
+      Pela: { x: 10, y: 15 },
+      Taro: { x: 36, y: 22 },
+    },
+    (_creature, position) => (position.x < 24 ? 4_500 : 2_200),
+  ),
+  resourceNodes: [
+    ...PETRI_RESOURCE_PROTOTYPES.filter((resource) => resource.kind !== "WATER"),
+    {
+      kind: "WATER",
+      x: 34,
+      y: 18,
+      currentStock: 16,
+      maximumStock: 28,
+      regenerationEveryTicks: 220,
+      regenerationAmount: 1,
+    },
+    {
+      kind: "WATER",
+      x: 34,
+      y: 22,
+      currentStock: 16,
+      maximumStock: 28,
+      regenerationEveryTicks: 220,
+      regenerationAmount: 1,
+    },
+  ],
   regions: regions(),
   chokepoints: centralPassage(14, 17),
-  interventionDefaults: { food: { x: 10, y: 7 }, obstacle: { x: 24, y: 15 } },
+  interventionDefaults: {
+    food: { x: 10, y: 7 },
+    water: { x: 34, y: 18 },
+    obstacle: { x: 24, y: 15 },
+  },
 });
 
 const DEFINITIONS = new Map<ScenarioId, ScenarioDefinition>([

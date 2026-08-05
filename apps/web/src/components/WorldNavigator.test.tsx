@@ -34,6 +34,7 @@ const makeCreature = (
   health: 90,
   hunger: 35,
   fatigue: 20,
+  thirst: 35,
   traits: [],
   inventory: [],
   candidates: [],
@@ -154,6 +155,7 @@ describe("WorldNavigator", () => {
       .getByRole("button", { name: /^Beta,/ })
       .getAttribute("aria-label");
     expect(betaName).toContain("reason: A retained fact supports this choice.");
+    expect(betaName).toContain("thirst 35 percent");
     expect(betaName).not.toContain("no alert");
 
     fireEvent.click(screen.getByRole("button", { name: "Resources" }));
@@ -295,6 +297,59 @@ describe("WorldNavigator", () => {
     expect(screen.getByText(/Alert: health risk/).textContent).toContain(
       "fleeing a threat",
     );
+  });
+
+  it("exposes water stock, depletion, thirst, and carried water without color alone", () => {
+    const thirsty = {
+      ...makeCreature(1, "Alpha", 2, 2),
+      thirst: 82,
+      inventory: [{ kind: "WATER", quantity: 2 }],
+    } satisfies CreatureView;
+    render(
+      <WorldNavigator
+        view={{
+          ...baseView,
+          creatures: [thirsty],
+          resources: [
+            ...baseView.resources,
+            {
+              id: 8,
+              kind: "WATER",
+              x: 3,
+              y: 4,
+              stock: 0,
+              capacity: 16,
+              access: {
+                interactionCapacity: 3,
+                claimedInteractionSlots: 2,
+                reachableCreatures: 1,
+                livingCreatures: 1,
+                nearestWeightedCost: 40,
+                meanWeightedCost: 40,
+              },
+            },
+          ],
+        }}
+        selectedRef={null}
+        focusedRef={null}
+        keyboardFocusedRef={null}
+        {...callbacks()}
+      />,
+    );
+
+    const waterSource = screen.getByRole("button", { name: /^Water source 8,/ });
+    expect(waterSource.getAttribute("aria-label")).toContain(
+      "alert: water source depleted",
+    );
+    expect(waterSource.getAttribute("aria-label")).toContain(
+      "2 of 3 interaction slots claimed",
+    );
+    expect(waterSource.getAttribute("aria-label")).toContain(
+      "nearest weighted travel cost 40 move-cost units",
+    );
+    expect(screen.getByText(/thirst 82%/i).textContent).toContain("2 water carried");
+    expect(screen.getByText(/Alert: water source depleted/i)).toBeTruthy();
+    expect(screen.getByText(/1 water source holds 0 units/i)).toBeTruthy();
   });
 
   it("debounces polite announcements and ignores routine or notable changes", () => {

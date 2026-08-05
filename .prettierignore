@@ -6,4 +6,7 @@ test-results/
 packages/sim-core/tests/fixtures/golden-replays.v1.json
 packages/sim-core/tests/fixtures/golden-replays.v2.json
 packages/sim-core/tests/fixtures/golden-replays.v3.json
+packages/sim-core/tests/fixtures/golden-replays.v4.json
+docs/baselines/phase-*-calibration-v*.md
+docs/baselines/phase-*-holdout-v*.md
 package-lock.json

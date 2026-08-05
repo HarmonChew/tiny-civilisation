@@ -22,7 +22,8 @@
   pointer-events: none;
 }
 
-.dish-moment-layer .moment-queue {
+.dish-moment-layer .moment-queue,
+.dish-moment-layer .moment-replay {
   pointer-events: auto;
 }
 

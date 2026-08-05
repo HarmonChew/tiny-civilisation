@@ -222,7 +222,7 @@ export interface ComparisonMetric {
   baseline: string | number;
   branch: string | number;
   delta: string | number;
-  deltaTone?: "positive" | "negative" | "neutral";
+  deltaDirection: "increase" | "decrease" | "unchanged";
   note?: string;
 }
 
@@ -1419,6 +1419,10 @@ export function ComparisonTable({ comparison }: { comparison: ComparisonState })
           ? ` / branch ${formatTick(comparison.branchTick)}`
           : ""}
       </p>
+      <p className="comparison-interpretation">
+        Deltas show branch minus baseline at the stated tick. They are observed differences,
+        not scores, winners, or scripted endings.
+      </p>
       <div className="comparison-table-wrap">
         <table className="comparison-table">
           <caption>
@@ -1429,7 +1433,7 @@ export function ComparisonTable({ comparison }: { comparison: ComparisonState })
               <th scope="col">Outcome</th>
               <th scope="col">{comparison.baselineLabel}</th>
               <th scope="col">{comparison.branchLabel}</th>
-              <th scope="col">Delta</th>
+              <th scope="col">Delta (branch minus baseline)</th>
             </tr>
           </thead>
           <tbody>
@@ -1443,16 +1447,23 @@ export function ComparisonTable({ comparison }: { comparison: ComparisonState })
                 <td data-label={comparison.branchLabel}>{metric.branch}</td>
                 <td
                   data-label="Delta"
-                  className={`comparison-delta comparison-delta--${metric.deltaTone ?? "neutral"}`}
+                  className={`comparison-delta comparison-delta--${metric.deltaDirection}`}
                 >
-                  <span aria-hidden="true">
-                    {metric.deltaTone === "positive"
+                  <span className="experiment-visually-hidden">
+                    {metric.deltaDirection === "increase"
+                      ? "Increase: "
+                      : metric.deltaDirection === "decrease"
+                        ? "Decrease: "
+                        : "No difference: "}
+                  </span>
+                  <span className="comparison-delta__sign" aria-hidden="true">
+                    {metric.deltaDirection === "increase"
                       ? "+"
-                      : metric.deltaTone === "negative"
-                        ? "-"
+                      : metric.deltaDirection === "decrease"
+                        ? "âˆ’"
                         : "="}
                   </span>
-                  {metric.delta}
+                  <span>{metric.delta}</span>
                 </td>
               </tr>
             ))}

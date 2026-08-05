@@ -1,4 +1,4 @@
-import { Apple, Boxes, CircleDot, Hammer, MapPin, Sprout } from "lucide-react";
+import { Apple, Boxes, CircleDot, Droplets, Hammer, MapPin, Sprout } from "lucide-react";
 import {
   useEffect,
   useId,
@@ -17,6 +17,7 @@ import type {
   WorldView,
 } from "../model";
 import { identityGlyph } from "./pixi/visual-grammar";
+import { deriveTrafficTrails } from "./pixi/traffic-trails";
 import { humanize } from "./ui";
 
 export type WorldNavigatorFilter = "all" | "creatures" | "resources" | "structures";
@@ -58,7 +59,7 @@ const locationLabel = (x: number, y: number): string =>
   `column ${coordinate(x)}, row ${coordinate(y)}`;
 
 const resourceTitle = (resource: ResourceView): string =>
-  `${humanize(resource.kind)} resource`;
+  /WATER/i.test(resource.kind) ? "Water source" : `${humanize(resource.kind)} resource`;
 
 const structureTitle = (structure: StructureView): string => humanize(structure.kind);
 
@@ -71,10 +72,35 @@ function creatureAlerts(creature: CreatureView): string[] {
   return [
     ...(creature.health <= 40 ? ["health risk"] : []),
     ...(creature.hunger >= 75 ? ["high hunger"] : []),
+    ...(creature.thirst >= 75 ? ["high thirst"] : []),
     ...(creature.fatigue >= 80 ? ["exhausted"] : []),
     ...(creature.action === "FLEE" ? ["fleeing a threat"] : []),
     ...(creature.action === "ATTACK" ? ["in a confrontation"] : []),
   ];
+}
+
+const carriedWater = (creature: CreatureView): number =>
+  creature.inventory
+    .filter((stack) => /WATER/i.test(stack.kind))
+    .reduce((total, stack) => total + Math.max(0, stack.quantity), 0);
+
+function resourceAlerts(resource: ResourceView): string[] {
+  if (!/WATER/i.test(resource.kind)) return [];
+  if (resource.stock <= 0) return ["water source depleted"];
+  if (resource.capacity > 0 && resource.stock / resource.capacity <= 0.25) {
+    return ["water source low"];
+  }
+  return [];
+}
+
+function resourceAccessSummary(resource: ResourceView): string | null {
+  if (!/WATER/i.test(resource.kind) || !resource.access) return null;
+  const access = resource.access;
+  const nearest =
+    access.nearestWeightedCost === null
+      ? "no reachable interaction slot"
+      : `nearest weighted travel cost ${access.nearestWeightedCost} move-cost units`;
+  return `${access.claimedInteractionSlots} of ${access.interactionCapacity} interaction slots claimed; current access for ${access.reachableCreatures} of ${access.livingCreatures} living creatures; ${nearest}`;
 }
 
 export function buildWorldNavigatorItems(view: WorldView): WorldNavigatorItem[] {
@@ -82,6 +108,7 @@ export function buildWorldNavigatorItems(view: WorldView): WorldNavigatorItem[] 
     .filter((creature) => creature.alive)
     .map((creature) => {
       const alerts = creatureAlerts(creature);
+      const water = carriedWater(creature);
       return {
         ref: { kind: "creature", id: creature.id },
         category: "creatures",
@@ -90,7 +117,7 @@ export function buildWorldNavigatorItems(view: WorldView): WorldNavigatorItem[] 
         y: creature.y,
         title: creature.name,
         kindLabel: creature.role,
-        detail: `${humanize(creature.action)} · ${humanize(creature.desire)}`,
+        detail: `${humanize(creature.action)} · thirst ${Math.round(creature.thirst)}% · ${water} water carried`,
         accessibleName: [
           creature.name,
           creature.role,
@@ -99,6 +126,8 @@ export function buildWorldNavigatorItems(view: WorldView): WorldNavigatorItem[] 
           `wants ${humanize(creature.desire)}`,
           `plans ${humanize(creature.plan)}`,
           `now ${humanize(creature.action)}`,
+          `thirst ${Math.round(creature.thirst)} percent`,
+          `carrying ${water} water units`,
           alerts.length > 0 ? `alert: ${alerts.join(", ")}` : null,
           `reason: ${creature.reason}`,
         ]
@@ -108,22 +137,31 @@ export function buildWorldNavigatorItems(view: WorldView): WorldNavigatorItem[] 
         creature,
       };
     });
-  const resources: WorldNavigatorItem[] = view.resources.map((resource) => ({
-    ref: { kind: "resource", id: resource.id },
-    category: "resources",
-    id: resource.id,
-    x: resource.x,
-    y: resource.y,
-    title: resourceTitle(resource),
-    kindLabel: "Resource",
-    detail: `${resource.stock} of ${resource.capacity} units available`,
-    alerts: [],
-    accessibleName: `${resourceTitle(resource)} ${resource.id}, at ${locationLabel(
-      resource.x,
-      resource.y,
-    )}, ${resource.stock} of ${resource.capacity} units available`,
-    resource,
-  }));
+  const resources: WorldNavigatorItem[] = view.resources.map((resource) => {
+    const alerts = resourceAlerts(resource);
+    const access = resourceAccessSummary(resource);
+    return {
+      ref: { kind: "resource", id: resource.id },
+      category: "resources",
+      id: resource.id,
+      x: resource.x,
+      y: resource.y,
+      title: resourceTitle(resource),
+      kindLabel: /WATER/i.test(resource.kind) ? "Water source" : "Resource",
+      detail: `${resource.stock} of ${resource.capacity} units available${access ? `; ${access}` : ""}`,
+      alerts,
+      accessibleName: [
+        `${resourceTitle(resource)} ${resource.id}`,
+        `at ${locationLabel(resource.x, resource.y)}`,
+        `${resource.stock} of ${resource.capacity} units available`,
+        access,
+        alerts.length > 0 ? `alert: ${alerts.join(", ")}` : null,
+      ]
+        .filter((part): part is string => part !== null)
+        .join(", "),
+      resource,
+    };
+  });
   const structures: WorldNavigatorItem[] = view.structures.map((structure) => ({
     ref: { kind: "structure", id: structure.id },
     category: "structures",
@@ -164,6 +202,13 @@ export function worldTextSummary(view: WorldView): string {
     (total, resource) => total + Math.max(0, resource.stock),
     0,
   );
+  const waterSources = view.resources.filter((resource) => /WATER/i.test(resource.kind));
+  const waterStock = waterSources.reduce(
+    (total, resource) => total + Math.max(0, resource.stock),
+    0,
+  );
+  const trafficTrails = deriveTrafficTrails(view);
+  const busiestTrail = trafficTrails[0];
   const completed = view.structures.filter((structure) => structure.progress >= 99).length;
   const construction = view.structures.length - completed;
   const creatureNoun = living.length === 1 ? "creature" : "creatures";
@@ -173,7 +218,7 @@ export function worldTextSummary(view: WorldView): string {
   const structureNoun = completed === 1 ? "structure" : "structures";
   const startingConditions = view.scenario.startingFacts.join(" ");
   const landmarks = view.scenario.landmarks.map((landmark) => landmark.label).join(", ");
-  return `${view.scenario.name}, seed ${view.scenario.reference.seed}. ${view.scenario.dramaticQuestion} Starting conditions: ${startingConditions} ${landmarks ? `Named places: ${landmarks}. ` : ""}Current dish: ${view.width} by ${view.height}. ${living.length} living ${creatureNoun} across ${occupiedTiles} occupied ${tileNoun}. ${view.resources.length} resource ${resourceNoun} ${resourceVerb} ${resourceStock} units. ${completed} complete ${structureNoun} and ${construction} under construction.`;
+  return `${view.scenario.name}, seed ${view.scenario.reference.seed}. ${view.scenario.dramaticQuestion} Starting conditions: ${startingConditions} ${landmarks ? `Named places: ${landmarks}. ` : ""}Current dish: ${view.width} by ${view.height}. ${living.length} living ${creatureNoun} across ${occupiedTiles} occupied ${tileNoun}. ${view.resources.length} resource ${resourceNoun} ${resourceVerb} ${resourceStock} units. ${waterSources.length} water ${waterSources.length === 1 ? "source holds" : "sources hold"} ${waterStock} units. Recent route history contains ${trafficTrails.length} traffic ${trafficTrails.length === 1 ? "trail" : "trails"}${busiestTrail ? `; the busiest was crossed ${busiestTrail.count} times` : ""}. ${completed} complete ${structureNoun} and ${construction} under construction.`;
 }
 
 export function selectedWorldSummary(view: WorldView, selected: WorldRef | null): string {
@@ -186,12 +231,13 @@ export function selectedWorldSummary(view: WorldView, selected: WorldRef | null)
   if (selected.kind === "creature") {
     const creature = view.creatures.find((candidate) => candidate.id === selected.id);
     if (!creature) return "The selected creature is no longer present in the dish.";
-    return `${creature.name} at ${locationLabel(creature.x, creature.y)}. ${creature.summary.desire} ${creature.summary.plan} ${creature.summary.action} ${creature.summary.reason}`;
+    return `${creature.name} at ${locationLabel(creature.x, creature.y)}. Thirst ${Math.round(creature.thirst)} percent; carrying ${carriedWater(creature)} water units. ${creature.summary.desire} ${creature.summary.plan} ${creature.summary.action} ${creature.summary.reason}`;
   }
   if (selected.kind === "resource") {
     const resource = view.resources.find((candidate) => candidate.id === selected.id);
     if (!resource) return "The selected resource is no longer present in the dish.";
-    return `${resourceTitle(resource)} ${resource.id} at ${locationLabel(resource.x, resource.y)}. ${resource.stock} of ${resource.capacity} units are available.`;
+    const access = resourceAccessSummary(resource);
+    return `${resourceTitle(resource)} ${resource.id} at ${locationLabel(resource.x, resource.y)}. ${resource.stock} of ${resource.capacity} units are available.${access ? ` ${access}.` : ""}`;
   }
   if (selected.kind === "structure") {
     const structure = view.structures.find((candidate) => candidate.id === selected.id);
@@ -313,7 +359,13 @@ function NavigatorMark({ item }: { item: WorldNavigatorItem }) {
         className="world-navigator__mark world-navigator__mark--resource"
         aria-hidden="true"
       >
-        {/FOOD/i.test(item.resource.kind) ? <Apple size={15} /> : <Boxes size={15} />}
+        {/WATER/i.test(item.resource.kind) ? (
+          <Droplets size={15} />
+        ) : /FOOD/i.test(item.resource.kind) ? (
+          <Apple size={15} />
+        ) : (
+          <Boxes size={15} />
+        )}
       </span>
     );
   }
@@ -518,7 +570,7 @@ export function WorldNavigator({
                     <span>
                       <strong>{landmark.label}</strong>
                       <small>
-                        {landmark.kind === "CHOKEPOINT" ? "Chokepoint" : "Region"} Â·{" "}
+                        {landmark.kind === "CHOKEPOINT" ? "Chokepoint" : "Region"} /{" "}
                         {livingHere} here now
                       </small>
                     </span>

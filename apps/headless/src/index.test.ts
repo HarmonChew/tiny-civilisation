@@ -137,6 +137,23 @@ describe("headless scenario CLI", () => {
     expect(options.seeds[0]).toBe(firstSeed);
   });
 
+  it("accepts an opt-in compressed matrix evidence path", () => {
+    expect(
+      parseMatrixOptions([
+        "--corpus",
+        "calibration",
+        "--output",
+        "docs/baselines/phase-3-calibration-v1.json.gz",
+      ]),
+    ).toMatchObject({
+      corpus: "calibration",
+      outputPath: "docs/baselines/phase-3-calibration-v1.json.gz",
+    });
+    expect(() =>
+      parseMatrixOptions(["--output", "docs/baselines/phase-3-calibration-v1.json"]),
+    ).toThrow("--output must end with .json.gz");
+  });
+
   it("orders matrix cases by catalog and then numeric seed", () => {
     const cases = matrixCases({ corpus: "smoke", seeds: [7, 2, 7], ticks: 0 });
 
@@ -229,7 +246,7 @@ describe("headless scenario CLI", () => {
     ).toBe(true);
     expect(
       matrix.aggregate.byScenario.every(
-        (item) => item.analysis.outcomes.incidence.length === 5,
+        (item) => item.analysis.outcomes.incidence.length === 9,
       ),
     ).toBe(true);
     expect(matrix.analysis.determinism).toMatchObject({
@@ -242,7 +259,7 @@ describe("headless scenario CLI", () => {
       matrix.analysis.determinism.comparisons.every((comparison) => comparison.exactMatch),
     ).toBe(true);
     expect(matrix.analysis.pairedComparisons).toHaveLength(6);
-    expect(matrix.analysis.convergence).toHaveLength(24);
+    expect(matrix.analysis.convergence).toHaveLength(30);
     expect(matrix.analysis.rawProfileRetention).toEqual(
       expect.objectContaining({
         retainedRunCount: 4,

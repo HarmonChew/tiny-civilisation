@@ -3,6 +3,7 @@ import {
   createRenderSnapshot,
   hashSimulationState,
   projectCreatureObservationSummary,
+  type DomainEvent,
   type SimulationState,
 } from "@tiny-civ/sim-core";
 import {
@@ -40,7 +41,17 @@ describe("simulation UI adapter", () => {
     expect(projected?.summary).toEqual(mapped?.summary);
     expect(projected?.candidates).toEqual(mapped?.candidates);
     expect(projected?.inventory).toEqual(mapped?.inventory);
+    expect(projected?.thirst).toBe(mapped?.thirst);
     expect(projected?.interactionSlot).toEqual(mapped?.interactionSlot);
+    const stateWater = makeWorldView(state).resources.find(
+      (resource) => resource.kind === "WATER",
+    );
+    const projectedWater = makeWorldViewFromSnapshot(
+      createRenderSnapshot(state, false),
+      hashSimulationState(state),
+    ).resources.find((resource) => resource.kind === "WATER");
+    expect(projectedWater?.access).toEqual(stateWater?.access);
+    expect(projectedWater?.access).toMatchObject({ interactionCapacity: 3 });
   });
 
   it("retains bootstrap tiles when a dynamic observation omits static world data", () => {
@@ -90,6 +101,182 @@ describe("simulation UI adapter", () => {
     expect(intervention?.causedByEventIds).toContain(intervention?.commandSourceEventId);
   });
 
+  it("maps the water intervention tools to their authoritative commands", () => {
+    const replenishState = createSimulationState(4_182);
+    const tile = makeWorldView(replenishState).tiles.find(
+      (candidate) => !candidate.blocked,
+    );
+    expect(tile).toBeTruthy();
+    queueIntervention(replenishState, "replenish-water", tile!);
+    expect(replenishState.commandQueue.at(-1)?.type).toBe("REPLENISH_WATER");
+
+    const drainState = createSimulationState(4_182);
+    queueIntervention(drainState, "drain-water", tile!);
+    expect(drainState.commandQueue.at(-1)?.type).toBe("DRAIN_WATER");
+  });
+
+  it("clusters routine hydration facts while distinctly surfacing first sharing and alerts", () => {
+    const state = createSimulationState(73) as SimulationState;
+    const giver = state.creatures[0]!;
+    const recipient = state.creatures[1]!;
+    const source = state.resourceNodes.find((node) => node.kind === "WATER")!;
+    const event = (
+      id: number,
+      tick: number,
+      type: DomainEvent["type"],
+      summary: string,
+      attentionTier: DomainEvent["attentionTier"],
+      importance: number,
+      overrides: Partial<DomainEvent> = {},
+    ): DomainEvent => ({
+      id,
+      tick,
+      type,
+      actorIds: [giver.id],
+      targetIds: [],
+      groupIds: [],
+      locationTileIndex: giver.tileIndex,
+      resourceKind: "WATER",
+      quantity: 1,
+      causedByEventIds: [],
+      decisionRecordIds: [],
+      importance,
+      attentionTier,
+      clusterKey: `authoritative:${id}`,
+      commandId: null,
+      commandOutcome: null,
+      commandRejectionReason: null,
+      summary,
+      ...overrides,
+    });
+
+    state.domainEvents = [
+      event(101, 10, "WATER_DRUNK", `${giver.name} drank one water.`, "ROUTINE", 8),
+      event(102, 20, "WATER_DRUNK", `${recipient.name} drank one water.`, "ROUTINE", 8, {
+        actorIds: [recipient.id],
+      }),
+      event(103, 30, "WATER_DRUNK", `${giver.name} drank one water.`, "ROUTINE", 8, {
+        causedByEventIds: [91],
+      }),
+      event(
+        104,
+        40,
+        "WATER_SHARED",
+        `${giver.name} shared water with ${recipient.name}.`,
+        "NOTABLE",
+        28,
+        { targetIds: [recipient.id], causedByEventIds: [92] },
+      ),
+      event(
+        105,
+        50,
+        "WATER_SHARED",
+        `${recipient.name} shared water with ${giver.name}.`,
+        "NOTABLE",
+        28,
+        { actorIds: [recipient.id], targetIds: [giver.id] },
+      ),
+      event(
+        106,
+        60,
+        "WATER_SHARED",
+        `${giver.name} shared water with ${recipient.name}.`,
+        "NOTABLE",
+        28,
+        { targetIds: [recipient.id], causedByEventIds: [93] },
+      ),
+      event(
+        107,
+        70,
+        "WATER_SOURCE_DEPLETED",
+        `${giver.name} drew the potable water source empty.`,
+        "SIGNIFICANT",
+        64,
+        { targetIds: [source.id], locationTileIndex: source.tileIndex, quantity: 0 },
+      ),
+      event(
+        108,
+        80,
+        "SEVERE_THIRST_STARTED",
+        `${recipient.name} entered severe thirst.`,
+        "SIGNIFICANT",
+        58,
+        { actorIds: [recipient.id], quantity: 8_004 },
+      ),
+      event(
+        109,
+        90,
+        "SEVERE_THIRST_RESOLVED",
+        `${recipient.name} recovered from severe thirst after drinking.`,
+        "NOTABLE",
+        42,
+        { actorIds: [recipient.id], causedByEventIds: [103], quantity: 1_504 },
+      ),
+    ];
+    state.metrics.waterDrunk = 3;
+    state.metrics.waterShared = 3;
+    state.tick = 100;
+
+    const snapshot = createRenderSnapshot(state, false);
+    const views = [
+      makeWorldView(state),
+      makeWorldViewFromSnapshot(snapshot, hashSimulationState(state)),
+    ];
+    for (const view of views) {
+      const drinks = view.events.filter((candidate) => candidate.type === "WATER_DRUNK");
+      expect(drinks).toHaveLength(1);
+      expect(drinks[0]).toMatchObject({
+        id: 103,
+        title: "Routine drinking",
+        detail: `3 routine drinks were recorded; latest: ${giver.name} drank one water.`,
+        causedByEventIds: [91],
+        attentionTier: "ROUTINE",
+      });
+
+      const shares = view.events.filter((candidate) => candidate.type === "WATER_SHARED");
+      expect(shares).toHaveLength(2);
+      expect(shares.find((candidate) => candidate.id === 104)).toMatchObject({
+        title: "First water sharing",
+        detail: `${giver.name} shared water with ${recipient.name}. This was the first recorded water share.`,
+        causedByEventIds: [92],
+        attentionTier: "SIGNIFICANT",
+      });
+      expect(shares.find((candidate) => candidate.id === 106)).toMatchObject({
+        title: "Water sharing continued",
+        detail: `2 later water shares were recorded; latest: ${giver.name} shared water with ${recipient.name}.`,
+        causedByEventIds: [93],
+        attentionTier: "NOTABLE",
+      });
+
+      expect(
+        view.events.find((candidate) => candidate.type === "WATER_SOURCE_DEPLETED"),
+      ).toMatchObject({
+        title: "Water source depleted",
+        detail: `${giver.name} drew the potable water source empty.`,
+        attentionTier: "SIGNIFICANT",
+      });
+      expect(
+        view.events.find((candidate) => candidate.type === "SEVERE_THIRST_STARTED"),
+      ).toMatchObject({
+        title: "Severe thirst started",
+        detail: `${recipient.name} entered severe thirst.`,
+        attentionTier: "SIGNIFICANT",
+      });
+      expect(
+        view.events.find((candidate) => candidate.type === "SEVERE_THIRST_RESOLVED"),
+      ).toMatchObject({
+        title: "Severe thirst resolved",
+        detail: `${recipient.name} recovered from severe thirst after drinking.`,
+        causedByEventIds: [103],
+        attentionTier: "NOTABLE",
+      });
+    }
+
+    expect(state.domainEvents).toHaveLength(9);
+    expect(state.domainEvents[0]?.clusterKey).toBe("authoritative:101");
+    expect(state.domainEvents[3]?.attentionTier).toBe("NOTABLE");
+  });
+
   it("maps null social IDs, storage stock, and colliding event sequences truthfully", () => {
     const state = createSimulationState(17) as SimulationState;
     const owner = state.creatures[0]!;
@@ -131,7 +318,7 @@ describe("simulation UI adapter", () => {
       materialRequired: 12,
       progress: 10_000,
       workRequired: 10_000,
-      inventory: { capacity: 80, food: 7, material: 2 },
+      inventory: { capacity: 80, food: 7, material: 2, water: 4 },
       guardIds: [],
       completedTick: 0,
     });
@@ -299,6 +486,7 @@ describe("simulation UI adapter", () => {
     subject.health = 34;
     subject.needs.hunger = 4;
     subject.needs.fatigue = 8;
+    subject.needs.thirst = 12;
     subject.traits.generosity = 34;
     state.relationships.push({
       id: state.nextRelationshipId++,
@@ -321,6 +509,7 @@ describe("simulation UI adapter", () => {
     expect(mapped?.health).toBeCloseTo(0.34);
     expect(mapped?.hunger).toBeCloseTo(0.04);
     expect(mapped?.fatigue).toBeCloseTo(0.08);
+    expect(mapped?.thirst).toBeCloseTo(0.12);
     expect(generosity?.value).toBeCloseTo(0.34);
     expect(relationship?.familiarity).toBeCloseTo(0.34);
     expect(relationship?.trust).toBeCloseTo(0.0034);

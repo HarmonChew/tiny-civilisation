@@ -1,9 +1,10 @@
 import { isWalkableTile } from "./navigation.js";
 import {
-  findPath,
-  manhattanDistance,
+  findWeightedPath,
   tileCoordinates,
   tileIndexAt,
+  UNREACHABLE_TRAVEL_COST,
+  weightedTravelCostsFrom,
 } from "./pathfinding.js";
 import { recordPlanTransition } from "./plans.js";
 import {
@@ -26,13 +27,55 @@ const OFFSETS = [
   [-1, -1],
 ] as const;
 
+const MAX_CACHED_TRAVEL_ORIGINS = 96;
+const travelCostCache = new WeakMap<
+  SimulationState["world"],
+  { navigationRevision: number; byOrigin: Map<number, Int32Array> }
+>();
+const canonicalTravelCostCache = new Map<string, Map<number, Int32Array>>();
+
+function cachedTravelCosts(state: SimulationState, origin: number): Int32Array {
+  if (state.world.navigationRevision === 0) {
+    let shared = canonicalTravelCostCache.get(state.compiledMapHash);
+    if (!shared) {
+      shared = new Map<number, Int32Array>();
+      canonicalTravelCostCache.set(state.compiledMapHash, shared);
+    }
+    const retained = shared.get(origin);
+    if (retained) return retained;
+    const costs = weightedTravelCostsFrom(state.world, origin);
+    shared.set(origin, costs);
+    return costs;
+  }
+  let cache = travelCostCache.get(state.world);
+  if (!cache || cache.navigationRevision !== state.world.navigationRevision) {
+    cache = {
+      navigationRevision: state.world.navigationRevision,
+      byOrigin: new Map<number, Int32Array>(),
+    };
+    travelCostCache.set(state.world, cache);
+  }
+  const retained = cache.byOrigin.get(origin);
+  if (retained) return retained;
+  const costs = weightedTravelCostsFrom(state.world, origin);
+  if (cache.byOrigin.size >= MAX_CACHED_TRAVEL_ORIGINS) {
+    const oldest = cache.byOrigin.keys().next().value as number | undefined;
+    if (oldest !== undefined) cache.byOrigin.delete(oldest);
+  }
+  cache.byOrigin.set(origin, costs);
+  return costs;
+}
+
 const PURPOSE_BY_ACTION: Record<ActionKind, InteractionPurpose> = {
   EXPLORE: "EXPLORE",
   GATHER_FOOD: "GATHER",
   GATHER_MATERIAL: "GATHER",
+  GATHER_WATER: "GATHER",
   EAT: "REST",
+  DRINK: "REST",
   REST: "REST",
   SHARE: "SOCIAL",
+  SHARE_WATER: "SOCIAL",
   KEEP: "REST",
   STEAL: "STORAGE_ACCESS",
   DEPOSIT: "STORAGE_ACCESS",
@@ -53,6 +96,8 @@ export function interactionCapacity(action: ActionKind): number {
     case "GATHER_FOOD":
     case "GATHER_MATERIAL":
       return 6;
+    case "GATHER_WATER":
+      return 3;
     case "BUILD_STORAGE":
       return 5;
     case "DEPOSIT":
@@ -65,6 +110,7 @@ export function interactionCapacity(action: ActionKind): number {
     case "JOIN_GROUP":
       return 6;
     case "SHARE":
+    case "SHARE_WATER":
     case "ATTACK":
       return 2;
     default:
@@ -73,7 +119,9 @@ export function interactionCapacity(action: ActionKind): number {
 }
 
 export function requiresInteractionClaim(action: ActionKind): boolean {
-  return action !== "EXPLORE" && action !== "EAT" && action !== "FLEE";
+  return (
+    action !== "EXPLORE" && action !== "EAT" && action !== "DRINK" && action !== "FLEE"
+  );
 }
 
 function anchorKindFor(action: ActionKind, targetEntityId: number | null) {
@@ -81,10 +129,16 @@ function anchorKindFor(action: ActionKind, targetEntityId: number | null) {
     return "GROUP_HOME" as const;
   }
   if (targetEntityId === null) return "TILE" as const;
-  if (action === "GATHER_FOOD" || action === "GATHER_MATERIAL") {
+  if (
+    action === "GATHER_FOOD" ||
+    action === "GATHER_MATERIAL" ||
+    action === "GATHER_WATER"
+  ) {
     return "RESOURCE" as const;
   }
-  if (action === "SHARE" || action === "ATTACK") return "CREATURE" as const;
+  if (action === "SHARE" || action === "SHARE_WATER" || action === "ATTACK") {
+    return "CREATURE" as const;
+  }
   return "STRUCTURE" as const;
 }
 
@@ -106,21 +160,25 @@ function inspectInteractionSlots(
   anchorId: number,
   anchorTileIndex: number,
   requestingCreatureId: number | null,
+  ignoreOccupancy = false,
 ): InteractionSlotAvailability {
   const anchor = tileCoordinates(state.world, anchorTileIndex);
   const capacity = interactionCapacity(action);
   const purpose = interactionPurpose(action);
   const anchorKind = anchorKindFor(action, anchorId > 0 ? anchorId : null);
+  const retainedClaims = ignoreOccupancy ? [] : activeClaims(state);
   const usedSlots = new Set(
-    activeClaims(state)
+    retainedClaims
       .filter((claim) => claim.anchorKind === anchorKind && claim.anchorId === anchorId)
       .map((claim) => claim.slotIndex),
   );
   const usedEndpoints = new Set([
-    ...activeClaims(state).map((claim) => `${claim.targetX}:${claim.targetY}`),
-    ...state.creatures
-      .filter((creature) => creature.alive && creature.id !== requestingCreatureId)
-      .map((creature) => `${creature.x}:${creature.y}`),
+    ...retainedClaims.map((claim) => `${claim.targetX}:${claim.targetY}`),
+    ...(ignoreOccupancy
+      ? []
+      : state.creatures
+          .filter((creature) => creature.alive && creature.id !== requestingCreatureId)
+          .map((creature) => `${creature.x}:${creature.y}`)),
   ]);
   const available: InteractionClaim[] = [];
   let occupiedSlotCount = 0;
@@ -168,6 +226,124 @@ export function availableInteractionSlots(
   ).available;
 }
 
+/**
+ * Estimates topological weighted access to legal interaction slots while
+ * deliberately ignoring transient creatures and claims. Contention is a
+ * separate fact and must not make a reachable source appear unreachable.
+ */
+export function estimateInteractionTravelIgnoringOccupancy(
+  state: SimulationState,
+  creature: CreatureState,
+  action: ActionKind,
+  targetEntityId: number | null,
+  anchorTileIndex: number,
+): InteractionTravelEstimate | null {
+  if (!requiresInteractionClaim(action)) {
+    const cost = cachedTravelCosts(state, creature.tileIndex)[anchorTileIndex];
+    return cost !== undefined && cost < UNREACHABLE_TRAVEL_COST
+      ? { cost, destinationTileIndex: anchorTileIndex, slotIndex: null }
+      : null;
+  }
+  const anchorId = targetEntityId ?? -(anchorTileIndex + 1);
+  const travelCosts = cachedTravelCosts(state, creature.tileIndex);
+  let estimate: InteractionTravelEstimate | null = null;
+  for (const slot of inspectInteractionSlots(
+    state,
+    action,
+    anchorId,
+    anchorTileIndex,
+    creature.id,
+    true,
+  ).available) {
+    const cost = travelCosts[slot.tileIndex] ?? UNREACHABLE_TRAVEL_COST;
+    if (
+      cost < UNREACHABLE_TRAVEL_COST &&
+      (estimate === null ||
+        cost < estimate.cost ||
+        (cost === estimate.cost &&
+          slot.slotIndex < (estimate.slotIndex ?? Number.MAX_SAFE_INTEGER)))
+    ) {
+      estimate = {
+        cost,
+        destinationTileIndex: slot.tileIndex,
+        slotIndex: slot.slotIndex,
+      };
+    }
+  }
+  return estimate;
+}
+
+export interface InteractionTravelEstimate {
+  /** Authoritative sum of entered-tile walk costs. Ground steps cost 10. */
+  readonly cost: number;
+  readonly destinationTileIndex: number;
+  readonly slotIndex: number | null;
+}
+
+export type InteractionTravelEstimator = (
+  action: ActionKind,
+  targetEntityId: number | null,
+  anchorTileIndex: number,
+) => InteractionTravelEstimate | null;
+
+/**
+ * Creates a decision-local weighted route estimator. Availability and route
+ * results are cached only for this decision, so claims made by later decisions
+ * can never reuse stale costs.
+ */
+export function createInteractionTravelEstimator(
+  state: SimulationState,
+  creature: CreatureState,
+): InteractionTravelEstimator {
+  const tick = state.tick;
+  const navigationRevision = state.world.navigationRevision;
+  const travelCosts = cachedTravelCosts(state, creature.tileIndex);
+  const cache = new Map<string, InteractionTravelEstimate | null>();
+  return (action, targetEntityId, anchorTileIndex) => {
+    const key = `${tick}:${navigationRevision}:${creature.id}:${action}:${targetEntityId ?? "none"}:${anchorTileIndex}`;
+    if (cache.has(key)) return cache.get(key) ?? null;
+
+    let estimate: InteractionTravelEstimate | null = null;
+    if (!requiresInteractionClaim(action)) {
+      const cost = travelCosts[anchorTileIndex] ?? UNREACHABLE_TRAVEL_COST;
+      if (cost < UNREACHABLE_TRAVEL_COST) {
+        estimate = {
+          cost,
+          destinationTileIndex: anchorTileIndex,
+          slotIndex: null,
+        };
+      }
+    } else {
+      const anchorId = targetEntityId ?? -(anchorTileIndex + 1);
+      const slots = availableInteractionSlots(
+        state,
+        action,
+        anchorId,
+        anchorTileIndex,
+        creature.id,
+      );
+      for (const slot of slots) {
+        const cost = travelCosts[slot.tileIndex] ?? UNREACHABLE_TRAVEL_COST;
+        if (
+          cost < UNREACHABLE_TRAVEL_COST &&
+          (estimate === null ||
+            cost < estimate.cost ||
+            (cost === estimate.cost &&
+              slot.slotIndex < (estimate.slotIndex ?? Number.MAX_SAFE_INTEGER)))
+        ) {
+          estimate = {
+            cost,
+            destinationTileIndex: slot.tileIndex,
+            slotIndex: slot.slotIndex,
+          };
+        }
+      }
+    }
+    cache.set(key, estimate);
+    return estimate;
+  };
+}
+
 export interface InteractionClaimAttempt {
   readonly claim: InteractionClaim | null;
   /** True when another living creature or retained claim occupied a candidate slot. */
@@ -194,20 +370,25 @@ export function attemptInteractionSlotClaim(
     anchorTileIndex,
     creature.id,
   );
-  const ordered = [...availability.available].sort((left, right) => {
-    const leftDistance = manhattanDistance(state.world, left.tileIndex, creature.tileIndex);
-    const rightDistance = manhattanDistance(
-      state.world,
-      right.tileIndex,
-      creature.tileIndex,
-    );
-    return leftDistance - rightDistance || left.slotIndex - right.slotIndex;
-  });
   const claim =
-    ordered.find(
-      (candidate) =>
-        findPath(state.world, creature.tileIndex, candidate.tileIndex).length > 0,
-    ) ?? null;
+    availability.available
+      .map((candidate) => ({
+        candidate,
+        route: findWeightedPath(state.world, creature.tileIndex, candidate.tileIndex),
+      }))
+      .filter(
+        (
+          entry,
+        ): entry is {
+          candidate: InteractionClaim;
+          route: NonNullable<ReturnType<typeof findWeightedPath>>;
+        } => entry.route !== null,
+      )
+      .sort(
+        (left, right) =>
+          left.route.cost - right.route.cost ||
+          left.candidate.slotIndex - right.candidate.slotIndex,
+      )[0]?.candidate ?? null;
   return {
     claim,
     contended: availability.occupiedSlotCount > 0,

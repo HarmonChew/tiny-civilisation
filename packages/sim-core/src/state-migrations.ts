@@ -12,7 +12,12 @@ import type {
   UtilityFactor,
 } from "./types.js";
 import { SIMULATION_STATE_VERSION } from "./versions.js";
-import { compileScenario, createScenarioReference } from "./scenarios/index.js";
+import {
+  compileScenario,
+  createScenarioReference,
+  isScenarioId,
+  type ScenarioId,
+} from "./scenarios/index.js";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -32,7 +37,7 @@ function requireArray(record: UnknownRecord, key: string): unknown[] {
   return value;
 }
 
-function addScenarioIdentity(state: UnknownRecord): void {
+function legacySeed(state: UnknownRecord): number {
   const seed = state.seed;
   if (
     typeof seed !== "number" ||
@@ -42,9 +47,163 @@ function addScenarioIdentity(state: UnknownRecord): void {
   ) {
     throw new Error("Legacy simulation state seed must be an unsigned 32-bit integer.");
   }
-  const scenario = createScenarioReference(seed);
+  return seed;
+}
+
+function legacyScenarioId(state: UnknownRecord): ScenarioId {
+  if (state.schemaVersion !== 3) return "petri-world";
+  const scenario = state.scenario;
+  if (!isRecord(scenario)) {
+    throw new Error("Phase 3 simulation state scenario must be an object.");
+  }
+  if (
+    scenario.kind !== "tiny-civilisation/scenario" ||
+    scenario.schemaVersion !== 2 ||
+    scenario.behaviorVersion !== 3 ||
+    scenario.scenarioVersion !== 1 ||
+    scenario.mapGenerationVersion !== 1 ||
+    !isScenarioId(scenario.scenarioId) ||
+    scenario.seed !== legacySeed(state)
+  ) {
+    throw new Error(
+      "Phase 3 simulation state must use the behavior 3 / state 3 / scenario 1 compatibility tuple.",
+    );
+  }
+  return scenario.scenarioId;
+}
+
+function resolveInventoryOverflow(inventory: UnknownRecord): void {
+  const capacity = inventory.capacity;
+  const food = inventory.food;
+  const material = inventory.material;
+  const water = inventory.water;
+  if (
+    typeof capacity !== "number" ||
+    !Number.isSafeInteger(capacity) ||
+    typeof food !== "number" ||
+    !Number.isSafeInteger(food) ||
+    typeof material !== "number" ||
+    !Number.isSafeInteger(material) ||
+    typeof water !== "number" ||
+    !Number.isSafeInteger(water)
+  ) {
+    return;
+  }
+  let overflow = Math.max(0, food + material + water - capacity);
+  const droppedMaterial = Math.min(material, overflow);
+  inventory.material = material - droppedMaterial;
+  overflow -= droppedMaterial;
+  const droppedWater = Math.min(water, overflow);
+  inventory.water = water - droppedWater;
+  overflow -= droppedWater;
+  inventory.food = Math.max(0, food - overflow);
+}
+
+function upgradeHydrationState(state: UnknownRecord, scenarioId: ScenarioId): void {
+  const seed = legacySeed(state);
+  const scenario = createScenarioReference(scenarioId, seed);
+  const compiled = compileScenario(scenario);
+  const resources = requireArray(state, "resourceNodes");
+  if (resources.some((resource) => isRecord(resource) && resource.kind === "WATER")) {
+    throw new Error("Legacy simulation state unexpectedly contains water resources.");
+  }
+  const creatures = requireArray(state, "creatures");
+  const structures = requireArray(state, "structures");
+  const metrics = state.metrics;
+  if (!isRecord(metrics)) {
+    throw new Error("Legacy simulation state metrics must be an object.");
+  }
+  const nextEntityId = state.nextEntityId;
+  if (
+    typeof nextEntityId !== "number" ||
+    !Number.isSafeInteger(nextEntityId) ||
+    nextEntityId < 1
+  ) {
+    throw new Error("Legacy simulation state nextEntityId must be positive.");
+  }
+  let entityId = nextEntityId;
+  const addedWaterIds: number[] = [];
+  for (const prototype of compiled.resourceNodes) {
+    if (prototype.kind !== "WATER") continue;
+    const id = entityId++;
+    addedWaterIds.push(id);
+    resources.push({
+      id,
+      kind: prototype.kind,
+      tileIndex: prototype.y * compiled.world.width + prototype.x,
+      currentStock: prototype.currentStock,
+      maximumStock: prototype.maximumStock,
+      regenerationEveryTicks: prototype.regenerationEveryTicks,
+      regenerationAmount: prototype.regenerationAmount,
+    });
+  }
+  state.nextEntityId = entityId;
+
+  for (const creatureValue of creatures) {
+    if (!isRecord(creatureValue)) throw new Error("Legacy creature must be an object.");
+    const needs = creatureValue.needs;
+    const inventory = creatureValue.inventory;
+    const actionCounts = creatureValue.actionCounts;
+    if (!isRecord(needs) || !isRecord(inventory) || !isRecord(actionCounts)) {
+      throw new Error("Legacy creature hydration fields must be objects.");
+    }
+    needs.thirst = 2_500;
+    inventory.water = 0;
+    resolveInventoryOverflow(inventory);
+    actionCounts.GATHER_WATER = 0;
+    actionCounts.DRINK = 0;
+    actionCounts.SHARE_WATER = 0;
+  }
+  for (const structureValue of structures) {
+    if (!isRecord(structureValue) || !isRecord(structureValue.inventory)) {
+      throw new Error("Legacy structure inventory must be an object.");
+    }
+    structureValue.inventory.water = 0;
+    resolveInventoryOverflow(structureValue.inventory);
+  }
+  metrics.waterGathered = 0;
+  metrics.waterDrunk = 0;
+  metrics.waterShared = 0;
+  metrics.severeThirstCreatureTicks = 0;
+  metrics.waterGatherContentions = 0;
+
+  const events = requireArray(state, "domainEvents");
+  const nextEventId = state.nextEventId;
+  const tick = state.tick;
+  if (
+    typeof nextEventId !== "number" ||
+    !Number.isSafeInteger(nextEventId) ||
+    nextEventId < 1 ||
+    typeof tick !== "number" ||
+    !Number.isSafeInteger(tick) ||
+    tick < 0
+  ) {
+    throw new Error("Legacy simulation state event counters must be valid integers.");
+  }
+  events.push({
+    id: nextEventId,
+    tick,
+    type: "HYDRATION_RULES_ENABLED",
+    actorIds: [],
+    targetIds: addedWaterIds,
+    groupIds: [],
+    locationTileIndex: null,
+    resourceKind: "WATER",
+    quantity: addedWaterIds.length,
+    causedByEventIds: [],
+    decisionRecordIds: [],
+    importance: 45,
+    attentionTier: "NOTABLE",
+    clusterKey: "world:hydration-rules-enabled",
+    commandId: null,
+    commandOutcome: null,
+    commandRejectionReason: null,
+    summary:
+      "Hydration rules began when this save was upgraded; no water history exists before this tick.",
+  });
+  state.nextEventId = nextEventId + 1;
   state.scenario = { ...scenario };
-  state.compiledMapHash = compileScenario(scenario).compiledMapHash;
+  state.compiledMapHash = compiled.compiledMapHash;
   state.schemaVersion = SIMULATION_STATE_VERSION;
 }
 
@@ -134,15 +293,22 @@ export function migrateSimulationState(value: unknown): SimulationState {
   if (value.schemaVersion === SIMULATION_STATE_VERSION) {
     return value as unknown as SimulationState;
   }
+  if (value.schemaVersion === 3) {
+    const migrated = cloneJson(value);
+    if (!isRecord(migrated)) throw new Error("Legacy simulation state is invalid.");
+    const scenarioId = legacyScenarioId(migrated);
+    upgradeHydrationState(migrated, scenarioId);
+    return migrated as unknown as SimulationState;
+  }
   if (value.schemaVersion === 2) {
     const migrated = cloneJson(value);
     if (!isRecord(migrated)) throw new Error("Legacy simulation state is invalid.");
-    addScenarioIdentity(migrated);
+    upgradeHydrationState(migrated, "petri-world");
     return migrated as unknown as SimulationState;
   }
   if (value.schemaVersion !== 1) {
     throw new Error(
-      `Unsupported simulation state version ${String(value.schemaVersion)}; expected 1, 2, or ${SIMULATION_STATE_VERSION}.`,
+      `Unsupported simulation state version ${String(value.schemaVersion)}; expected 1, 2, 3, or ${SIMULATION_STATE_VERSION}.`,
     );
   }
   const migrated = cloneJson(value);
@@ -246,6 +412,6 @@ export function migrateSimulationState(value: unknown): SimulationState {
       },
     ];
   }
-  addScenarioIdentity(migrated);
+  upgradeHydrationState(migrated, "petri-world");
   return migrated as unknown as SimulationState;
 }

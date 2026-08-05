@@ -19,6 +19,14 @@ import type {
 import { ticksPerSecond } from "../sim-adapter";
 import { IconButton, Meter, SectionTitle, formatScore, humanize, tickLabel } from "./ui";
 
+function retainedFactText(factor: CandidateView["factors"][number]): string | null {
+  if (factor.factValue === undefined) return null;
+  if (factor.factUnit === "MOVE_COST") {
+    return `weighted travel cost ${factor.factValue} move-cost units`;
+  }
+  return `retained value ${factor.factValue}`;
+}
+
 function CandidateRow({ candidate, rank }: { candidate: CandidateView; rank: number }) {
   const positives = candidate.factors.filter((factor) => factor.contribution > 0);
   const negatives = candidate.factors.filter((factor) => factor.contribution < 0);
@@ -47,9 +55,9 @@ function CandidateRow({ candidate, rank }: { candidate: CandidateView; rank: num
                 <span aria-hidden="true">+</span>
                 <span>
                   {factor.factLabel ?? factor.label}
-                  {factor.factValue === undefined ? null : (
-                    <small>retained value {factor.factValue}</small>
-                  )}
+                  {retainedFactText(factor) ? (
+                    <small>{retainedFactText(factor)}</small>
+                  ) : null}
                 </span>
                 <strong className="number">
                   {formatScore(Math.abs(factor.contribution))}
@@ -61,9 +69,9 @@ function CandidateRow({ candidate, rank }: { candidate: CandidateView; rank: num
                 <span aria-hidden="true">−</span>
                 <span>
                   {factor.factLabel ?? factor.label}
-                  {factor.factValue === undefined ? null : (
-                    <small>retained value {factor.factValue}</small>
-                  )}
+                  {retainedFactText(factor) ? (
+                    <small>{retainedFactText(factor)}</small>
+                  ) : null}
                 </span>
                 <strong className="number">
                   {formatScore(Math.abs(factor.contribution))}
@@ -218,7 +226,37 @@ export function InspectorPanel({
         <div className="vitals-grid">
           <Meter label="Health" value={creature.health} tone="moss" />
           <Meter label="Hunger" value={creature.hunger} tone="coral" inverse />
+          <Meter label="Thirst" value={creature.thirst} tone="water" inverse />
           <Meter label="Fatigue" value={creature.fatigue} tone="gold" inverse />
+        </div>
+        <div className="subject-summary" aria-label={`${creature.name} water access`}>
+          <span className="eyebrow">Nearest potable source</span>
+          {creature.waterAccess ? (
+            <dl>
+              <div>
+                <dt>Source stock</dt>
+                <dd>
+                  Source {creature.waterAccess.sourceId}: {creature.waterAccess.sourceStock}
+                  /{creature.waterAccess.sourceCapacity}
+                </dd>
+              </div>
+              <div>
+                <dt>Weighted access</dt>
+                <dd>{creature.waterAccess.weightedCost} move-cost units</dd>
+              </div>
+              <div>
+                <dt>Source slots</dt>
+                <dd>
+                  {creature.waterAccess.claimedInteractionSlots}/
+                  {creature.waterAccess.interactionCapacity} claimed; reaches{" "}
+                  {creature.waterAccess.reachableSources}/
+                  {creature.waterAccess.totalSources} sources
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p>No reachable potable source.</p>
+          )}
         </div>
       </section>
 

@@ -128,3 +128,11 @@ Scenario-specific outcome bands deliberately remain marked pending. They may
 be locked only from the full 64-seed calibration run and then assessed without
 changes against the 64-seed holdout run. Automated Chromium evidence does not
 stand in for the pending Firefox/WebKit, screen-reader, or usability gates.
+
+The matrix CLI can package either corpus as deterministic `.json.gz`,
+`.sha256`, and readable `.md` companions while preserving its JSON stdout. A
+separate release command selects critical journeys in Chromium, Firefox, and
+WebKit without expanding the Chromium-only PR gate. These facilities do not
+change a gate to passing until their actual results are reviewed and attached;
+the current status is recorded in the
+[Phase 3 release-evidence ledger](baselines/phase-3-release-status-v1.md).

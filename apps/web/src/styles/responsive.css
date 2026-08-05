@@ -203,7 +203,12 @@
 
   .tool-group {
     display: grid;
-    grid-template-columns: repeat(4, 44px);
+    grid-template-columns: repeat(3, 44px);
+    flex: 0 1 auto;
+  }
+
+  .overlay-group {
+    margin-left: auto;
   }
 
   .dish-heading__instruction {
@@ -260,6 +265,7 @@
   }
 
   .legend-dot,
+  .legend-line,
   .timeline-entry__pin,
   .memory-line__mark {
     forced-color-adjust: none;

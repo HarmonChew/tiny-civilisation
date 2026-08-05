@@ -28,7 +28,11 @@ export * from "./versions.js";
 export { keyedRandomUnit, keyedRandomU32, nextRandomU32 } from "./rng.js";
 export {
   findPath,
+  findWeightedPath,
   manhattanDistance,
+  pathTravelCost,
+  UNREACHABLE_TRAVEL_COST,
+  weightedTravelCostsFrom,
   tileIndexAt,
   tileCoordinates,
 } from "./pathfinding.js";

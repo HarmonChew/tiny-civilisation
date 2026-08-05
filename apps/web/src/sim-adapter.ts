@@ -25,6 +25,7 @@ import type {
   EntityId,
   GroupView,
   InventoryView,
+  InterventionTool,
   MemoryView,
   Point,
   RelationshipView,
@@ -102,6 +103,37 @@ const traitLabels = {
 } as const;
 
 const MAX_VISIBLE_FACTORS_PER_CANDIDATE = 3;
+const ROUTINE_WATER_DRINKING_CLUSTER_KEY = "presentation:water-drinking:routine";
+const FIRST_WATER_SHARE_CLUSTER_KEY = "presentation:water-share:first";
+const CONTINUED_WATER_SHARE_CLUSTER_KEY = "presentation:water-share:continued";
+
+function domainEventTitle(event: DomainEvent): string {
+  if (event.clusterKey === ROUTINE_WATER_DRINKING_CLUSTER_KEY) {
+    return "Routine drinking";
+  }
+  if (event.clusterKey === FIRST_WATER_SHARE_CLUSTER_KEY) {
+    return "First water sharing";
+  }
+  if (event.clusterKey === CONTINUED_WATER_SHARE_CLUSTER_KEY) {
+    return "Water sharing continued";
+  }
+  return humanize(event.type);
+}
+
+function domainEventAttention(event: DomainEvent): DomainEvent["attentionTier"] {
+  return event.clusterKey === FIRST_WATER_SHARE_CLUSTER_KEY
+    ? "SIGNIFICANT"
+    : event.attentionTier;
+}
+
+function shouldPresentDomainEvent(event: DomainEvent): boolean {
+  return (
+    event.type.startsWith("PLAYER_") ||
+    event.type === "SIMULATION_STARTED" ||
+    event.clusterKey === ROUTINE_WATER_DRINKING_CLUSTER_KEY ||
+    (event.type !== "ACTION_STARTED" && event.attentionTier !== "ROUTINE")
+  );
+}
 
 function mapFactors(factors: readonly UtilityFactor[]): CandidateView["factors"] {
   return [...factors]
@@ -120,6 +152,7 @@ function mapFactors(factors: readonly UtilityFactor[]): CandidateView["factors"]
         ? {
             factLabel: factor.fact.label,
             ...(factor.fact.value === null ? {} : { factValue: factor.fact.value }),
+            ...(factor.fact.unit === null ? {} : { factUnit: factor.fact.unit }),
           }
         : {}),
     }));
@@ -183,6 +216,7 @@ function mapInventory(state: SimulationState, creatureId: EntityId): InventoryVi
   return [
     { kind: "food", quantity: creature.inventory.food },
     { kind: "material", quantity: creature.inventory.material },
+    { kind: "water", quantity: creature.inventory.water },
   ].filter((stack) => stack.quantity > 0);
 }
 
@@ -243,7 +277,7 @@ function eventCategory(
     return "conflict";
   }
   if (/GROUP|LEADER|JOIN|LEAVE|STORAGE|FOUNDED/i.test(type)) return "group";
-  if (/FOOD|GATHER|RESOURCE|DEPOSIT|WITHDRAW|MATERIAL/i.test(type)) {
+  if (/FOOD|WATER|THIRST|GATHER|RESOURCE|DEPOSIT|WITHDRAW|MATERIAL/i.test(type)) {
     return "resources";
   }
   return "social";
@@ -275,11 +309,7 @@ function mapDomainEvent(
   event: DomainEvent,
 ): TimelineEventView | null {
   const playerCaused = event.type.startsWith("PLAYER_");
-  if (
-    !playerCaused &&
-    event.type !== "SIMULATION_STARTED" &&
-    (event.type === "ACTION_STARTED" || event.importance < 18)
-  ) {
+  if (!playerCaused && !shouldPresentDomainEvent(event)) {
     return null;
   }
   const decision = linkedDecisionForEvent(
@@ -292,14 +322,14 @@ function mapDomainEvent(
     tick: event.tick,
     category: eventCategory(event.type, playerCaused),
     type: event.type,
-    title: humanize(event.type),
+    title: domainEventTitle(event),
     detail: event.summary,
     ...(reasonFromDecision(decision) ? { reason: reasonFromDecision(decision) } : {}),
     actorIds: [...event.actorIds],
     targetIds: [...event.targetIds],
     causedByEventIds: [...event.causedByEventIds],
     importance: event.importance,
-    attentionTier: event.attentionTier,
+    attentionTier: domainEventAttention(event),
     clusterKey: event.clusterKey,
     ...(event.locationTileIndex === null
       ? {}
@@ -384,16 +414,32 @@ export const advanceSimulationTicks = (
 
 export const queueIntervention = (
   state: SimulationState,
-  tool: "add-food" | "remove-food" | "obstacle",
+  tool: Exclude<InterventionTool, "inspect">,
   tile: TileView,
 ): SimulationState => {
   const common = { applyAtTick: state.tick, tileIndex: tile.index };
-  const command: PlayerCommand =
-    tool === "add-food"
-      ? { ...common, type: "ADD_FOOD", amount: 12 }
-      : tool === "remove-food"
-        ? { ...common, type: "REMOVE_FOOD", amount: 12 }
-        : { ...common, type: "TOGGLE_OBSTACLE", blocked: !tile.blocked };
+  let command: PlayerCommand;
+  switch (tool) {
+    case "add-food":
+      command = { ...common, type: "ADD_FOOD", amount: 12 };
+      break;
+    case "remove-food":
+      command = { ...common, type: "REMOVE_FOOD", amount: 12 };
+      break;
+    case "replenish-water":
+      command = { ...common, type: "REPLENISH_WATER", amount: 12 };
+      break;
+    case "drain-water":
+      command = { ...common, type: "DRAIN_WATER", amount: 12 };
+      break;
+    case "obstacle":
+      command = { ...common, type: "TOGGLE_OBSTACLE", blocked: !tile.blocked };
+      break;
+    default: {
+      const unhandled: never = tool;
+      throw new Error(`Unknown intervention tool: ${String(unhandled)}`);
+    }
+  }
   queuePlayerCommand(state, command);
   return state;
 };
@@ -467,9 +513,13 @@ export const makeWorldView = (state: SimulationState): WorldView => {
             },
           }
         : {}),
+      ...(rendered?.waterAccess === null || rendered?.waterAccess === undefined
+        ? {}
+        : { waterAccess: { ...rendered.waterAccess } }),
       health: percent(creature.health),
       hunger: percent(creature.needs.hunger),
       fatigue: percent(creature.needs.fatigue),
+      thirst: percent(creature.needs.thirst),
       traits: mapTraits(state, creature.id),
       inventory: mapInventory(state, creature.id),
       candidates: decision ? candidatesFromDecision(decision) : [],
@@ -484,6 +534,7 @@ export const makeWorldView = (state: SimulationState): WorldView => {
     ...pointForTile(resource.tileIndex, width),
     stock: resource.currentStock,
     capacity: resource.maximumStock,
+    ...(resource.waterAccess === null ? {} : { access: { ...resource.waterAccess } }),
   }));
 
   const structures: StructureView[] = state.structures.map((structure) => ({
@@ -651,9 +702,13 @@ export const makeWorldViewFromSnapshot = (
               y: creature.destinationY,
             },
           }),
+      ...(creature.waterAccess === null
+        ? {}
+        : { waterAccess: { ...creature.waterAccess } }),
       health: percent(creature.health),
       hunger: percent(creature.hunger),
       fatigue: percent(creature.fatigue),
+      thirst: percent(creature.thirst),
       traits: Object.entries(traitLabels).map(([key, label]) => ({
         key,
         label,
@@ -662,6 +717,7 @@ export const makeWorldViewFromSnapshot = (
       inventory: [
         { kind: "food", quantity: creature.inventory.food },
         { kind: "material", quantity: creature.inventory.material },
+        { kind: "water", quantity: creature.inventory.water },
       ].filter((stack) => stack.quantity > 0),
       candidates: creature.latestDecision
         ? candidatesFromDecision(creature.latestDecision)
@@ -687,6 +743,7 @@ export const makeWorldViewFromSnapshot = (
     ...pointForTile(resource.tileIndex, width),
     stock: resource.currentStock,
     capacity: resource.maximumStock,
+    ...(resource.waterAccess === null ? {} : { access: { ...resource.waterAccess } }),
   }));
   const structures: StructureView[] = snapshot.structures.map((structure) => ({
     id: structure.id,
@@ -766,12 +823,7 @@ export const makeWorldViewFromSnapshot = (
   });
   const domainViews: TimelineEventView[] = snapshot.recentEvents
     .filter((event) => !promoted.has(event.id))
-    .filter(
-      (event) =>
-        event.type.startsWith("PLAYER_") ||
-        event.type === "SIMULATION_STARTED" ||
-        (event.type !== "ACTION_STARTED" && event.attentionTier !== "ROUTINE"),
-    )
+    .filter(shouldPresentDomainEvent)
     .map((event) => {
       const playerCaused = event.type.startsWith("PLAYER_");
       const decision = decisionForEvent(event.decisionRecordIds, event.causedByEventIds);
@@ -780,14 +832,14 @@ export const makeWorldViewFromSnapshot = (
         tick: event.tick,
         category: eventCategory(event.type, playerCaused),
         type: event.type,
-        title: humanize(event.type),
+        title: domainEventTitle(event),
         detail: event.summary,
         ...(reasonFromDecision(decision) ? { reason: reasonFromDecision(decision) } : {}),
         actorIds: [...event.actorIds],
         targetIds: [...event.targetIds],
         causedByEventIds: [...event.causedByEventIds],
         importance: event.importance,
-        attentionTier: event.attentionTier,
+        attentionTier: domainEventAttention(event),
         clusterKey: event.clusterKey,
         ...(event.locationTileIndex === null
           ? {}

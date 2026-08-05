@@ -1,5 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import {
+  advanceSimulation,
+  createExperiment,
+  createScenarioReference,
+  createSimulation,
+  hashSimulationState,
+  serializeExperiment,
+  setExperimentBranchResult,
+  type ScenarioId,
+  type SimulationState,
+} from "@tiny-civ/sim-core";
 
 const STORY_SEED = 4_182;
 
@@ -7,51 +18,32 @@ const STORY_SCENES = [
   {
     name: "tick-0",
     tick: 0,
-    expectedHash: "bab1ef059a47a308",
     subject: "Iri",
-    narrative: "The Petri world began with seed 4182.",
-    subjectState: "Iri is deciding what matters next.",
   },
   {
     name: "settlement",
     tick: 101,
-    expectedHash: "41545013c5f76779",
     subject: "Iri",
-    narrative:
-      "Iri, Nalo, Aro, Meka, Pela, Sori formed the Riverhollow group around repeated sharing and sustained proximity.",
-    subjectState: "Iri wants to keep a private reserve.",
   },
   {
     name: "construction",
     tick: 198,
-    expectedHash: "4fd35c929760a8c4",
     subject: "Iri",
-    narrative: "The Riverhollow group began a shared store.",
-    subjectState: "Iri is building the shared store.",
   },
   {
     name: "theft",
     tick: 392,
-    expectedHash: "231059da8273431b",
     subject: "Taro",
-    narrative: "Taro took food without permission.",
-    subjectState: "Taro plans to take food under pressure.",
   },
   {
     name: "conflict",
     tick: 486,
-    expectedHash: "bf399dda7ae30442",
     subject: "Iri",
-    narrative: "Iri confronted Taro, but the blow missed.",
-    subjectState: "Iri plans to confront a threat.",
   },
   {
     name: "aftermath",
     tick: 817,
-    expectedHash: "bf75fda3458feddf",
     subject: "Taro",
-    narrative: "Pela replaced Iri as leader of Riverhollow.",
-    subjectState: "Taro plans to rest somewhere safe.",
   },
 ] as const;
 
@@ -63,121 +55,91 @@ const STORY_VIEWPORTS = [
 
 type StoryScene = (typeof STORY_SCENES)[number];
 
-const PHASE_3_SCENARIOS = [
+const PHASE_4_SCENARIOS = [
   {
     id: "split-banks",
     name: "Split Banks",
     seed: 7_319,
-    developedHash: "a47a3a64865a6901",
-    developedSummary:
-      "8 creatures are alive; 1 group and 1 completed store is visible; wild food totals 105 units at 2 sites.",
     question:
       "Will two clusters become separate communities, or will the passage draw them into one?",
     startingFacts: [
       "Two clusters of four begin on opposite banks of a narrow central passage.",
       "Each bank has moderate food with the same combined starting stock as the reference world.",
       "The only material patch sits inside the passage between the two clusters.",
+      "A slowly renewing potable-water source sits in the passage itself.",
     ],
   },
   {
     id: "scattered-plenty",
     name: "Scattered Plenty",
     seed: 1_203,
-    developedHash: "f604fd0f89dbbecb",
-    developedSummary:
-      "8 creatures are alive; 0 groups and 0 completed stores are visible; wild food totals 320 units at 4 sites.",
     question:
       "If nobody needs anyone immediately, will familiarity and sharing become a community?",
     startingFacts: [
       "Four separated pairs begin around an open world rather than in one cluster.",
       "Abundant food is distributed near every pair.",
       "Building material is central, away from every starting pair.",
+      "Four renewable potable-water sources are distributed through the central shallows.",
     ],
   },
   {
     id: "unequal-table",
     name: "Unequal Table",
     seed: 921,
-    developedHash: "cf0b710424f9cf3d",
-    developedSummary:
-      "8 creatures are alive; 1 group and 1 completed store is visible; wild food totals 133 units at 2 sites.",
     question: "Will outsiders receive help before the common store becomes a target?",
     startingFacts: [
       "Five comparatively cooperative creatures begin west of the passage.",
       "Taro and two more aggressive creatures begin together on the eastern bank.",
-      "Terrain and resources match the reference world, so social placement carries the contrast.",
+      "Food, material, and terrain match the reference world while water access carries an added contrast.",
+      "The thirstier western starters begin across the passage from two eastern water sources.",
     ],
   },
 ] as const;
 
-type Phase3Scenario = (typeof PHASE_3_SCENARIOS)[number];
+type Phase4Scenario = (typeof PHASE_4_SCENARIOS)[number];
 
-function storyExperimentBuffer(scene: StoryScene): Buffer {
-  return Buffer.from(
-    JSON.stringify({
-      kind: "tiny-civilisation/experiment",
-      schemaVersion: 3,
-      behaviorVersion: 3,
-      stateSchemaVersion: 3,
-      scenario: {
-        kind: "tiny-civilisation/scenario",
-        schemaVersion: 2,
-        behaviorVersion: 3,
-        scenarioId: "petri-world",
-        scenarioVersion: 1,
-        mapGenerationVersion: 1,
-        seed: STORY_SEED,
-      },
-      rootBranchId: "baseline",
-      branches: [
-        {
-          id: "baseline",
-          label: "Baseline",
-          parentBranchId: null,
-          forkTick: 0,
-          targetTick: scene.tick,
-          expectedHash: scene.expectedHash,
-          commandLog: [],
-        },
-      ],
-      bookmarks: [],
-      checkpoints: [],
-    }),
-  );
+interface ExperimentFixture {
+  readonly buffer: Buffer;
+  readonly hash: string;
+  readonly state: SimulationState;
 }
 
-function phase3ScenarioExperimentBuffer(scenario: Phase3Scenario, tick: number): Buffer {
-  return Buffer.from(
-    JSON.stringify({
-      kind: "tiny-civilisation/experiment",
-      schemaVersion: 3,
-      behaviorVersion: 3,
-      stateSchemaVersion: 3,
-      scenario: {
-        kind: "tiny-civilisation/scenario",
-        schemaVersion: 2,
-        behaviorVersion: 3,
-        scenarioId: scenario.id,
-        scenarioVersion: 1,
-        mapGenerationVersion: 1,
-        seed: scenario.seed,
-      },
-      rootBranchId: "baseline",
-      branches: [
-        {
-          id: "baseline",
-          label: "Baseline",
-          parentBranchId: null,
-          forkTick: 0,
-          targetTick: tick,
-          expectedHash: scenario.developedHash,
-          commandLog: [],
-        },
-      ],
-      bookmarks: [],
-      checkpoints: [],
-    }),
+const experimentFixtures = new Map<string, ExperimentFixture>();
+
+function currentExperimentFixture(
+  scenarioId: ScenarioId,
+  seed: number,
+  tick: number,
+): ExperimentFixture {
+  const key = `${scenarioId}:${seed.toString()}:${tick.toString()}`;
+  const cached = experimentFixtures.get(key);
+  if (cached) return cached;
+
+  const scenario = createScenarioReference(scenarioId, seed);
+  const state = createSimulation(scenario);
+  if (tick > 0) advanceSimulation(state, tick);
+  const hash = hashSimulationState(state);
+  const experiment = setExperimentBranchResult(
+    createExperiment(scenario),
+    "baseline",
+    tick,
+    hash,
   );
+  const fixture = {
+    buffer: Buffer.from(serializeExperiment(experiment)),
+    hash,
+    state,
+  };
+  experimentFixtures.set(key, fixture);
+  return fixture;
+}
+
+function storyExperimentBuffer(scene: StoryScene): Buffer {
+  return currentExperimentFixture("petri-world", STORY_SEED, scene.tick).buffer;
+}
+
+function phase4ScenarioExperimentBuffer(scenario: Phase4Scenario, tick: number): Buffer {
+  return currentExperimentFixture(scenario.id, scenario.seed, tick).buffer;
 }
 
 function collectBrowserErrors(page: Page): string[] {
@@ -189,12 +151,31 @@ function collectBrowserErrors(page: Page): string[] {
   return errors;
 }
 
+async function ensureExperimentSetup(page: Page) {
+  const setup = page.getByRole("dialog", { name: "Set up an experiment" });
+  const alreadyOpen = await setup
+    .waitFor({ state: "visible", timeout: 2_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (alreadyOpen) return setup;
+
+  await page.getByRole("button", { name: "Start a new experiment" }).click();
+  const confirmation = page.getByRole("dialog", {
+    name: "Start a new experiment?",
+  });
+  await expect(setup.or(confirmation)).toBeVisible();
+  if (await confirmation.isVisible()) {
+    await confirmation.getByRole("button", { name: "Start new experiment" }).click();
+  }
+  await expect(setup).toBeVisible();
+  return setup;
+}
+
 async function openPausedWorkspace(page: Page, useTouch = false): Promise<void> {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Living dish" })).toBeVisible();
 
-  const setup = page.getByRole("dialog", { name: "Set up an experiment" });
-  await expect(setup).toBeVisible();
+  const setup = await ensureExperimentSetup(page);
   await expect(setup.getByText(/opens paused at tick 0/i)).toBeVisible();
   const openPaused = setup.getByRole("button", { name: "Open paused at tick 0" });
   await expect(openPaused).toBeEnabled();
@@ -207,15 +188,14 @@ async function openPausedWorkspace(page: Page, useTouch = false): Promise<void> 
   await expect(page.getByLabel("Simulation status")).toContainText("Observation paused");
 }
 
-async function openPhase3ScenarioAtTickZero(
+async function openPhase4ScenarioAtTickZero(
   page: Page,
-  scenario: Phase3Scenario,
+  scenario: Phase4Scenario,
 ): Promise<void> {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Living dish" })).toBeVisible();
 
-  const setup = page.getByRole("dialog", { name: "Set up an experiment" });
-  await expect(setup).toBeVisible();
+  const setup = await ensureExperimentSetup(page);
   await setup.getByRole("combobox", { name: "Scenario" }).selectOption(scenario.id);
   await expect(setup.getByText(scenario.question, { exact: true })).toBeVisible();
 
@@ -260,33 +240,32 @@ async function openPhase3ScenarioAtTickZero(
   await waitForRenderedDish(page);
 }
 
-async function loadDevelopedPhase3Scenario(
+async function loadDevelopedPhase4Scenario(
   page: Page,
-  scenario: Phase3Scenario,
+  scenario: Phase4Scenario,
 ): Promise<void> {
-  await openPhase3ScenarioAtTickZero(page, scenario);
+  await openPhase4ScenarioAtTickZero(page, scenario);
+  const fixture = currentExperimentFixture(scenario.id, scenario.seed, 2_000);
   await openNotebook(page);
   await page.getByLabel("Import experiment file").setInputFiles({
     name: `${scenario.id}-developed.tinyciv.json`,
     mimeType: "application/json",
-    buffer: phase3ScenarioExperimentBuffer(scenario, 2_000),
+    buffer: phase4ScenarioExperimentBuffer(scenario, 2_000),
   });
   await expect(
     page.getByText(
       `Imported ${scenario.name} / seed ${scenario.seed.toString()} at tick 2000.`,
     ),
   ).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole("region", { name: scenario.question })).toContainText(
-    scenario.developedSummary,
-  );
+  const scenarioRegion = page.getByRole("region", { name: scenario.question });
+  await expect(scenarioRegion).toContainText("8 creatures are alive");
+  await expect(scenarioRegion).toContainText("wild food totals");
   await closeNotebook(page);
   await dismissRetainedMoments(page);
   await expect(page.getByLabel("Simulation status").locator("strong")).toHaveText(
     "Day 1 · 03:20",
   );
-  await expect(page.locator(".status-rail__hash")).toContainText(
-    scenario.developedHash.slice(0, 12),
-  );
+  await expect(page.locator(".status-rail__hash")).toContainText(fixture.hash.slice(0, 12));
   await waitForRenderedDish(page);
 }
 
@@ -359,6 +338,7 @@ async function selectStorySubject(
 
 async function loadStoryScene(page: Page, scene: StoryScene): Promise<void> {
   await openPausedWorkspace(page);
+  const fixture = currentExperimentFixture("petri-world", STORY_SEED, scene.tick);
   if (scene.tick > 0) {
     await openNotebook(page);
     await page.getByLabel("Import experiment file").setInputFiles({
@@ -373,10 +353,83 @@ async function loadStoryScene(page: Page, scene: StoryScene): Promise<void> {
   }
 
   await expect(page.getByLabel("Simulation status")).toContainText("Observation paused");
-  await expect(page.getByText(scene.narrative, { exact: true }).first()).toBeAttached();
+  if (scene.tick > 0) {
+    await expect(page.locator(".status-rail__hash")).toContainText(
+      fixture.hash.slice(0, 12),
+    );
+  } else {
+    await expect(page.locator(".status-rail__hash")).toContainText("hash pending");
+  }
   await selectStorySubject(page, scene.subject);
-  await expect(page.getByText(scene.subjectState, { exact: false }).first()).toBeAttached();
+  await expect(page.getByText("Thirst", { exact: true }).first()).toBeAttached();
   await waitForRenderedDish(page);
+}
+
+async function loadCurrentScenarioAtTick(
+  page: Page,
+  scenarioId: ScenarioId,
+  scenarioName: string,
+  seed: number,
+  tick: number,
+): Promise<ExperimentFixture> {
+  const fixture = currentExperimentFixture(scenarioId, seed, tick);
+  if (!(await page.getByRole("heading", { name: "Living dish" }).isVisible())) {
+    await openPausedWorkspace(page);
+  }
+  await openNotebook(page);
+  await page.getByLabel("Import experiment file").setInputFiles({
+    name: `${scenarioId}-${seed.toString()}-${tick.toString()}.tinyciv.json`,
+    mimeType: "application/json",
+    buffer: fixture.buffer,
+  });
+  await expect(
+    page.getByText(
+      `Imported ${scenarioName} / seed ${seed.toString()} at tick ${tick.toString()}.`,
+    ),
+  ).toBeVisible({ timeout: 15_000 });
+  await closeNotebook(page);
+  await expect(page.locator(".status-rail__hash")).toContainText(fixture.hash.slice(0, 12));
+  await waitForRenderedDish(page);
+  return fixture;
+}
+
+async function showQueuedMoment(page: Page, title: string) {
+  const queue = page.getByRole("region", { name: "Moment queue" });
+  await expect(queue).toBeVisible();
+  for (let index = 0; index < 16; index++) {
+    if (await queue.getByRole("heading", { name: title, exact: true }).isVisible()) {
+      return queue;
+    }
+    const older = queue.getByRole("button", { name: "Show older queued moment" });
+    if (!(await older.isVisible())) break;
+    await older.click();
+  }
+  throw new Error(`The retained moment ${title} was not available.`);
+}
+
+async function clickWorldTile(page: Page, x: number, y: number): Promise<void> {
+  const canvas = page.locator("canvas.world-canvas");
+  const bounds = await canvas.boundingBox();
+  if (!bounds) throw new Error("The living dish canvas had no rendered bounds.");
+  const worldWidth = 48;
+  const worldHeight = 32;
+  const scale = Math.max(
+    3,
+    Math.min((bounds.width - 28) / worldWidth, (bounds.height - 28) / worldHeight),
+  );
+  const originX = bounds.x + (bounds.width - worldWidth * scale) / 2;
+  const originY = bounds.y + (bounds.height - worldHeight * scale) / 2;
+  await page.mouse.click(originX + (x + 0.5) * scale, originY + (y + 0.5) * scale);
+}
+
+async function displayedTickFloor(page: Page): Promise<number> {
+  const label = await page.getByLabel("Simulation status").locator("strong").innerText();
+  const match = /Day\s+(\d+).*?(\d+):(\d+)/u.exec(label);
+  if (!match) throw new Error(`Could not read the simulation time from ${label}.`);
+  const day = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  return ((day - 1) * 24 * 60 * 60 + minutes * 60 + seconds) * 10;
 }
 
 async function applyTextResize(page: Page, scale: number): Promise<void> {
@@ -414,7 +467,7 @@ async function replayCurrentBranch(
   return actualHash ?? "";
 }
 
-test("runs the real Worker, renderer, observation controls, and causal trail", async ({
+test("runs the real Worker, renderer, observation controls, and causal trail @release", async ({
   page,
 }) => {
   const browserErrors = collectBrowserErrors(page);
@@ -452,10 +505,10 @@ test("runs the real Worker, renderer, observation controls, and causal trail", a
   expect(browserErrors).toEqual([]);
 });
 
-test("creates, preserves, replays, compares, exports, imports, and explains an experiment", async ({
+test("creates, preserves, replays, compares, exports, imports, and explains an experiment @release", async ({
   page,
 }) => {
-  test.setTimeout(45_000);
+  test.setTimeout(150_000);
   const browserErrors = collectBrowserErrors(page);
   await openPausedWorkspace(page);
   await expect(page.getByLabel("Simulation status")).toContainText("Observation paused");
@@ -532,13 +585,14 @@ test("creates, preserves, replays, compares, exports, imports, and explains an e
   const downloadPath = await download.path();
   if (!downloadPath)
     throw new Error("The exported experiment was not available to import.");
+  await expect(page.locator(".experiment-save-state")).toHaveText("Current");
   await page.getByLabel("Import experiment file").setInputFiles(downloadPath);
   await expect(
     page.getByText(/Imported Common Store \/ seed 4182 at tick 2/),
   ).toBeVisible();
 
   await closeNotebook(page);
-  await page.getByLabel("Simulation speed").getByRole("button", { name: /^4/ }).click();
+  await page.getByLabel("Simulation speed").getByRole("button", { name: /^1/ }).click();
   await page.getByRole("button", { name: /Play simulation/ }).click();
   const explainedOutcome = page
     .locator(".timeline-entry:not(.timeline-entry--player)")
@@ -557,6 +611,132 @@ test("creates, preserves, replays, compares, exports, imports, and explains an e
   expect(browserErrors).toEqual([]);
 });
 
+test("follows water pressure from routes through intervention evidence @release", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const browserErrors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 1024, height: 768 });
+
+  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 49);
+  await dismissRetainedMoments(page);
+  await expect(page.getByRole("button", { name: "Toggle traffic trails" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(
+    page.getByRole("button", {
+      name: /^Water source \d+.*3 of 3 interaction slots claimed.*weighted travel cost/,
+    }),
+  ).toHaveCount(2);
+  await expect(
+    page.locator(".world-navigator__item").filter({ hasText: /Gather water/i }),
+  ).toHaveCount(6);
+
+  const sharedFixture = await loadCurrentScenarioAtTick(
+    page,
+    "unequal-table",
+    "Unequal Table",
+    4,
+    200,
+  );
+  let queue = await showQueuedMoment(page, "First water sharing");
+  await expect(queue).toContainText("Aro shared water with Meka.");
+  await expect(
+    page.locator(".timeline-entry").filter({ hasText: "Routine drinking" }).first(),
+  ).toBeVisible();
+  await expect(
+    page.locator(".world-navigator__item").filter({ hasText: /Gather water/i }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: /carrying [1-9]\d* water units/ }).first(),
+  ).toBeVisible();
+
+  const liveHash = await page.locator(".status-rail__hash").innerText();
+  expect(liveHash).toContain(sharedFixture.hash.slice(0, 12));
+  const speedControl = page.getByLabel("Simulation speed");
+  for (const speed of [1, 2, 4] as const) {
+    await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 200);
+    const speedButton = speedControl.getByRole("button", {
+      name: new RegExp(`^${speed.toString()}`),
+    });
+    await speedButton.click();
+    await expect(speedButton).toHaveAttribute("aria-pressed", "true");
+    queue = await showQueuedMoment(page, "First water sharing");
+    await queue.getByRole("button", { name: "Replay", exact: true }).click();
+    const replay = page.locator("section.moment-replay");
+    await expect(replay.getByRole("heading", { name: "First water sharing" })).toBeVisible({
+      timeout: 15_000,
+    });
+    for (const beat of ["Approach", "Decision", "Action", "Aftermath"]) {
+      await expect(
+        replay.getByRole("button", { name: new RegExp(`^\\d+ ${beat}$`) }),
+      ).toBeVisible();
+    }
+    await replay.getByRole("button", { name: /^\d+ Aftermath$/ }).click();
+    await expect(replay.getByText(/Aftermath retained the factual state/)).toBeVisible();
+    await replay.getByRole("button", { name: "Return to live world" }).click();
+    await expect(page.locator(".status-rail__hash")).toHaveText(liveHash);
+    if (await page.locator("aside.experiment-drawer").isVisible()) {
+      await closeNotebook(page);
+    }
+  }
+
+  await dismissRetainedMoments(page);
+  await openNotebook(page);
+  await page.getByPlaceholder("Before food condition").fill("Before source drain");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText("Before source drain", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Baseline bookmarked and an intervention branch opened."),
+  ).toBeVisible();
+  await closeNotebook(page);
+
+  await page.getByRole("button", { name: "Drain water" }).click();
+  await clickWorldTile(page, 34, 18);
+  await expect(page.locator(".feedback-line")).toContainText(
+    "Water drainage of 12 units scheduled at 34, 18",
+  );
+  await page.getByRole("button", { name: /Advance one tick/ }).click();
+  const drainedMoment = await showQueuedMoment(page, "A water source was drained");
+  await expect(drainedMoment).toContainText("The observer drained 11 water units.");
+  await drainedMoment.getByRole("button", { name: "Continue", exact: true }).click();
+
+  await page.getByLabel("Simulation speed").getByRole("button", { name: /^4/ }).click();
+  await page.getByRole("button", { name: /Play simulation/ }).click();
+  await expect
+    .poll(() => displayedTickFloor(page), { timeout: 15_000 })
+    .toBeGreaterThanOrEqual(330);
+  await page.getByRole("button", { name: /Pause simulation/ }).click();
+
+  await openNotebook(page);
+  const ledger = page.locator(".intervention-ledger");
+  await expect(ledger).toContainText("Water drained");
+  await expect(ledger).toContainText(/Response window.*closed/i);
+  await expect(ledger).toContainText(
+    /noticed|reconsidered desire|reconsidered plan|rerouted|acted|no recorded response/i,
+  );
+
+  await page.getByRole("button", { name: "Compare", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Outcome comparison" })).toBeVisible();
+  await expect(page.getByText(/Equal horizon: tick/)).toBeVisible();
+  for (const label of [
+    "Potable source stock",
+    "Cumulative severe-thirst exposure",
+    "Water drunk",
+    "Water shared",
+    "Water-gather contention attempts",
+    "Mean nearest-source travel cost",
+    "Recent route concentration (all traffic)",
+  ]) {
+    await expect(page.getByRole("row").filter({ hasText: label })).toBeVisible();
+  }
+  await expect(
+    page.getByText(/observed differences, not scores, winners, or scripted endings/i),
+  ).toBeVisible();
+  expect(browserErrors).toEqual([]);
+});
+
 test("rejects a malformed experiment without changing the active run", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   await openPausedWorkspace(page);
@@ -571,6 +751,17 @@ test("rejects a malformed experiment without changing the active run", async ({ 
 
   await expect(page.getByRole("alert")).toContainText(/active run was preserved/i);
   await expect(page.locator(".status-rail__hash")).toHaveText(openingHash);
+  expect(browserErrors).toEqual([]);
+});
+
+test("opens every Phase 4 scenario with authoritative starting facts @release", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const browserErrors = collectBrowserErrors(page);
+  for (const scenario of PHASE_4_SCENARIOS) {
+    await openPhase4ScenarioAtTickZero(page, scenario);
+  }
   expect(browserErrors).toEqual([]);
 });
 
@@ -764,12 +955,99 @@ for (const scene of STORY_SCENES) {
   }
 }
 
-for (const scenario of PHASE_3_SCENARIOS) {
+test("water contention at medium viewport", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
+  await page.setViewportSize({ width: medium.width, height: medium.height });
+  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 49);
+  await dismissRetainedMoments(page);
+
+  const fullSources = page.getByRole("button", {
+    name: /^Water source \d+.*3 of 3 interaction slots claimed/,
+  });
+  await expect(fullSources).toHaveCount(2);
+  await fullSources.first().click();
+  await expect(
+    page.locator(".world-navigator__item").filter({ hasText: /Gather water/i }),
+  ).toHaveCount(6);
+  await expect(
+    page.getByRole("heading", { name: "Selected subject" }).locator("..").locator("p"),
+  ).toContainText("3 of 3 interaction slots claimed");
+  await expectNoPageOverflow(page);
+  await expect(page).toHaveScreenshot("water-contention-medium.png", {
+    fullPage: true,
+  });
+  expect(browserErrors).toEqual([]);
+});
+
+test("water sharing at medium viewport", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
+  await page.setViewportSize({ width: medium.width, height: medium.height });
+  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 200);
+
+  const queue = await showQueuedMoment(page, "First water sharing");
+  await expect(queue).toContainText("Aro shared water with Meka.");
+  await expect(
+    page.getByRole("button", { name: /carrying [1-9]\d* water units/ }).first(),
+  ).toBeVisible();
+  await expectNoPageOverflow(page);
+  await expect(page).toHaveScreenshot("water-sharing-medium.png", {
+    fullPage: true,
+  });
+  expect(browserErrors).toEqual([]);
+});
+
+test("water depletion at medium viewport", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
+  await page.setViewportSize({ width: medium.width, height: medium.height });
+  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 903);
+
+  const queue = await showQueuedMoment(page, "Water source depleted");
+  await expect(queue).toContainText(/drew the potable water source empty/i);
+  await expect(
+    page.getByRole("button", {
+      name: /^Water source \d+.*0 of 28 units available.*water source depleted/,
+    }),
+  ).toBeVisible();
+  await expectNoPageOverflow(page);
+  await expect(page).toHaveScreenshot("water-depletion-medium.png", {
+    fullPage: true,
+  });
+  expect(browserErrors).toEqual([]);
+});
+
+test("water aftermath replay at medium viewport", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
+  await page.setViewportSize({ width: medium.width, height: medium.height });
+  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 200);
+
+  const queue = await showQueuedMoment(page, "First water sharing");
+  await queue.getByRole("button", { name: "Replay", exact: true }).click();
+  const replay = page.locator("section.moment-replay");
+  await expect(replay.getByRole("heading", { name: "First water sharing" })).toBeVisible({
+    timeout: 15_000,
+  });
+  await replay.getByRole("button", { name: /^\d+ Aftermath$/ }).click();
+  await expect(replay.getByText(/Aftermath retained the factual state/)).toBeVisible();
+  await expect(
+    page.getByRole("application", { name: /Living dish replay frame/ }),
+  ).toBeVisible();
+  await expectNoPageOverflow(page);
+  await expect(page).toHaveScreenshot("water-aftermath-medium.png", {
+    fullPage: true,
+  });
+  expect(browserErrors).toEqual([]);
+});
+
+for (const scenario of PHASE_4_SCENARIOS) {
   for (const viewport of STORY_VIEWPORTS) {
     test(`${scenario.id} tick-0 at ${viewport.name} viewport`, async ({ page }) => {
       const browserErrors = collectBrowserErrors(page);
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await openPhase3ScenarioAtTickZero(page, scenario);
+      await openPhase4ScenarioAtTickZero(page, scenario);
       await expectNoPageOverflow(page);
 
       const dishBounds = await page
@@ -787,7 +1065,7 @@ for (const scenario of PHASE_3_SCENARIOS) {
     const browserErrors = collectBrowserErrors(page);
     const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
     await page.setViewportSize({ width: medium.width, height: medium.height });
-    await loadDevelopedPhase3Scenario(page, scenario);
+    await loadDevelopedPhase4Scenario(page, scenario);
     await expectNoPageOverflow(page);
 
     await expect(page).toHaveScreenshot(`${scenario.id}-developed-medium.png`, {

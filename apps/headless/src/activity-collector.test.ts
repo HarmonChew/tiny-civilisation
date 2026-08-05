@@ -103,6 +103,34 @@ function socialAction(slotIndex: number, targetEntityId: number): ActiveAction {
   };
 }
 
+function waterGatherAction(
+  state: SimulationState,
+  creature: SimulationState["creatures"][number],
+  source: SimulationState["resourceNodes"][number],
+): ActiveAction {
+  const claim = claimInteractionSlot(
+    state,
+    creature,
+    "GATHER_WATER",
+    source.id,
+    source.tileIndex,
+  );
+  if (!claim) throw new Error("Expected an available water-source interaction slot.");
+  return {
+    kind: "GATHER_WATER",
+    phase: "MOVING",
+    startedAtTick: state.tick,
+    targetEntityId: source.id,
+    targetTileIndex: claim.tileIndex,
+    path: [creature.tileIndex, claim.tileIndex],
+    pathIndex: 0,
+    progress: 0,
+    workRequired: 10_000,
+    navigationRevision: state.world.navigationRevision,
+    interactionClaim: claim,
+  };
+}
+
 describe("streaming activity collector", () => {
   it("measures completed actions, transitions, movement, occupancy, overlap, and crowding", () => {
     const state = createSimulation(7);
@@ -608,6 +636,256 @@ describe("streaming activity collector", () => {
     expect(profile.milestones.firstInterventionResponseTick).toBe(0);
   });
 
+  it("profiles thirst, water flow, source pressure, routes, access, and water response latency", () => {
+    const state = createSimulation(createScenarioReference("petri-world", 81));
+    const [actor, second, third, fourth, ...others] = state.creatures;
+    const source = state.resourceNodes.find((node) => node.kind === "WATER");
+    if (!actor || !second || !third || !fourth || !source) {
+      throw new Error("Expected four creatures and a potable-water source.");
+    }
+    for (const creature of others) creature.alive = false;
+    source.currentStock = 2;
+    actor.needs.thirst = 7_999;
+    actor.inventory.water = 0;
+    actor.activeAction = waterGatherAction(state, actor, source);
+    const initialTile = actor.tileIndex;
+    const movementTile = state.world.tiles.find(
+      (tile) => !tile.blocked && tile.index !== initialTile,
+    )?.index;
+    if (movementTile === undefined) throw new Error("Expected a movement tile.");
+
+    appendEvent(state, "PLAYER_REPLENISHED_WATER", "SIGNIFICANT", {
+      tick: 0,
+      targetIds: [source.id],
+      resourceKind: "WATER",
+      quantity: 1,
+      commandId: 1,
+      commandOutcome: "APPLIED",
+    });
+    const collector = new StreamingActivityCollector(state);
+    const decisionId = state.nextDecisionId++;
+    state.decisionRecords.push({
+      id: decisionId,
+      tick: 1,
+      actorId: actor.id,
+      previousAction: null,
+      selectedAction: "GATHER_WATER",
+      selectedDesire: "RELIEVE_THIRST",
+      selectedPlan: "FETCH_WATER",
+      selectedTargetId: source.id,
+      strongestReason: null,
+      switchReason: "SCHEDULED_RECONSIDERATION",
+      candidates: [
+        {
+          action: "GATHER_WATER",
+          desire: "RELIEVE_THIRST",
+          plan: "FETCH_WATER",
+          targetEntityId: source.id,
+          targetTileIndex: source.tileIndex,
+          utility: 9_000,
+          factors: [],
+        },
+      ],
+    });
+
+    state.tick = 1;
+    actor.needs.thirst = 8_000;
+    actor.inventory.water = 2;
+    source.currentStock = 0;
+    placeCreature(state, actor, movementTile);
+    appendEvent(state, "ACTION_STARTED", "ROUTINE", {
+      tick: 1,
+      actorIds: [actor.id],
+      targetIds: [source.id],
+      resourceKind: "WATER",
+      decisionRecordIds: [decisionId],
+    });
+    appendEvent(state, "SEVERE_THIRST_STARTED", "SIGNIFICANT", {
+      tick: 1,
+      actorIds: [actor.id],
+      resourceKind: "WATER",
+      quantity: actor.needs.thirst,
+    });
+    appendEvent(state, "WATER_GATHERED", "ROUTINE", {
+      tick: 1,
+      actorIds: [actor.id],
+      targetIds: [source.id],
+      resourceKind: "WATER",
+      quantity: 2,
+    });
+    appendEvent(state, "WATER_SOURCE_DEPLETED", "SIGNIFICANT", {
+      tick: 1,
+      actorIds: [actor.id],
+      targetIds: [source.id],
+      resourceKind: "WATER",
+    });
+    collector.observe(state);
+
+    state.tick = 2;
+    actor.needs.thirst = 9_500;
+    placeCreature(state, actor, initialTile);
+    collector.observe(state);
+
+    state.tick = 3;
+    actor.needs.thirst = 3_000;
+    actor.inventory.water = 1;
+    actor.activeAction = null;
+    appendEvent(state, "WATER_DRUNK", "ROUTINE", {
+      tick: 3,
+      actorIds: [actor.id],
+      resourceKind: "WATER",
+      quantity: 1,
+    });
+    appendEvent(state, "SEVERE_THIRST_RESOLVED", "NOTABLE", {
+      tick: 3,
+      actorIds: [actor.id],
+      resourceKind: "WATER",
+      quantity: actor.needs.thirst,
+    });
+    for (const recipient of [second, third, fourth, second]) {
+      appendEvent(state, "WATER_SHARED", "NOTABLE", {
+        tick: 3,
+        actorIds: [actor.id],
+        targetIds: [recipient.id],
+        resourceKind: "WATER",
+        quantity: 1,
+      });
+    }
+    collector.observe(state);
+
+    const profile = collector.report();
+    expect(
+      profile.hydration.need.byCreature.find(
+        (creature) => creature.creatureId === actor.id,
+      ),
+    ).toMatchObject({
+      livingCreatureTicks: 3,
+      severeThirstTicks: 2,
+      criticalThirstTicks: 1,
+      severeSpellCount: 1,
+      resolvedSevereSpellCount: 1,
+      longestSevereSpellTicks: 2,
+    });
+    expect(profile.hydration.need).toMatchObject({
+      livingCreatureTicks: 12,
+      firstSevereTick: 1,
+      firstDrinkTick: 3,
+      firstRecoveryTick: 3,
+      recoveryLatencyTicks: { samples: 1, median: 2 },
+    });
+    expect(profile.hydration.flow).toMatchObject({
+      gatheredUnits: 2,
+      drunkUnits: 1,
+      sharedUnits: 4,
+      carriedWaterAtHorizon: 1,
+      donorIds: [actor.id],
+      recipientIds: [second.id, third.id, fourth.id].sort((left, right) => left - right),
+      distinctDonors: 1,
+      distinctRecipients: 3,
+    });
+    expect(profile.hydration.sources).toMatchObject({
+      nodeCount: 1,
+      initialStock: 2,
+      stockAtHorizon: 0,
+      depletedSourceTicks: 3,
+      anySourceDepletedTicks: 3,
+      depletionEvents: 1,
+      gatherAttempts: 1,
+      selection: { samples: 1, herfindahlIndex: 1 },
+    });
+    expect(profile.hydration.access).toMatchObject({
+      pairCount: 4,
+      reachablePairs: 4,
+      unreachablePairs: 0,
+      weightedCost: { samples: 4 },
+      nearestSourceWeightedCostByCreature: { samples: 4 },
+    });
+    expect(profile.hydration.routes).toMatchObject({
+      traversals: 2,
+      uniqueUndirectedEdges: 1,
+      dominantEdgeShare: 1,
+      herfindahlIndex: 1,
+    });
+    expect(profile.hydration.interventionResponses).toMatchObject({
+      appliedWaterInterventions: 1,
+      interventionsWithResponse: 1,
+      firstResponseLatencyTicks: { samples: 1, median: 1 },
+    });
+
+    const aggregate = summarizeActivityProfiles([profile]);
+    expect(aggregate.hydration).toMatchObject({
+      gatheredUnits: 2,
+      drunkUnits: 1,
+      sharedUnits: 4,
+      seedDistributions: {
+        longestSevereSpellTicks: { samples: 1, median: 2 },
+        depletedSourceTicks: { samples: 1, median: 3 },
+        waterRouteHerfindahlIndex: { samples: 1, median: 1 },
+      },
+    });
+  });
+
+  it("attributes a saturated water-source failure to blocked contention", () => {
+    const state = createSimulation(createScenarioReference("petri-world", 82));
+    const source = state.resourceNodes.find((node) => node.kind === "WATER");
+    const claimants = state.creatures.slice(0, 3);
+    const blocked = state.creatures[3];
+    if (!source || claimants.length !== 3 || !blocked) {
+      throw new Error("Expected a source, three claimants, and one blocked creature.");
+    }
+    for (const creature of state.creatures.slice(4)) creature.alive = false;
+    for (const creature of claimants) {
+      creature.activeAction = waterGatherAction(state, creature, source);
+    }
+    const collector = new StreamingActivityCollector(state);
+    const decisionId = state.nextDecisionId++;
+    state.decisionRecords.push({
+      id: decisionId,
+      tick: 1,
+      actorId: blocked.id,
+      previousAction: null,
+      selectedAction: "GATHER_WATER",
+      selectedDesire: "RELIEVE_THIRST",
+      selectedPlan: "FETCH_WATER",
+      selectedTargetId: source.id,
+      strongestReason: null,
+      switchReason: "SCHEDULED_RECONSIDERATION",
+      candidates: [
+        {
+          action: "GATHER_WATER",
+          desire: "RELIEVE_THIRST",
+          plan: "FETCH_WATER",
+          targetEntityId: source.id,
+          targetTileIndex: source.tileIndex,
+          utility: 9_000,
+          factors: [],
+        },
+      ],
+    });
+    state.tick = 1;
+    appendEvent(state, "PLAN_BLOCKED", "NOTABLE", {
+      tick: 1,
+      actorIds: [blocked.id],
+      targetIds: [source.id],
+      decisionRecordIds: [decisionId],
+    });
+    state.metrics.interactionContentions += 1;
+    state.metrics.waterGatherContentions += 1;
+    state.metrics.failedInteractionClaims += 1;
+    collector.observe(state);
+
+    expect(collector.report().hydration.sources).toMatchObject({
+      gatherAttempts: 1,
+      blockedGatherAttempts: 1,
+      contendedGatherAttempts: 1,
+      blockedByContentionGatherAttempts: 1,
+      contentionRate: 1,
+      claimedSlotTicks: 3,
+      capacitySlotTicks: 3,
+      saturatedSourceTicks: 1,
+    });
+  });
+
   it("reports group, relationship, dispersion, route, and horizon facts", () => {
     const state = createSimulation(73);
     const [first, second, third, fourth, ...others] = state.creatures;
@@ -662,7 +940,7 @@ describe("streaming activity collector", () => {
       materialRequired: 4,
       progress: 10_000,
       workRequired: 10_000,
-      inventory: { capacity: 20, food: 6, material: 2 },
+      inventory: { capacity: 20, food: 6, material: 2, water: 0 },
       guardIds: [],
       completedTick: 0,
     });
@@ -675,7 +953,7 @@ describe("streaming activity collector", () => {
       materialRequired: 6,
       progress: 5_000,
       workRequired: 10_000,
-      inventory: { capacity: 200, food: 99, material: 99 },
+      inventory: { capacity: 200, food: 99, material: 99, water: 0 },
       guardIds: [],
       completedTick: null,
     });
@@ -847,7 +1125,7 @@ describe("streaming activity collector", () => {
     ]);
     expect(resources.accessDistanceTiles.samples).toBe(0);
     expect(resources.unreachableCreatureResourceKinds).toBe(
-      state.creatures.filter((creature) => creature.alive).length * 2,
+      state.creatures.filter((creature) => creature.alive).length * 3,
     );
     expect(
       resources.accessByCreatureAndKind.every(

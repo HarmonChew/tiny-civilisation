@@ -41,7 +41,7 @@ describe("canonical experiment outcomes", () => {
         materialRequired: 8,
         progress: 10_000,
         workRequired: 10_000,
-        inventory: { capacity: 100, food: 11, material: 7 },
+        inventory: { capacity: 100, food: 11, material: 7, water: 0 },
         guardIds: [],
         completedTick: 4,
       },
@@ -54,7 +54,7 @@ describe("canonical experiment outcomes", () => {
         materialRequired: 8,
         progress: 100,
         workRequired: 10_000,
-        inventory: { capacity: 100, food: 99, material: 99 },
+        inventory: { capacity: 100, food: 99, material: 99, water: 0 },
         guardIds: [],
         completedTick: null,
       },
@@ -84,6 +84,12 @@ describe("canonical experiment outcomes", () => {
       },
     );
     state.metrics.foodShared = 8;
+    state.metrics.waterGathered = 7;
+    state.metrics.waterDrunk = 5;
+    state.metrics.waterShared = 2;
+    state.metrics.severeThirstCreatureTicks = 13;
+    state.metrics.interactionContentions = 4;
+    state.metrics.waterGatherContentions = 3;
     state.metrics.thefts = 3;
     state.metrics.attacks = 2;
     state.metrics.storagesCompleted = 1;
@@ -98,6 +104,12 @@ describe("canonical experiment outcomes", () => {
       groups: 1,
       averageTrust: 500,
       foodShared: 8,
+      waterGathered: 7,
+      waterDrunk: 5,
+      waterShared: 2,
+      severeThirstExposureTicks: 13,
+      interactionContentions: 4,
+      waterGatherContentions: 3,
       thefts: 3,
       attacks: 2,
       storagesCompleted: 1,
@@ -108,12 +120,43 @@ describe("canonical experiment outcomes", () => {
     expect(createExperimentOutcome(createSimulation(9)).averageTrust).toBe(0);
   });
 
+  it("projects deterministic water access and recent hydration-route pressure", () => {
+    const state = createSimulation(createScenarioReference("petri-world", 11));
+    const first = state.creatures[0];
+    if (!first) throw new Error("Missing fixture creature.");
+    for (const creature of state.creatures.slice(1)) creature.alive = false;
+    first.activeDesire = {
+      kind: "RELIEVE_THIRST",
+      subjectEntityId: first.id,
+      startedAtTick: 0,
+      minimumCommitUntilTick: 10,
+      nextReconsiderationTick: 10,
+      strength: 8_000,
+      selectedByDecisionId: 1,
+    };
+    first.recentRoute = [
+      { tick: 0, tileIndex: 1, x: 1_500, y: 500 },
+      { tick: 1, tileIndex: 2, x: 2_500, y: 500 },
+      { tick: 2, tileIndex: 1, x: 1_500, y: 500 },
+      { tick: 3, tileIndex: 49, x: 1_500, y: 1_500 },
+    ];
+
+    const outcome = createExperimentOutcome(state);
+    expect(outcome.averageWaterAccessCost).toBeGreaterThan(0);
+    expect(outcome.unreachableWaterAccessPairs).toBe(0);
+    expect(outcome.routeConcentration).toBeCloseTo(2 / 3);
+  });
+
   it("computes intervention-minus-baseline deltas only at a common horizon", () => {
     const baselineState = createSimulation(1);
     baselineState.tick = 20;
     const interventionState = createSimulation(1);
     interventionState.tick = 20;
     interventionState.metrics.foodShared = 4;
+    interventionState.metrics.waterDrunk = 2;
+    interventionState.metrics.interactionContentions = 3;
+    interventionState.metrics.waterGatherContentions = 2;
+    interventionState.metrics.severeThirstCreatureTicks = 7;
     interventionState.resourceNodes[0]!.currentStock += 3;
     const comparison = compareExperimentOutcomes(
       createExperimentOutcome(baselineState),
@@ -121,6 +164,10 @@ describe("canonical experiment outcomes", () => {
     );
     expect(comparison.delta.foodShared).toBe(4);
     expect(comparison.delta.wildFood).toBe(3);
+    expect(comparison.delta.waterDrunk).toBe(2);
+    expect(comparison.delta.interactionContentions).toBe(3);
+    expect(comparison.delta.waterGatherContentions).toBe(2);
+    expect(comparison.delta.severeThirstExposureTicks).toBe(7);
     expect(comparison.baseline.foodShared).toBe(0);
     expect(comparison.intervention.foodShared).toBe(4);
 

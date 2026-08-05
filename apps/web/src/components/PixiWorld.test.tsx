@@ -36,6 +36,7 @@ vi.mock("./pixi/layers", () => ({
 vi.mock("./pixi/runtime", () => ({
   createRenderLayers: () => ({
     terrain: {},
+    traffic: {},
     groupInfluence: {},
     intentions: {},
     resources: {},
@@ -68,7 +69,7 @@ describe("PixiWorld replay camera", () => {
         focusedId={null}
         followedId={2}
         tool="inspect"
-        overlays={{ resources: true, intentions: false, groups: true }}
+        overlays={{ resources: true, intentions: false, groups: true, traffic: true }}
         {...callbacks}
       />,
     );
@@ -89,7 +90,7 @@ describe("PixiWorld replay camera", () => {
         focusedId={null}
         followedId={null}
         tool="inspect"
-        overlays={{ resources: true, intentions: false, groups: true }}
+        overlays={{ resources: true, intentions: false, groups: true, traffic: true }}
         replayCamera={replayCamera}
         mutationDisabled
         {...callbacks}
@@ -114,7 +115,7 @@ describe("PixiWorld replay camera", () => {
         focusedId={null}
         followedId={null}
         tool="inspect"
-        overlays={{ resources: true, intentions: false, groups: true }}
+        overlays={{ resources: true, intentions: false, groups: true, traffic: true }}
         replayCamera={replayCamera}
         mutationDisabled
         {...callbacks}
@@ -130,7 +131,7 @@ describe("PixiWorld replay camera", () => {
         focusedId={null}
         followedId={2}
         tool="inspect"
-        overlays={{ resources: true, intentions: false, groups: true }}
+        overlays={{ resources: true, intentions: false, groups: true, traffic: true }}
         {...callbacks}
       />,
     );

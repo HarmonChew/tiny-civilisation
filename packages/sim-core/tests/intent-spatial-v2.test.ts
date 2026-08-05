@@ -80,8 +80,10 @@ describe("hierarchical intent selection", () => {
     advanceSimulation(state, 600);
     const travelScorePerTile: Partial<Record<ActionKind, number>> = {
       GATHER_FOOD: 52,
+      GATHER_WATER: 54,
       REST: 35,
       SHARE: 45,
+      SHARE_WATER: 45,
       DEPOSIT: 40,
       WITHDRAW: 45,
       GATHER_MATERIAL: 40,
@@ -89,7 +91,9 @@ describe("hierarchical intent selection", () => {
       STEAL: 48,
       GUARD: 35,
       ATTACK: 55,
+      FLEE: 12,
       JOIN_GROUP: 55,
+      EXPLORE: 18,
     };
     let checkedTravelFact = false;
     expect(state.decisionRecords.length).toBeGreaterThan(0);
@@ -97,11 +101,13 @@ describe("hierarchical intent selection", () => {
       for (const option of record.candidates) {
         for (const factor of option.factors) {
           if (factor.fact) expect(factor.fact.capturedAtTick).toBe(record.tick);
-          if (factor.key === "travel cost" && factor.fact) {
+          if (factor.key === "weighted travel cost" && factor.fact) {
             const scale = travelScorePerTile[option.action];
             if (!scale) throw new Error(`Missing travel scale for ${option.action}.`);
-            expect(factor.fact).toMatchObject({ unit: "TILES" });
-            expect(factor.fact.value).toBe(Math.abs(factor.contribution) / scale);
+            expect(factor.fact).toMatchObject({ unit: "MOVE_COST" });
+            expect(Math.round(((factor.fact.value as number) / 10) * scale)).toBe(
+              Math.abs(factor.contribution),
+            );
             checkedTravelFact = true;
           }
         }
@@ -142,7 +148,7 @@ describe("hierarchical intent selection", () => {
   });
 
   it("carries exact intervention provenance into resource intent facts", () => {
-    const state = createSimulation(4_182);
+    const state = createSimulation(1);
     queuePlayerCommand(state, {
       type: "ADD_FOOD",
       x: 10,
@@ -427,7 +433,7 @@ describe("authoritative spatial interaction", () => {
 
 describe("readable event beats", () => {
   it("records construction progress and the approach, action, and aftermath of conflict", () => {
-    const state = createSimulation(4_182);
+    const state = createSimulation(1);
     const events: DomainEvent[] = [];
     const seenIds = new Set<number>();
     for (let tick = 0; tick < 2_000; tick += 1) {

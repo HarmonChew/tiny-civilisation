@@ -68,7 +68,7 @@ const readyComparison: ComparisonState = {
       baseline: 12,
       branch: 13,
       delta: "1 creature",
-      deltaTone: "positive",
+      deltaDirection: "increase",
       note: "living creatures",
     },
     {
@@ -76,8 +76,8 @@ const readyComparison: ComparisonState = {
       label: "Conflict events",
       baseline: 4,
       branch: 2,
-      delta: "2 fewer",
-      deltaTone: "positive",
+      delta: "2 events",
+      deltaDirection: "decrease",
     },
   ],
 };
@@ -604,6 +604,16 @@ describe("experiment workspace components", () => {
     expect(within(table).getByRole("rowheader", { name: /Population/ })).toBeTruthy();
     expect(within(table).getByText("1 creature")).toBeTruthy();
     expect(screen.getByText("Equal horizon: tick 420")).toBeTruthy();
+    expect(screen.getByText(/observed differences/i).textContent).toContain(
+      "not scores, winners, or scripted endings",
+    );
+    const populationDelta = within(table).getByText("1 creature").closest("td");
+    const conflictDelta = within(table).getByText("2 events").closest("td");
+    expect(populationDelta?.className).toContain("comparison-delta--increase");
+    expect(populationDelta?.textContent).toContain("Increase: +1 creature");
+    expect(conflictDelta?.className).toContain("comparison-delta--decrease");
+    expect(conflictDelta?.textContent).toContain("Decrease: âˆ’2 events");
+    expect(table.querySelector('[class*="positive"], [class*="negative"]')).toBeNull();
 
     rerender(
       <ComparisonTable

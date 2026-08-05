@@ -7,17 +7,17 @@ This repository implements an experiment-ready vertical slice of the larger desi
 ## What is implemented
 
 - A fixed-tick, seeded simulation with four versioned 48 × 32 scenarios: the preserved Petri reference plus topology, abundance, and unequal-start contrasts.
-- Eight autonomous creatures with hunger, fatigue, health, inventories, traits, and skills.
-- Food and material nodes, blocked terrain, a chokepoint, grid pathfinding, and fixed-point movement.
+- Eight autonomous creatures with hunger, thirst, fatigue, health, shared-capacity inventories, traits, and skills.
+- Food, material, and finite renewable potable-water nodes, blocked terrain, chokepoints, weighted deterministic A* travel, and fixed-point movement.
 - Rule-gated Utility AI with separate persistent desires, plans, physical actions, structured reason facts, deterministic tie-breaking, and factor-by-factor decision records.
-- Gathering, eating, resting, sharing, keeping, stealing, depositing, withdrawing, storage construction, guarding, fighting, fleeing, and joining a group.
+- Gathering food, material, and water; eating; drinking; sharing food and water; resting; keeping; stealing; depositing; withdrawing; storage construction; guarding; fighting; fleeing; and joining a group.
 - Authoritative interaction slots and fixed-point endpoints that keep gathering, construction, storage, social, guard, and conflict participants spatially legible.
 - Directed trust, fear, familiarity, and rivalry; bounded memories for help, theft, harm, resources, and group formation.
 - Emergent groups, leadership, descriptive roles, shared storage, witness-based theft detection, and nonlethal-biased conflict.
-- A PixiJS world view with identity/direction marks, routes, destinations, carrying and action feedback, plus React inspectors for intentions, relationships, groups, decisions, and history.
+- A PixiJS world view with identity/direction marks, selected routes, the 24 strongest observational traffic trails, water-source stock/depletion marks, destinations, carrying and action feedback, plus React inspectors for intentions, relationships, groups, decisions, and history.
 - A keyboard-operable semantic world navigator with spatial ordering, textual dish/subject summaries, shared typed focus, and debounced significant-event announcements.
 - Deterministic event attention tiers, clustering, a bounded recoverable moment queue, and optional speed-aware pacing that restores the player's previous playback state.
-- Player commands for adding or removing food and toggling obstacles. Commands enter the simulation at an authoritative tick.
+- Player commands for adding or removing food, replenishing or draining existing water sources, and toggling obstacles. Commands enter the simulation at an authoritative tick.
 - Typed command outcomes, rejection recovery, and bounded factual response traces linked by command/event IDs rather than summary text.
 - A paused-first experiment setup that chooses an authoritative scenario and seed independently, then shows its dramatic question, starting facts, observable tensions, and named regions.
 - An experiment notebook that records interventions, creates baseline and intervention branches, and bookmarks meaningful ticks.
@@ -31,7 +31,7 @@ This repository implements an experiment-ready vertical slice of the larger desi
 - A declared tick pipeline, focused simulation systems, typed lookup indexes, and an exhaustive action resolver registry.
 - Real-browser Chromium coverage for the Worker, Pixi renderer, touch, reduced motion, forced colors, 200% text, 400% effective zoom, the 18-image Petri story matrix, tick-zero narrow/medium/wide views of every additional scenario, and one developed-state view per new scenario, plus enforced coverage and production-bundle budgets.
 
-The current product slice deliberately excludes water, shelters, birth and ageing, culture, migration, trade, territory, seasons, disease, predators, technology, large-world scaling, and LLM narration. Those belong to later milestones after the existing mechanics produce a broader range of explainable outcomes.
+The current product slice includes Phase 4.1 potable-water sources, thirst, hydration choices, weighted travel, and observational traffic trails. It deliberately excludes shelters, communal water storage, birth and ageing, culture, migration, trade, territory, seasons, disease, predators, technology, large-world scaling, and LLM narration; those remain later milestones.
 
 ## Quick start
 
@@ -61,7 +61,7 @@ npm run benchmark
 npm run build
 ```
 
-`npm run check` is the complete automated local and CI gate: formatting, linting, type-checking, coverage, real-browser journeys, production builds, and the post-build JavaScript/CSS budget check. `npm test` starts the interactive Vitest watchers; use `npm run test:run` for a single non-interactive pass. Manual screen-reader, Firefox/WebKit, and usability sessions remain separate release evidence; automated checks do not claim to replace them.
+`npm run check` is the complete automated local and CI gate: formatting, linting, type-checking, coverage, real-browser journeys, production builds, and the post-build JavaScript/CSS budget check. `npm test` starts the interactive Vitest watchers; use `npm run test:run` for a single non-interactive pass. The manual screen-reader and usability sessions, plus the separate three-browser release run, remain distinct release evidence; the routine automated gate does not replace them.
 
 `npm run test:golden` verifies the checked-in deterministic replay baseline without updating it. Use `npm run test:golden:update` only for an intentional simulation behavior change, then review the fixture diff and record the rationale in the commit or pull request. Ordinary `npm run test:run` verification also disables snapshot updates.
 
@@ -77,12 +77,14 @@ npm run build
 | Escape            | Return to the inspect tool                               |
 | Add food tool     | Add food at the chosen tile through the command queue    |
 | Remove food tool  | Remove food at the chosen tile through the command queue |
+| Replenish water   | Add up to the selected source's remaining capacity       |
+| Drain water       | Remove up to the selected source's current stock         |
 | Obstacle tool     | Toggle a tile between open and blocked                   |
 | Restart same seed | Recreate the initial world for a controlled comparison   |
 | Experiment button | Open the record, replay, compare, and explain notebook   |
 | New experiment    | Return to paused scenario and seed setup                 |
 
-The interface also provides a semantic world navigator, resource/intention/group overlays, event-timeline filters, recoverable moment cards and pacing preferences, automatic intervention records, bookmarks, local save/load, import/export, deterministic replay, outcome comparison, and causal navigation.
+The interface also provides a semantic world navigator, resource/intention/group overlays, an independently toggleable traffic-trail layer, event-timeline filters, recoverable moment cards and pacing preferences, automatic intervention records, bookmarks, local save/load, import/export, deterministic replay, outcome comparison, and causal navigation.
 
 ## Headless simulation
 
@@ -114,6 +116,29 @@ npm run headless -- matrix --corpus smoke
 
 `matrix` also accepts the locked `nightly`, `calibration`, and `holdout` corpora. Its JSON retains every primary per-seed profile and reports scenario identity, compiled-map hashes, hard invariants, expected-band checks, multi-label factual outcomes, Wilson intervals, paired descriptive deltas, and convergence diagnostics.
 
+For a durable corpus artifact, pass an explicit compressed output path. The
+command still prints the same JSON to stdout and also writes deterministic
+compact `.json.gz`, `.sha256`, and readable `.md` companions. Full-corpus
+stdout is streamed in the same pretty format rather than assembled as one
+oversized string:
+
+```sh
+npm run headless -- matrix --corpus calibration --output docs/baselines/phase-4.1-calibration-v2.json.gz
+```
+
+The separate `npm run test:e2e:release` command runs tagged critical journeys
+in Chromium, Firefox, and WebKit. Routine `npm run test:e2e` and `npm run check`
+remain Chromium-only. See the
+[Phase 3 evidence ledger](docs/baselines/phase-3-release-status-v1.md) and
+[Phase 4.1 evidence ledger](docs/baselines/phase-4.1-release-status-v1.md) for
+the current execution and human-gate status. The Phase 4.1 discovery
+[review](docs/baselines/phase-4.1-calibration-review-v1.md) froze classifier
+v2 and the selected bands. The unchanged
+[frozen calibration](docs/baselines/phase-4.1-calibration-v2.md) and
+[untouched holdout](docs/baselines/phase-4.1-holdout-v2.md) each cover four
+scenarios × 64 seeds × 10,000 ticks and pass their automated hard, contract,
+outcome-incidence, dominance-rationale, and paired macro-difference gates.
+
 Use `npm run headless -- --help` for the complete CLI reference. A run prints structured JSON containing the final tick and state hash, surviving population, current group count, sharing, theft, conflict, and completed-storage counters. Batch output includes every run and aggregate counts.
 
 Elapsed time and ticks per second are measurements of the current machine and are not deterministic. The seed, requested ticks, final state, counters, and hash are the reproducible part of the result.
@@ -132,7 +157,7 @@ The simulation core owns time, authoritative intent, interaction claims, events,
 
 `sim-core` exposes a small simulation facade, a code-owned immutable scenario catalog/compiler, and an explicit tick coordinator. Desires, plans, reason facts, interaction slots, commands, social state, groups, attention events, projections, persistence, experiment branches, outcomes, causal evidence, actions, and maintenance systems live in focused modules. The web app consumes those contracts through simulation, focus, moment, and experiment controllers; its Pixi camera/runtime/layers remain downstream of read-only snapshots. General and moment replay use isolated engines and reconstruct the full scenario reference. Moment replay supplies captured observation frames to the dish, frames the focal subject, participants, and event location, then restores the exact live viewport, focus, play, follow, region, and DOM-focus state.
 
-The locked Phase 3 identity, generation, corpus, and compatibility decisions are in [`docs/phase-3-contract.md`](docs/phase-3-contract.md); its work packages and remaining release-evidence gates are in [`docs/phase-3-execution-plan.md`](docs/phase-3-execution-plan.md). The broader product and authority rules remain in [`docs/design-and-architecture.md`](docs/design-and-architecture.md).
+The locked Phase 3 identity, generation, corpus, and compatibility decisions are in [`docs/phase-3-contract.md`](docs/phase-3-contract.md); its work packages and remaining release-evidence gates are in [`docs/phase-3-execution-plan.md`](docs/phase-3-execution-plan.md). The Phase 4.1 mechanics, versions, migration, hydration evidence, and explicit exclusions are in [`docs/phase-4.1-contract.md`](docs/phase-4.1-contract.md). The broader product and authority rules remain in [`docs/design-and-architecture.md`](docs/design-and-architecture.md).
 
 The repository is organized as npm workspaces:
 
@@ -171,4 +196,6 @@ food pressure
 
 Phases 0, 1, and 2 are complete. The Phase 2.5 architecture and implementation are also present: v2 intent and spatial contracts, readable dish and semantic navigation, shared focus, attention/moment policy, progressive factual explanation, typed intervention traces, compatibility migrations, and isolated replay. Automated deterministic, component, runtime, and Chromium evidence is checked in, including the narrow/medium/wide story matrix and Chromium coverage for touch, reduced motion, forced colors, text resize, and high-zoom reflow. Manual NVDA/VoiceOver, formative/confirmatory usability sessions, and browser-specific Firefox/WebKit evidence remain required before the project claims complete Phase 2.5 release evidence.
 
-Phase 3 feature implementation is present: four structural scenarios, authoritative end-to-end identity, a scenario-aware statistical matrix, truthful browser setup, factual scenario context, compatibility migrations, and cross-scenario deterministic/performance gates. It is not yet a complete release-evidence claim: the full locked calibration/holdout artifacts, manual NVDA or VoiceOver pass, Firefox/WebKit release runs, and formative/confirmatory usability sessions still need to be attached. Water and shelter, lifecycle, culture, and migration remain Phase 4 work. See [`docs/phase-3-execution-plan.md`](docs/phase-3-execution-plan.md) for the evidence checklist and `PROGRESS.md` for the wider roadmap.
+Phase 3 feature implementation is present: four structural scenarios, authoritative end-to-end identity, a scenario-aware statistical matrix, truthful browser setup, factual scenario context, compatibility migrations, and cross-scenario deterministic/performance gates. The historical 64-seed calibration and untouched 64-seed holdout from immutable commit `4ff604e` pass their automated hard, label, and macro gates; their compressed artifacts, checksums, and pre-holdout freeze review are linked from the [release-evidence ledger](docs/baselines/phase-3-release-status-v1.md). The current aggregate release suite passes all 12 stories across Chromium, Firefox, and WebKit. Phase 3 is still not release-complete because the manual NVDA pass and formative/confirmatory usability sessions remain pending. See [`docs/phase-3-execution-plan.md`](docs/phase-3-execution-plan.md) and `PROGRESS.md` for the remaining gates and wider roadmap.
+
+Phase 4.1 engineering and automated simulation evidence are complete: water sources and interventions, thirst and nonlethal dehydration, gathering/drinking/sharing, weighted travel and factual move-cost reasons, observational traffic trails, accessible source/access projections, versioned migration, hydration classifiers, and the browser water story are implemented and covered. The unchanged frozen-band calibration and untouched holdout both pass, as do the deterministic, migration, golden, coverage, visual, payload, bundle, four-scenario throughput, and 12/12 Chromium/Firefox/WebKit release gates. Manual NVDA review and a fresh five-person usability check remain open, so Phase 4.1 is not release-complete; see the [evidence ledger](docs/baselines/phase-4.1-release-status-v1.md).

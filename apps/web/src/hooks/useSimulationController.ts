@@ -5,6 +5,7 @@ import type {
   CausalEvidenceRef,
   ExperimentOutcomeComparisonV1,
   ExperimentOutcomeV1,
+  PlayerCommand,
   ScenarioReferenceV2,
   ScheduledPlayerCommand,
   SimulationState,
@@ -324,12 +325,28 @@ export function useSimulationController(
       const engine = engineRef.current;
       if (!engine) return null;
       const common = { applyAtTick: view.tick, tileIndex: tile.index };
-      const command =
-        tool === "add-food"
-          ? ({ ...common, type: "ADD_FOOD", amount } as const)
-          : tool === "remove-food"
-            ? ({ ...common, type: "REMOVE_FOOD", amount } as const)
-            : ({ ...common, type: "TOGGLE_OBSTACLE", blocked: !tile.blocked } as const);
+      let command: PlayerCommand;
+      switch (tool) {
+        case "add-food":
+          command = { ...common, type: "ADD_FOOD", amount };
+          break;
+        case "remove-food":
+          command = { ...common, type: "REMOVE_FOOD", amount };
+          break;
+        case "replenish-water":
+          command = { ...common, type: "REPLENISH_WATER", amount };
+          break;
+        case "drain-water":
+          command = { ...common, type: "DRAIN_WATER", amount };
+          break;
+        case "obstacle":
+          command = { ...common, type: "TOGGLE_OBSTACLE", blocked: !tile.blocked };
+          break;
+        default: {
+          const unhandled: never = tool;
+          throw new Error(`Unknown intervention tool: ${String(unhandled)}`);
+        }
+      }
       try {
         const acknowledgement = await engine.intervene(command);
         applyFrame(acknowledgement.frame);
@@ -354,8 +371,16 @@ export function useSimulationController(
             `${scheduled.blocked ? "Obstacle placement" : "Passage opening"} scheduled at ${x}, ${y} for tick ${scheduled.applyAtTick}. The chronicle records whether it could be applied.`,
           );
         } else {
+          const changeLabel =
+            tool === "add-food"
+              ? "Food addition"
+              : tool === "remove-food"
+                ? "Food removal"
+                : tool === "replenish-water"
+                  ? "Water replenishment"
+                  : "Water drainage";
           setFeedback(
-            `${tool === "add-food" ? "Food addition" : "Food removal"} of ${scheduled.amount} units scheduled at ${x}, ${y} for tick ${scheduled.applyAtTick}.`,
+            `${changeLabel} of ${scheduled.amount} units scheduled at ${x}, ${y} for tick ${scheduled.applyAtTick}.`,
           );
         }
         return acknowledgement;

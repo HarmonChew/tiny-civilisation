@@ -148,6 +148,7 @@ export function PixiWorld({
         const layers = createRenderLayers();
         root.addChild(
           layers.terrain,
+          layers.traffic,
           layers.groupInfluence,
           layers.intentions,
           layers.resources,

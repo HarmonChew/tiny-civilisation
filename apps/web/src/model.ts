@@ -1,11 +1,12 @@
-import type { ScenarioReferenceV2 } from "@tiny-civ/sim-core";
+import type { ReasonFact, ScenarioReferenceV2 } from "@tiny-civ/sim-core";
 
 export type EntityId = number;
 
 export type TimelineCategory =
   "all" | "social" | "resources" | "conflict" | "group" | "player";
 
-export type InterventionTool = "inspect" | "add-food" | "remove-food" | "obstacle";
+export type InterventionTool =
+  "inspect" | "add-food" | "remove-food" | "replenish-water" | "drain-water" | "obstacle";
 
 export interface Point {
   x: number;
@@ -29,6 +30,14 @@ export interface ResourceView {
   y: number;
   stock: number;
   capacity: number;
+  access?: {
+    interactionCapacity: number;
+    claimedInteractionSlots: number;
+    reachableCreatures: number;
+    livingCreatures: number;
+    nearestWeightedCost: number | null;
+    meanWeightedCost: number | null;
+  };
 }
 
 export interface StructureView {
@@ -60,6 +69,7 @@ export interface UtilityFactorView {
   evidenceEventIds: number[];
   factLabel?: string | undefined;
   factValue?: number | string | undefined;
+  factUnit?: ReasonFact["unit"] | undefined;
 }
 
 export interface CandidateView {
@@ -116,9 +126,22 @@ export interface CreatureView {
   goalTarget?: Point | undefined;
   route: Array<Point & { tick: number }>;
   interactionSlot?: Point | undefined;
+  waterAccess?:
+    | {
+        sourceId: EntityId;
+        sourceStock: number;
+        sourceCapacity: number;
+        weightedCost: number;
+        reachableSources: number;
+        totalSources: number;
+        interactionCapacity: number;
+        claimedInteractionSlots: number;
+      }
+    | undefined;
   health: number;
   hunger: number;
   fatigue: number;
+  thirst: number;
   traits: TraitView[];
   inventory: InventoryView[];
   candidates: CandidateView[];
@@ -158,7 +181,8 @@ export interface TimelineEventView {
   /** Original domain-event ID when a command event is presented through history. */
   commandSourceEventId?: number | undefined;
   commandOutcome?: "APPLIED" | "REJECTED" | undefined;
-  commandRejectionReason?: "OCCUPIED_TILE" | undefined;
+  commandRejectionReason?:
+    "OCCUPIED_TILE" | "NO_WATER_SOURCE" | "SOURCE_FULL" | "SOURCE_EMPTY" | undefined;
   playerCaused: boolean;
   decisionActorId?: EntityId | undefined;
   decisionCandidates?: CandidateView[] | undefined;
@@ -205,6 +229,7 @@ export interface OverlaySettings {
   resources: boolean;
   intentions: boolean;
   groups: boolean;
+  traffic: boolean;
 }
 
 export interface WorldAction {

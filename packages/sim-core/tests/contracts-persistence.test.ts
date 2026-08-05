@@ -65,13 +65,35 @@ function legacyStateFixture(): UnknownRecord {
   const metrics = record(legacy.metrics);
   delete metrics.interactionContentions;
   delete metrics.failedInteractionClaims;
+  delete metrics.waterGathered;
+  delete metrics.waterDrunk;
+  delete metrics.waterShared;
+  delete metrics.severeThirstCreatureTicks;
+  delete metrics.waterGatherContentions;
+  legacy.resourceNodes = (legacy.resourceNodes as unknown[]).filter(
+    (value) => record(value).kind !== "WATER",
+  );
+  const entityIds = [
+    ...(legacy.creatures as unknown[]),
+    ...(legacy.resourceNodes as unknown[]),
+    ...(legacy.structures as unknown[]),
+  ].map((value) => record(value).id as number);
+  legacy.nextEntityId = Math.max(...entityIds) + 1;
   for (const value of legacy.creatures as unknown[]) {
     const creature = record(value);
+    delete record(creature.needs).thirst;
+    delete record(creature.inventory).water;
+    delete record(creature.actionCounts).GATHER_WATER;
+    delete record(creature.actionCounts).DRINK;
+    delete record(creature.actionCounts).SHARE_WATER;
     delete creature.activeDesire;
     delete creature.activePlan;
     delete creature.intentHistory;
     delete creature.recentRoute;
     if (creature.activeAction) delete record(creature.activeAction).interactionClaim;
+  }
+  for (const value of legacy.structures as unknown[]) {
+    delete record(record(value).inventory).water;
   }
   for (const value of legacy.decisionRecords as unknown[]) {
     const decision = record(value);
@@ -91,7 +113,12 @@ function legacyStateFixture(): UnknownRecord {
     .filter((value) => {
       const type = record(value).type;
       return (
-        type !== "DESIRE_CHANGED" && type !== "PLAN_CHANGED" && type !== "PLAN_BLOCKED"
+        type !== "DESIRE_CHANGED" &&
+        type !== "PLAN_CHANGED" &&
+        type !== "PLAN_BLOCKED" &&
+        type !== "HYDRATION_RULES_ENABLED" &&
+        !String(type).includes("WATER") &&
+        !String(type).includes("THIRST")
       );
     })
     .map((value) => {
@@ -103,6 +130,52 @@ function legacyStateFixture(): UnknownRecord {
       delete event.commandRejectionReason;
       return event;
     });
+  return legacy;
+}
+
+function phaseThreeStateFixture(): UnknownRecord {
+  const state = createSimulation(createScenarioReference("split-banks", 91));
+  advanceSimulation(state, 12);
+  const legacy = record(JSON.parse(JSON.stringify(state)) as unknown);
+  legacy.schemaVersion = 3;
+  const scenario = record(legacy.scenario);
+  scenario.behaviorVersion = 3;
+  scenario.scenarioVersion = 1;
+  legacy.compiledMapHash = "1111111111111111";
+  legacy.resourceNodes = (legacy.resourceNodes as unknown[]).filter(
+    (value) => record(value).kind !== "WATER",
+  );
+  const entityIds = [
+    ...(legacy.creatures as unknown[]),
+    ...(legacy.resourceNodes as unknown[]),
+    ...(legacy.structures as unknown[]),
+  ].map((value) => record(value).id as number);
+  legacy.nextEntityId = Math.max(...entityIds) + 1;
+  for (const value of legacy.creatures as unknown[]) {
+    const creature = record(value);
+    delete record(creature.needs).thirst;
+    delete record(creature.inventory).water;
+    delete record(creature.actionCounts).GATHER_WATER;
+    delete record(creature.actionCounts).DRINK;
+    delete record(creature.actionCounts).SHARE_WATER;
+  }
+  for (const value of legacy.structures as unknown[]) {
+    delete record(record(value).inventory).water;
+  }
+  const metrics = record(legacy.metrics);
+  delete metrics.waterGathered;
+  delete metrics.waterDrunk;
+  delete metrics.waterShared;
+  delete metrics.severeThirstCreatureTicks;
+  delete metrics.waterGatherContentions;
+  legacy.domainEvents = (legacy.domainEvents as unknown[]).filter((value) => {
+    const type = String(record(value).type);
+    return (
+      type !== "HYDRATION_RULES_ENABLED" &&
+      !type.includes("WATER") &&
+      !type.includes("THIRST")
+    );
+  });
   return legacy;
 }
 
@@ -261,7 +334,7 @@ describe("versioned simulation contracts", () => {
     ).toBe(true);
   });
 
-  it("preserves v1 replay commands but drops hashes that cannot verify current state", () => {
+  it("preserves v1 replay commands and horizon but drops hashes that cannot verify current state", () => {
     const migrated = migrateSimulationReplay({
       kind: "tiny-civilisation/replay",
       schemaVersion: 1,
@@ -278,7 +351,96 @@ describe("versioned simulation contracts", () => {
       seed: 41,
       commands: [],
     });
-    expect(migrated.finalTick).toBeUndefined();
+    expect(migrated.finalTick).toBe(500);
+    expect(migrated.finalHash).toBeUndefined();
+  });
+
+  it("atomically migrates Phase 3 saves into deterministic unverified hydration state", () => {
+    const legacyState = phaseThreeStateFixture();
+    const original = JSON.stringify(legacyState);
+    const legacySave = {
+      kind: "tiny-civilisation/save",
+      schemaVersion: 2,
+      behaviorVersion: 3,
+      stateSchemaVersion: 3,
+      state: legacyState,
+    };
+    const first = migrateSimulationSave(legacySave).state;
+    const second = migrateSimulationSave(
+      JSON.parse(JSON.stringify(legacySave)) as unknown,
+    ).state;
+
+    expect(JSON.stringify(legacyState)).toBe(original);
+    const activeLegacyCreature = (legacyState.creatures as unknown[])
+      .map(record)
+      .find((creature) => creature.activeAction !== null);
+    expect(activeLegacyCreature).toBeDefined();
+    expect(
+      first.creatures.find((creature) => creature.id === activeLegacyCreature?.id)
+        ?.activeAction,
+    ).toEqual(activeLegacyCreature?.activeAction);
+    expect(hashSimulationState(first)).toBe(hashSimulationState(second));
+    expect(first.scenario).toEqual(createScenarioReference("split-banks", 91));
+    expect(first.creatures.every((creature) => creature.needs.thirst === 2_500)).toBe(true);
+    expect(first.creatures.every((creature) => creature.inventory.water === 0)).toBe(true);
+    expect(first.structures.every((structure) => structure.inventory.water === 0)).toBe(
+      true,
+    );
+    expect(first.resourceNodes.filter((node) => node.kind === "WATER")).toHaveLength(1);
+    expect(first.metrics).toMatchObject({
+      waterGathered: 0,
+      waterDrunk: 0,
+      waterShared: 0,
+    });
+    const migration = first.domainEvents.at(-1);
+    expect(migration).toMatchObject({
+      tick: legacyState.tick,
+      type: "HYDRATION_RULES_ENABLED",
+      resourceKind: "WATER",
+      quantity: 1,
+    });
+    expect(
+      first.domainEvents
+        .slice(0, -1)
+        .every(
+          (event) =>
+            event.resourceKind !== "WATER" &&
+            !event.type.includes("WATER") &&
+            !event.type.includes("THIRST"),
+        ),
+    ).toBe(true);
+  });
+
+  it("migrates Phase 3 replays by preserving commands and clearing parity claims", () => {
+    const scenario = {
+      ...createScenarioReference("unequal-table", 73),
+      behaviorVersion: 3,
+      scenarioVersion: 1,
+    };
+    const legacy = {
+      kind: "tiny-civilisation/replay",
+      schemaVersion: 2,
+      behaviorVersion: 3,
+      stateSchemaVersion: 3,
+      scenario,
+      seed: 73,
+      commands: [
+        {
+          commandId: 1,
+          applyAtTick: 4,
+          type: "ADD_FOOD",
+          tileIndex: 340,
+          amount: 2,
+          blocked: null,
+        },
+      ],
+      finalTick: 20,
+      finalHash: "0123456789abcdef",
+    };
+    const migrated = migrateSimulationReplay(legacy);
+    expect(migrated.scenario).toEqual(createScenarioReference("unequal-table", 73));
+    expect(migrated.commands).toEqual(legacy.commands);
+    expect(migrated.finalTick).toBe(20);
     expect(migrated.finalHash).toBeUndefined();
   });
 });

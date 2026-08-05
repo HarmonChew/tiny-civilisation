@@ -1,8 +1,11 @@
 import {
   Apple,
   BrickWall,
+  DropletOff,
+  Droplets,
   Eraser,
   Eye,
+  Footprints,
   Layers3,
   MousePointer2,
   Route,
@@ -43,6 +46,18 @@ const toolOptions: Array<{
     label: "Remove food",
     icon: Eraser,
     help: "Remove food from a tile and record the intervention.",
+  },
+  {
+    id: "replenish-water",
+    label: "Replenish water",
+    icon: Droplets,
+    help: "Add water to an existing source, up to its stated capacity.",
+  },
+  {
+    id: "drain-water",
+    label: "Drain water",
+    icon: DropletOff,
+    help: "Remove the requested amount from an existing source, limited by its stock.",
   },
   {
     id: "obstacle",
@@ -130,6 +145,12 @@ export function WorldStage({
             onClick={() => onOverlay("intentions")}
           />
           <IconButton
+            label="Toggle traffic trails"
+            icon={Footprints}
+            pressed={overlays.traffic}
+            onClick={() => onOverlay("traffic")}
+          />
+          <IconButton
             label="Toggle group influence"
             icon={Layers3}
             pressed={overlays.groups}
@@ -202,8 +223,16 @@ export function WorldStage({
             <i className="legend-dot legend-dot--material" /> material
           </span>
           <span>
+            <i className="legend-dot legend-dot--water" /> water source
+          </span>
+          <span>
             <i className="legend-dot legend-dot--storage" /> storage
           </span>
+          {overlays.traffic ? (
+            <span>
+              <i className="legend-line legend-line--traffic" /> recent traffic
+            </span>
+          ) : null}
         </div>
       </div>
       <div className="dish-caption">

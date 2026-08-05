@@ -9,6 +9,7 @@ import type {
 
 export const DESIRE_KINDS = [
   "RELIEVE_HUNGER",
+  "RELIEVE_THIRST",
   "RECOVER_ENERGY",
   "SECURE_PROVISIONS",
   "PRESERVE_PRIVATE_RESERVE",
@@ -21,11 +22,14 @@ export const DESIRE_KINDS = [
 
 export const PLAN_KINDS = [
   "EAT_CARRIED_FOOD",
+  "DRINK_CARRIED_WATER",
   "FORAGE_FOR_FOOD",
+  "FETCH_WATER",
   "WITHDRAW_SHARED_FOOD",
   "REST_SAFELY",
   "BUILD_PRIVATE_RESERVE",
   "SHARE_WITH_OTHER",
+  "SHARE_WATER_WITH_OTHER",
   "CONTRIBUTE_TO_STORAGE",
   "JOIN_COMMUNITY",
   "GUARD_SHARED_ASSET",
@@ -40,9 +44,12 @@ const PLAN_BY_ACTION = {
   EXPLORE: "EXPLORE_SURROUNDINGS",
   GATHER_FOOD: "FORAGE_FOR_FOOD",
   GATHER_MATERIAL: "COMPLETE_STORAGE",
+  GATHER_WATER: "FETCH_WATER",
   EAT: "EAT_CARRIED_FOOD",
+  DRINK: "DRINK_CARRIED_WATER",
   REST: "REST_SAFELY",
   SHARE: "SHARE_WITH_OTHER",
+  SHARE_WATER: "SHARE_WATER_WITH_OTHER",
   KEEP: "BUILD_PRIVATE_RESERVE",
   STEAL: "TAKE_FOOD",
   DEPOSIT: "CONTRIBUTE_TO_STORAGE",
@@ -56,11 +63,12 @@ const PLAN_BY_ACTION = {
 
 const ACTIONS_BY_DESIRE: Record<DesireKind, readonly ActionKind[]> = {
   RELIEVE_HUNGER: ["EAT", "GATHER_FOOD", "WITHDRAW", "STEAL"],
+  RELIEVE_THIRST: ["DRINK", "GATHER_WATER"],
   RECOVER_ENERGY: ["REST"],
   SECURE_PROVISIONS: ["GATHER_FOOD", "DEPOSIT", "EXPLORE"],
   PRESERVE_PRIVATE_RESERVE: ["KEEP", "GATHER_FOOD", "EAT", "EXPLORE"],
-  BELONG: ["JOIN_GROUP", "SHARE", "BUILD_STORAGE", "GATHER_MATERIAL"],
-  RECIPROCATE_OR_REPAIR: ["SHARE", "JOIN_GROUP"],
+  BELONG: ["JOIN_GROUP", "SHARE", "SHARE_WATER", "BUILD_STORAGE", "GATHER_MATERIAL"],
+  RECIPROCATE_OR_REPAIR: ["SHARE", "SHARE_WATER", "JOIN_GROUP"],
   PROTECT_PERSON_OR_GROUP: ["GUARD", "ATTACK"],
   AVOID_THREAT: ["FLEE", "REST"],
   COMPLETE_SHARED_WORK: ["GATHER_MATERIAL", "BUILD_STORAGE", "DEPOSIT"],
@@ -88,6 +96,9 @@ export function desireForAction(
     case "WITHDRAW":
     case "STEAL":
       return "RELIEVE_HUNGER";
+    case "DRINK":
+    case "GATHER_WATER":
+      return "RELIEVE_THIRST";
     case "GATHER_FOOD":
       return creature.needs.hunger >= 5_500
         ? "RELIEVE_HUNGER"
@@ -98,7 +109,8 @@ export function desireForAction(
       return "RECOVER_ENERGY";
     case "KEEP":
       return "PRESERVE_PRIVATE_RESERVE";
-    case "SHARE": {
+    case "SHARE":
+    case "SHARE_WATER": {
       const helpedBefore = state.memories.some(
         (memory) =>
           memory.ownerId === creature.id &&
@@ -128,6 +140,8 @@ export function desireStrength(creature: CreatureState, desire: DesireKind): num
   switch (desire) {
     case "RELIEVE_HUNGER":
       return creature.needs.hunger;
+    case "RELIEVE_THIRST":
+      return creature.needs.thirst;
     case "RECOVER_ENERGY":
       return creature.needs.fatigue;
     case "SECURE_PROVISIONS":
@@ -149,6 +163,7 @@ export function desireStrength(creature: CreatureState, desire: DesireKind): num
 
 export const DESIRE_LABELS: Record<DesireKind, string> = {
   RELIEVE_HUNGER: "find relief from hunger",
+  RELIEVE_THIRST: "find safe water",
   RECOVER_ENERGY: "recover energy",
   SECURE_PROVISIONS: "secure provisions",
   PRESERVE_PRIVATE_RESERVE: "keep a private reserve",
@@ -161,11 +176,14 @@ export const DESIRE_LABELS: Record<DesireKind, string> = {
 
 export const PLAN_LABELS: Record<PlanKind, string> = {
   EAT_CARRIED_FOOD: "eat carried food",
+  DRINK_CARRIED_WATER: "drink carried water",
   FORAGE_FOR_FOOD: "forage for food",
+  FETCH_WATER: "fetch potable water",
   WITHDRAW_SHARED_FOOD: "draw from the shared store",
   REST_SAFELY: "rest somewhere safe",
   BUILD_PRIVATE_RESERVE: "hold a small reserve",
   SHARE_WITH_OTHER: "share with another creature",
+  SHARE_WATER_WITH_OTHER: "share water with another creature",
   CONTRIBUTE_TO_STORAGE: "add to the shared reserve",
   JOIN_COMMUNITY: "approach a community",
   GUARD_SHARED_ASSET: "guard a shared asset",

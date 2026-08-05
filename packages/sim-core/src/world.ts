@@ -4,6 +4,7 @@ import {
   TILE_FIXED_UNITS,
   type ActionKind,
   type CreatureState,
+  type ResourceKind,
   type SimulationState,
   type TileState,
   type WorldState,
@@ -29,9 +30,12 @@ export function createEmptyActionCounts(): Record<ActionKind, number> {
     EXPLORE: 0,
     GATHER_FOOD: 0,
     GATHER_MATERIAL: 0,
+    GATHER_WATER: 0,
     EAT: 0,
+    DRINK: 0,
     REST: 0,
     SHARE: 0,
+    SHARE_WATER: 0,
     KEEP: 0,
     STEAL: 0,
     DEPOSIT: 0,
@@ -105,6 +109,7 @@ export interface CreaturePrototype {
   readonly x: number;
   readonly y: number;
   readonly hunger: number;
+  readonly thirst: number;
   readonly generosity: number;
   readonly aggression: number;
   readonly sociability: number;
@@ -120,6 +125,7 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
     x: 9,
     y: 9,
     hunger: 4_100,
+    thirst: 2_500,
     generosity: 8_000,
     aggression: 1_800,
     sociability: 7_700,
@@ -133,6 +139,7 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
     x: 11,
     y: 9,
     hunger: 6_800,
+    thirst: 2_500,
     generosity: 6_900,
     aggression: 3_300,
     sociability: 8_200,
@@ -146,6 +153,7 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
     x: 8,
     y: 11,
     hunger: 3_700,
+    thirst: 2_500,
     generosity: 6_100,
     aggression: 2_600,
     sociability: 7_100,
@@ -159,6 +167,7 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
     x: 12,
     y: 11,
     hunger: 5_500,
+    thirst: 2_500,
     generosity: 5_700,
     aggression: 4_600,
     sociability: 7_500,
@@ -172,6 +181,7 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
     x: 9,
     y: 13,
     hunger: 4_600,
+    thirst: 2_500,
     generosity: 7_400,
     aggression: 2_200,
     sociability: 6_600,
@@ -185,6 +195,7 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
     x: 13,
     y: 13,
     hunger: 5_000,
+    thirst: 2_500,
     generosity: 4_900,
     aggression: 5_000,
     sociability: 6_100,
@@ -198,6 +209,7 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
     x: 7,
     y: 13,
     hunger: 6_200,
+    thirst: 2_500,
     generosity: 6_500,
     aggression: 2_900,
     sociability: 7_900,
@@ -211,6 +223,7 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
     x: 14,
     y: 10,
     hunger: 7_100,
+    thirst: 2_500,
     generosity: 1_900,
     aggression: 6_000,
     sociability: 3_000,
@@ -221,7 +234,7 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
 ] as const;
 
 export interface ResourceNodePrototype {
-  readonly kind: "FOOD" | "MATERIAL";
+  readonly kind: ResourceKind;
   readonly x: number;
   readonly y: number;
   readonly currentStock: number;
@@ -258,6 +271,15 @@ export const PETRI_RESOURCE_PROTOTYPES: readonly ResourceNodePrototype[] = [
     regenerationEveryTicks: 80,
     regenerationAmount: 1,
   },
+  {
+    kind: "WATER",
+    x: 34,
+    y: 20,
+    currentStock: 24,
+    maximumStock: 40,
+    regenerationEveryTicks: 180,
+    regenerationAmount: 1,
+  },
 ] as const;
 
 export interface InitialWorldPopulation {
@@ -291,6 +313,8 @@ function createCreature(
     return Math.floor((normalized * (taroSpan * 2 + 1)) / 10_001) - taroSpan;
   };
   const tileIndex = tileIndexAt(world, prototype.x, prototype.y);
+  const thirstRandom = keyedRandomUnit(state.seed, "creature-thirst", 0, id);
+  const thirstJitter = Math.floor((thirstRandom * 1_401) / 10_001) - 700;
   return {
     id,
     name: prototype.name,
@@ -303,6 +327,7 @@ function createCreature(
     needs: {
       hunger: clampUnit(prototype.hunger + ordinaryJitter()),
       fatigue: clampUnit(800 + randomRange(state, 0, 900)),
+      thirst: clampUnit(prototype.thirst + thirstJitter),
     },
     traits: {
       generosity: clampUnit(prototype.generosity + traitJitter("generosity", 700, 700)),
@@ -320,6 +345,7 @@ function createCreature(
       capacity: 6,
       food: 0,
       material: 0,
+      water: 0,
     },
     groupId: null,
     role: prototype.name === "Taro" ? "DRIFTER" : "FORAGER",

@@ -1,4 +1,4 @@
-import { AlertTriangle, PackageOpen, UsersRound } from "lucide-react";
+import { AlertTriangle, Droplets, PackageOpen, Route, UsersRound } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { CreatureView, EntityId, GroupView } from "../model";
 import { humanize } from "./ui";
@@ -19,11 +19,18 @@ function alertFor(creature: CreatureView): CreatureAlert | null {
       tone: "danger",
     };
   }
+  if (creature.thirst >= 75) return { label: "Very thirsty", tone: "warning" };
   if (creature.hunger >= 75) return { label: "Very hungry", tone: "warning" };
   if (creature.fatigue >= 75) return { label: "Very tired", tone: "warning" };
   if (/GUARD|STEAL/i.test(creature.action))
     return { label: "Watch closely", tone: "watch" };
   return null;
+}
+
+function carriedWater(creature: CreatureView): number {
+  return creature.inventory
+    .filter((stack) => /WATER/i.test(stack.kind))
+    .reduce((total, stack) => total + Math.max(0, stack.quantity), 0);
 }
 
 function carriedSummary(creature: CreatureView): string {
@@ -43,8 +50,12 @@ function creatureAccessibleName(
     creature.role,
     `goal ${humanize(creature.goal)}`,
     `now ${humanize(creature.action)}`,
+    `thirst ${Math.round(creature.thirst)} percent`,
     groupName,
     carriedSummary(creature),
+    creature.waterAccess
+      ? `nearest water source ${creature.waterAccess.sourceId}, stock ${creature.waterAccess.sourceStock} of ${creature.waterAccess.sourceCapacity}, weighted access cost ${creature.waterAccess.weightedCost}, ${creature.waterAccess.claimedInteractionSlots} of ${creature.waterAccess.interactionCapacity} slots claimed`
+      : "no reachable water source",
     alert?.label,
   ]
     .filter(Boolean)
@@ -167,6 +178,7 @@ export function CreatureRoster({
             const alert = alertFor(creature);
             const selected = creature.id === selectedId;
             const carrying = carriedSummary(creature);
+            const water = carriedWater(creature);
             return (
               <li key={creature.id}>
                 <button
@@ -217,6 +229,16 @@ export function CreatureRoster({
                       <span>
                         <PackageOpen aria-hidden="true" size={11} />
                         {carrying}
+                      </span>
+                      <span>
+                        <Droplets aria-hidden="true" size={11} />
+                        Thirst {Math.round(creature.thirst)}% / {water} water
+                      </span>
+                      <span>
+                        <Route aria-hidden="true" size={11} />
+                        {creature.waterAccess
+                          ? `Source ${creature.waterAccess.sourceId}: ${creature.waterAccess.sourceStock}/${creature.waterAccess.sourceCapacity}, cost ${creature.waterAccess.weightedCost}, slots ${creature.waterAccess.claimedInteractionSlots}/${creature.waterAccess.interactionCapacity}`
+                          : "No reachable water source"}
                       </span>
                       {alert ? (
                         <span className={`creature-roster__alert is-${alert.tone}`}>

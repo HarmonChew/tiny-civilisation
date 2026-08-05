@@ -3,6 +3,7 @@ import {
   cloneScenarioReference,
   compileScenario,
   findPath,
+  findWeightedPath,
   interactionPurpose,
   manhattanDistance,
   sameScenarioReference,
@@ -22,7 +23,7 @@ import {
   type SimulationState,
 } from "@tiny-civ/sim-core";
 
-export const ACTIVITY_PROFILE_SCHEMA_VERSION = 3 as const;
+export const ACTIVITY_PROFILE_SCHEMA_VERSION = 4 as const;
 export const ACTIVITY_SAMPLE_EVERY_TICKS = 1 as const;
 export const SIGNIFICANT_EVENT_TIERS = [
   "SIGNIFICANT",
@@ -38,9 +39,12 @@ export const TRANSITION_DOMINANCE_WARNING_SHARE = 0.5 as const;
 export const TRANSITION_REPETITION_WARNING_RATE = 0.5 as const;
 export const CONCENTRATION_WARNING_SHARE = 0.6 as const;
 export const CONCENTRATION_WARNING_MIN_SAMPLES = 10 as const;
+export const SEVERE_THIRST_THRESHOLD = 8_000 as const;
+export const CRITICAL_THIRST_THRESHOLD = 9_400 as const;
 
 export const DESIRE_KINDS = [
   "RELIEVE_HUNGER",
+  "RELIEVE_THIRST",
   "RECOVER_ENERGY",
   "SECURE_PROVISIONS",
   "PRESERVE_PRIVATE_RESERVE",
@@ -63,6 +67,7 @@ export type DesireFamily = (typeof DESIRE_FAMILIES)[number];
 
 export const DESIRE_FAMILY_BY_KIND = {
   RELIEVE_HUNGER: "SURVIVAL",
+  RELIEVE_THIRST: "SURVIVAL",
   RECOVER_ENERGY: "SURVIVAL",
   SECURE_PROVISIONS: "PROVISIONING",
   PRESERVE_PRIVATE_RESERVE: "PROVISIONING",
@@ -76,15 +81,19 @@ export const DESIRE_FAMILY_BY_KIND = {
 export const RESOURCE_KINDS = [
   "FOOD",
   "MATERIAL",
+  "WATER",
 ] as const satisfies readonly ResourceKind[];
 
 export const ACTION_KINDS = [
   "EXPLORE",
   "GATHER_FOOD",
   "GATHER_MATERIAL",
+  "GATHER_WATER",
   "EAT",
+  "DRINK",
   "REST",
   "SHARE",
+  "SHARE_WATER",
   "KEEP",
   "STEAL",
   "DEPOSIT",
@@ -98,6 +107,7 @@ export const ACTION_KINDS = [
 
 export const INTERACTION_EVENT_TYPES = [
   "FOOD_SHARED",
+  "WATER_SHARED",
   "MATERIAL_DEPOSITED",
   "STORAGE_SITE_STARTED",
   "STORAGE_COMPLETED",
@@ -366,6 +376,115 @@ export interface RouteConcentrationProfile {
   byEdge: RouteEdgeProfile[];
 }
 
+export interface UndirectedRouteEdgeProfile {
+  fromTileIndex: number;
+  toTileIndex: number;
+  traversals: number;
+  share: number;
+}
+
+export interface WaterRouteConcentrationProfile {
+  traversals: number;
+  uniqueUndirectedEdges: number;
+  dominantEdge: UndirectedRouteEdgeProfile | null;
+  dominantEdgeShare: number;
+  herfindahlIndex: number;
+  byEdge: UndirectedRouteEdgeProfile[];
+}
+
+export interface CreatureHydrationProfile {
+  creatureId: number;
+  name: string;
+  livingCreatureTicks: number;
+  thirstUnitTicks: number;
+  meanThirst: number;
+  severeThirstTicks: number;
+  criticalThirstTicks: number;
+  severeSpellCount: number;
+  resolvedSevereSpellCount: number;
+  longestSevereSpellTicks: number;
+}
+
+export interface WaterAccessPairProfile {
+  creatureId: number;
+  sourceId: number;
+  weightedCost: number | null;
+}
+
+export interface HydrationActivityProfile {
+  need: {
+    severeThreshold: typeof SEVERE_THIRST_THRESHOLD;
+    criticalThreshold: typeof CRITICAL_THIRST_THRESHOLD;
+    livingCreatureTicks: number;
+    thirstUnitTicks: number;
+    meanThirst: number;
+    severeThirstCreatureTicks: number;
+    criticalThirstCreatureTicks: number;
+    severeExposureRate: number;
+    criticalExposureRate: number;
+    severeSpellCount: number;
+    resolvedSevereSpellCount: number;
+    longestSevereSpellTicks: number;
+    recoveryLatencyTicks: NumericDistribution;
+    firstSevereTick: number | null;
+    firstDrinkTick: number | null;
+    firstRecoveryTick: number | null;
+    byCreature: CreatureHydrationProfile[];
+  };
+  flow: {
+    gatheredUnits: number;
+    drunkUnits: number;
+    sharedUnits: number;
+    carriedWaterAtHorizon: number;
+    carriedWaterUnitTicks: number;
+    carryingCreatureTicks: number;
+    donorIds: number[];
+    recipientIds: number[];
+    distinctDonors: number;
+    distinctRecipients: number;
+  };
+  sources: {
+    nodeCount: number;
+    initialStock: number;
+    stockAtHorizon: number;
+    maximumStockAtHorizon: number;
+    stockUnitTicks: number;
+    capacityUnitTicks: number;
+    utilization: number;
+    depletedSourceTicks: number;
+    anySourceDepletedTicks: number;
+    depletionEvents: number;
+    replenishedUnits: number;
+    drainedUnits: number;
+    gatherAttempts: number;
+    blockedGatherAttempts: number;
+    /** Authoritative gather attempts that encountered at least one occupied slot. */
+    contendedGatherAttempts: number;
+    /** Fully blocked attempts where every legal source slot was occupied. */
+    blockedByContentionGatherAttempts: number;
+    contentionRate: number;
+    claimedSlotTicks: number;
+    capacitySlotTicks: number;
+    saturatedSourceTicks: number;
+    selection: CategoricalConcentrationProfile;
+  };
+  access: {
+    pairCount: number;
+    reachablePairs: number;
+    unreachablePairs: number;
+    weightedCost: NumericDistribution;
+    nearestSourceWeightedCostByCreature: NumericDistribution;
+    byPair: WaterAccessPairProfile[];
+  };
+  routes: WaterRouteConcentrationProfile;
+  interventionResponses: {
+    windowTicks: typeof INTERVENTION_RESPONSE_WINDOW_TICKS;
+    appliedWaterInterventions: number;
+    interventionsWithResponse: number;
+    firstResponseLatencyTicks: NumericDistribution;
+  };
+}
+
 export interface SpatialDispersionProfile {
   creaturePairDistanceTiles: NumericDistribution;
   withinGroupPairDistanceTiles: NumericDistribution;
@@ -392,6 +511,7 @@ export interface ResourceAccessHorizonFact {
   kind: ResourceKind;
   nearestNodeIds: number[];
   distanceTiles: number | null;
+  weightedCost: number | null;
 }
 
 export interface ResourceKindHorizonFact {
@@ -410,6 +530,7 @@ export interface StorageHorizonFact {
   completedTick: number | null;
   food: number;
   material: number;
+  water: number;
   capacity: number;
   fillRatio: number;
   constructionProgress: number;
@@ -424,14 +545,18 @@ export interface HorizonFactsProfile {
     stockRatio: number;
     carriedFood: number;
     carriedMaterial: number;
+    carriedWater: number;
     groupedCarriedFood: number;
     groupedCarriedMaterial: number;
+    groupedCarriedWater: number;
     ungroupedCarriedFood: number;
     ungroupedCarriedMaterial: number;
+    ungroupedCarriedWater: number;
     constructionCommittedMaterial: number;
     byKind: ResourceKindHorizonFact[];
     nodes: ResourceNodeHorizonFact[];
     accessDistanceTiles: NumericDistribution;
+    accessWeightedCost: NumericDistribution;
     unreachableCreatureResourceKinds: number;
     accessByCreatureAndKind: ResourceAccessHorizonFact[];
   };
@@ -441,6 +566,7 @@ export interface HorizonFactsProfile {
     storageSiteCount: number;
     food: number;
     material: number;
+    water: number;
     capacity: number;
     fillRatio: number;
     structures: StorageHorizonFact[];
@@ -674,6 +800,7 @@ export interface ActivityProfile {
   horizon: HorizonFactsProfile;
   stalemate: StalemateProfile;
   desires: DesireActivityProfile;
+  hydration: HydrationActivityProfile;
   scenarioSpatial: ScenarioSpatialActivityProfile;
   diagnostics: ActivityDiagnosticProfile;
 }
@@ -700,6 +827,31 @@ export interface DesireFamilyActivityAggregate {
   exposureRate: NumericDistribution;
   changesInto: NumericDistribution;
   changesOutOf: NumericDistribution;
+}
+
+export interface HydrationActivityAggregate {
+  gatheredUnits: number;
+  drunkUnits: number;
+  sharedUnits: number;
+  donorIds: number[];
+  recipientIds: number[];
+  seedDistributions: {
+    meanThirst: NumericDistribution;
+    severeExposureRate: NumericDistribution;
+    criticalExposureRate: NumericDistribution;
+    longestSevereSpellTicks: NumericDistribution;
+    recoveryLatencyMedianTicks: NumericDistribution;
+    carriedWaterAtHorizon: NumericDistribution;
+    depletedSourceTicks: NumericDistribution;
+    sourceUtilization: NumericDistribution;
+    sourceSelectionHerfindahlIndex: NumericDistribution;
+    gatherContentionRate: NumericDistribution;
+    unreachableWaterAccessPairs: NumericDistribution;
+    waterAccessWeightedCostMedian: NumericDistribution;
+    waterRouteDominantEdgeShare: NumericDistribution;
+    waterRouteHerfindahlIndex: NumericDistribution;
+    waterInterventionResponseLatencyMedianTicks: NumericDistribution;
+  };
 }
 
 export interface ActivityProfileAggregate {
@@ -771,6 +923,7 @@ export interface ActivityProfileAggregate {
     regions: ScenarioRegionActivityAggregate[];
     chokepoints: ScenarioChokepointActivityAggregate[];
   };
+  hydration: HydrationActivityAggregate;
   warnings: string[];
 }
 
@@ -796,11 +949,30 @@ interface CreatureAccumulator {
   activeActionLineage: string | null;
   activeActionRoute: string | null;
   activeActionNavigationRevision: number | null;
+  activeActionKind: ActionKind | null;
   lastActionCounts: Record<ActionKind, number>;
   completedActionCounts: Record<ActionKind, number>;
   lastCompletedAction: ActionKind | null;
   lastCompletionTick: number;
   movementDistance: number;
+}
+
+interface CreatureHydrationAccumulator {
+  id: number;
+  name: string;
+  livingCreatureTicks: number;
+  thirstUnitTicks: number;
+  severeThirstTicks: number;
+  criticalThirstTicks: number;
+  severeAtLastObservation: boolean;
+  currentSevereSpellTicks: number;
+  severeSpellCount: number;
+  resolvedSevereSpellCount: number;
+  longestSevereSpellTicks: number;
+}
+
+interface WaterInterventionAccumulator extends AppliedIntervention {
+  firstResponseTick: number | null;
 }
 
 interface StalemateTickSample {
@@ -1045,11 +1217,31 @@ function initialCreatureAccumulator(
     activeActionLineage: activeActionLineage(creature),
     activeActionRoute: action ? action.path.join(",") : null,
     activeActionNavigationRevision: action?.navigationRevision ?? null,
+    activeActionKind: action?.kind ?? null,
     lastActionCounts: copyActionCounts(creature),
     completedActionCounts: emptyActionCounts(),
     lastCompletedAction: null,
     lastCompletionTick: tick,
     movementDistance: 0,
+  };
+}
+
+function initialCreatureHydrationAccumulator(
+  creature: CreatureState,
+): CreatureHydrationAccumulator {
+  const severe = creature.alive && creature.needs.thirst >= SEVERE_THIRST_THRESHOLD;
+  return {
+    id: creature.id,
+    name: creature.name,
+    livingCreatureTicks: 0,
+    thirstUnitTicks: 0,
+    severeThirstTicks: 0,
+    criticalThirstTicks: 0,
+    severeAtLastObservation: severe,
+    currentSevereSpellTicks: 0,
+    severeSpellCount: severe ? 1 : 0,
+    resolvedSevereSpellCount: 0,
+    longestSevereSpellTicks: 0,
   };
 }
 
@@ -1544,7 +1736,12 @@ function resourceInteractionDistance(
   fromTileIndex: number,
   node: SimulationState["resourceNodes"][number],
 ): number | null {
-  const action: ActionKind = node.kind === "FOOD" ? "GATHER_FOOD" : "GATHER_MATERIAL";
+  const action: ActionKind =
+    node.kind === "FOOD"
+      ? "GATHER_FOOD"
+      : node.kind === "MATERIAL"
+        ? "GATHER_MATERIAL"
+        : "GATHER_WATER";
   const distances = availableInteractionSlots(
     geometryState,
     action,
@@ -1556,12 +1753,33 @@ function resourceInteractionDistance(
   return distances.length === 0 ? null : Math.min(...distances);
 }
 
+function resourceInteractionWeightedCost(
+  state: SimulationState,
+  geometryState: SimulationState,
+  fromTileIndex: number,
+  node: SimulationState["resourceNodes"][number],
+): number | null {
+  const action: ActionKind =
+    node.kind === "FOOD"
+      ? "GATHER_FOOD"
+      : node.kind === "MATERIAL"
+        ? "GATHER_MATERIAL"
+        : "GATHER_WATER";
+  const costs = availableInteractionSlots(geometryState, action, node.id, node.tileIndex)
+    .map(
+      (slot) => findWeightedPath(state.world, fromTileIndex, slot.tileIndex)?.cost ?? null,
+    )
+    .filter((cost): cost is number => cost !== null);
+  return costs.length === 0 ? null : Math.min(...costs);
+}
+
 function horizonFacts(state: SimulationState): HorizonFactsProfile {
   const living = livingCreatures(state);
   const activeGroups = groupHorizonProfile(state).partitions;
   const geometryState: SimulationState = { ...state, creatures: [] };
   const accessByCreatureAndKind: ResourceAccessHorizonFact[] = [];
   const accessDistances = new DistributionAccumulator();
+  const accessWeightedCosts = new DistributionAccumulator();
   for (const creature of living) {
     for (const kind of RESOURCE_KINDS) {
       const candidates = state.resourceNodes
@@ -1574,23 +1792,37 @@ function horizonFacts(state: SimulationState): HorizonFactsProfile {
             creature.tileIndex,
             node,
           ),
+          weightedCost: resourceInteractionWeightedCost(
+            state,
+            geometryState,
+            creature.tileIndex,
+            node,
+          ),
         }))
         .filter(
-          (candidate): candidate is { nodeId: number; distance: number } =>
-            candidate.distance !== null,
+          (
+            candidate,
+          ): candidate is { nodeId: number; distance: number; weightedCost: number } =>
+            candidate.distance !== null && candidate.weightedCost !== null,
         )
         .sort(
-          (left, right) => left.distance - right.distance || left.nodeId - right.nodeId,
+          (left, right) =>
+            left.weightedCost - right.weightedCost ||
+            left.distance - right.distance ||
+            left.nodeId - right.nodeId,
         );
       const nearestDistance = candidates[0]?.distance ?? null;
+      const nearestWeightedCost = candidates[0]?.weightedCost ?? null;
       if (nearestDistance !== null) accessDistances.add(nearestDistance);
+      if (nearestWeightedCost !== null) accessWeightedCosts.add(nearestWeightedCost);
       accessByCreatureAndKind.push({
         creatureId: creature.id,
         kind,
         nearestNodeIds: candidates
-          .filter((candidate) => candidate.distance === nearestDistance)
+          .filter((candidate) => candidate.weightedCost === nearestWeightedCost)
           .map((candidate) => candidate.nodeId),
         distanceTiles: nearestDistance,
+        weightedCost: nearestWeightedCost,
       });
     }
   }
@@ -1669,12 +1901,15 @@ function horizonFacts(state: SimulationState): HorizonFactsProfile {
       completedTick: structure.completedTick,
       food: structure.inventory.food,
       material: structure.inventory.material,
+      water: structure.inventory.water,
       capacity: structure.inventory.capacity,
       fillRatio:
         structure.inventory.capacity === 0
           ? 0
           : round(
-              (structure.inventory.food + structure.inventory.material) /
+              (structure.inventory.food +
+                structure.inventory.material +
+                structure.inventory.water) /
                 structure.inventory.capacity,
             ),
       constructionProgress: round(structure.progress / 10_000),
@@ -1690,6 +1925,10 @@ function horizonFacts(state: SimulationState): HorizonFactsProfile {
     (total, structure) => total + structure.material,
     0,
   );
+  const storageWater = completedStructures.reduce(
+    (total, structure) => total + structure.water,
+    0,
+  );
   const storageCapacity = completedStructures.reduce(
     (total, structure) => total + structure.capacity,
     0,
@@ -1698,7 +1937,7 @@ function horizonFacts(state: SimulationState): HorizonFactsProfile {
   const ungrouped = living.filter((creature) => creature.groupId === null);
   const sumInventory = (
     creatures: readonly CreatureState[],
-    kind: "food" | "material",
+    kind: "food" | "material" | "water",
   ): number => creatures.reduce((total, creature) => total + creature.inventory[kind], 0);
   return {
     tick: state.tick,
@@ -1709,16 +1948,20 @@ function horizonFacts(state: SimulationState): HorizonFactsProfile {
       stockRatio: maximumStock === 0 ? 0 : round(currentStock / maximumStock),
       carriedFood: sumInventory(living, "food"),
       carriedMaterial: sumInventory(living, "material"),
+      carriedWater: sumInventory(living, "water"),
       groupedCarriedFood: sumInventory(grouped, "food"),
       groupedCarriedMaterial: sumInventory(grouped, "material"),
+      groupedCarriedWater: sumInventory(grouped, "water"),
       ungroupedCarriedFood: sumInventory(ungrouped, "food"),
       ungroupedCarriedMaterial: sumInventory(ungrouped, "material"),
+      ungroupedCarriedWater: sumInventory(ungrouped, "water"),
       constructionCommittedMaterial: state.structures
         .filter((structure) => structure.kind === "STORAGE_SITE")
         .reduce((total, structure) => total + structure.material, 0),
       byKind,
       nodes,
       accessDistanceTiles: accessDistances.report(),
+      accessWeightedCost: accessWeightedCosts.report(),
       unreachableCreatureResourceKinds: accessByCreatureAndKind.filter(
         (access) => access.distanceTiles === null,
       ).length,
@@ -1732,11 +1975,12 @@ function horizonFacts(state: SimulationState): HorizonFactsProfile {
         .length,
       food: storageFood,
       material: storageMaterial,
+      water: storageWater,
       capacity: storageCapacity,
       fillRatio:
         storageCapacity === 0
           ? 0
-          : round((storageFood + storageMaterial) / storageCapacity),
+          : round((storageFood + storageMaterial + storageWater) / storageCapacity),
       structures,
     },
   };
@@ -1790,6 +2034,88 @@ function routeConcentration(
   };
 }
 
+function waterRouteConcentration(
+  routeTraversals: ReadonlyMap<string, number>,
+): WaterRouteConcentrationProfile {
+  const parsed = [...routeTraversals.entries()]
+    .map(([key, traversals]) => {
+      const [from, to] = key.split(":").map(Number);
+      if (from === undefined || to === undefined) {
+        throw new Error(`Invalid water-route traversal key ${key}.`);
+      }
+      return { fromTileIndex: from, toTileIndex: to, traversals };
+    })
+    .sort(
+      (left, right) =>
+        left.fromTileIndex - right.fromTileIndex || left.toTileIndex - right.toTileIndex,
+    );
+  const traversals = parsed.reduce((total, edge) => total + edge.traversals, 0);
+  const byEdge = parsed.map((edge): UndirectedRouteEdgeProfile => ({
+    ...edge,
+    share: traversals === 0 ? 0 : round(edge.traversals / traversals),
+  }));
+  const ranked = [...byEdge].sort(
+    (left, right) =>
+      right.traversals - left.traversals ||
+      left.fromTileIndex - right.fromTileIndex ||
+      left.toTileIndex - right.toTileIndex,
+  );
+  const dominantEdge = ranked[0] ?? null;
+  return {
+    traversals,
+    uniqueUndirectedEdges: byEdge.length,
+    dominantEdge,
+    dominantEdgeShare: dominantEdge?.share ?? 0,
+    herfindahlIndex:
+      traversals === 0
+        ? 0
+        : round(
+            parsed.reduce((total, edge) => total + edge.traversals * edge.traversals, 0) /
+              (traversals * traversals),
+          ),
+    byEdge,
+  };
+}
+
+function waterAccessProfile(state: SimulationState): HydrationActivityProfile["access"] {
+  const living = livingCreatures(state);
+  const sources = state.resourceNodes
+    .filter((node) => node.kind === "WATER")
+    .sort((left, right) => left.id - right.id);
+  const geometryState: SimulationState = { ...state, creatures: [] };
+  const weightedCosts = new DistributionAccumulator();
+  const nearestCosts = new DistributionAccumulator();
+  const byPair: WaterAccessPairProfile[] = [];
+
+  for (const creature of living) {
+    const creatureCosts: number[] = [];
+    for (const source of sources) {
+      const weightedCost = resourceInteractionWeightedCost(
+        state,
+        geometryState,
+        creature.tileIndex,
+        source,
+      );
+      byPair.push({ creatureId: creature.id, sourceId: source.id, weightedCost });
+      if (weightedCost !== null) {
+        weightedCosts.add(weightedCost);
+        creatureCosts.push(weightedCost);
+      }
+    }
+    if (creatureCosts.length > 0) nearestCosts.add(Math.min(...creatureCosts));
+  }
+
+  const reachablePairs = byPair.filter((pair) => pair.weightedCost !== null).length;
+  return {
+    pairCount: byPair.length,
+    reachablePairs,
+    unreachablePairs: byPair.length - reachablePairs,
+    weightedCost: weightedCosts.report(),
+    nearestSourceWeightedCostByCreature: nearestCosts.report(),
+    byPair,
+  };
+}
+
 export class StreamingActivityCollector {
   private readonly scenario: SimulationState["scenario"];
   private readonly compiledMapHash: string;
@@ -1811,8 +2137,10 @@ export class StreamingActivityCollector {
   private significantEventCount = 0;
   private readonly initialInteractionContentions: number;
   private readonly initialFailedInteractionClaims: number;
+  private readonly initialWaterGatherContentions: number;
   private lastInteractionContentions: number;
   private lastFailedInteractionClaims: number;
+  private lastWaterGatherContentions: number;
   private lastSignificantEventTick: number | null = null;
   private readonly creatures = new Map<number, CreatureAccumulator>();
   private readonly totalActionCounts = emptyActionCounts();
@@ -1841,6 +2169,7 @@ export class StreamingActivityCollector {
   private currentTickActionTransitions = 0;
   private readonly currentTickTransitionKeys = new Set<string>();
   private readonly routeTraversals = new Map<string, number>();
+  private readonly waterRouteTraversals = new Map<string, number>();
   private readonly scenarioRegions: CompiledRegionAccumulator[];
   private readonly scenarioChokepoints: CompiledChokepointAccumulator[];
   private scenarioSpatialLivingCreatureTicks = 0;
@@ -1889,6 +2218,37 @@ export class StreamingActivityCollector {
   );
   private readonly significantEventIntervals = new DistributionAccumulator();
   private readonly significantEventCounts = new Map<DomainEventType, number>();
+  private readonly hydrationCreatures = new Map<number, CreatureHydrationAccumulator>();
+  private readonly hydrationRecoveryLatencies = new DistributionAccumulator();
+  private hydrationLivingCreatureTicks = 0;
+  private carriedWaterUnitTicks = 0;
+  private carryingCreatureTicks = 0;
+  private waterGatheredUnits = 0;
+  private waterDrunkUnits = 0;
+  private waterSharedUnits = 0;
+  private readonly waterDonorIds = new Set<number>();
+  private readonly waterRecipientIds = new Set<number>();
+  private readonly initialWaterSourceStock: number;
+  private waterSourceStockUnitTicks = 0;
+  private waterSourceCapacityUnitTicks = 0;
+  private depletedWaterSourceTicks = 0;
+  private anyWaterSourceDepletedTicks = 0;
+  private waterSourceDepletionEvents = 0;
+  private waterReplenishedUnits = 0;
+  private waterDrainedUnits = 0;
+  private waterGatherAttempts = 0;
+  private blockedWaterGatherAttempts = 0;
+  private blockedByContentionWaterGatherAttempts = 0;
+  private waterClaimedSlotTicks = 0;
+  private waterCapacitySlotTicks = 0;
+  private saturatedWaterSourceTicks = 0;
+  private waterSlotCapacityNavigationRevision = -1;
+  private readonly waterSlotCapacityBySource = new Map<number, number>();
+  private readonly waterSourceSelections = new CategoricalAccumulator();
+  private firstSevereThirstTick: number | null = null;
+  private firstWaterDrinkTick: number | null = null;
+  private firstSevereThirstRecoveryTick: number | null = null;
+  private readonly waterInterventions = new Map<number, WaterInterventionAccumulator>();
   private readonly damagedHealthByCreature = new Map<number, number>();
   private readonly appliedInterventions = new Map<number, AppliedIntervention>();
   private readonly interventionChangeCounts = new Map<InterventionChangeKind, number>(
@@ -1963,14 +2323,29 @@ export class StreamingActivityCollector {
     this.lastObservedDecisionId = initialState.nextDecisionId - 1;
     this.initialInteractionContentions = initialState.metrics.interactionContentions;
     this.initialFailedInteractionClaims = initialState.metrics.failedInteractionClaims;
+    this.initialWaterGatherContentions = initialState.metrics.waterGatherContentions;
     this.lastInteractionContentions = initialState.metrics.interactionContentions;
     this.lastFailedInteractionClaims = initialState.metrics.failedInteractionClaims;
+    this.lastWaterGatherContentions = initialState.metrics.waterGatherContentions;
+    this.initialWaterSourceStock = initialState.resourceNodes
+      .filter((node) => node.kind === "WATER")
+      .reduce((total, node) => total + node.currentStock, 0);
     for (const creature of initialState.creatures) {
       this.selectionsByCreature.set(creature.id, emptySelectionDimensionAccumulator());
       this.creatures.set(
         creature.id,
         initialCreatureAccumulator(creature, initialState.tick),
       );
+      this.hydrationCreatures.set(
+        creature.id,
+        initialCreatureHydrationAccumulator(creature),
+      );
+      if (creature.alive && creature.needs.thirst >= SEVERE_THIRST_THRESHOLD) {
+        this.firstSevereThirstTick = firstTick(
+          this.firstSevereThirstTick,
+          initialState.tick,
+        );
+      }
     }
     for (const event of initialState.domainEvents) {
       this.registerAppliedIntervention(event);
@@ -2005,12 +2380,14 @@ export class StreamingActivityCollector {
     }
     if (
       state.metrics.interactionContentions < this.lastInteractionContentions ||
-      state.metrics.failedInteractionClaims < this.lastFailedInteractionClaims
+      state.metrics.failedInteractionClaims < this.lastFailedInteractionClaims ||
+      state.metrics.waterGatherContentions < this.lastWaterGatherContentions
     ) {
       throw new Error("Interaction claim metrics decreased inside one profile window.");
     }
     this.lastInteractionContentions = state.metrics.interactionContentions;
     this.lastFailedInteractionClaims = state.metrics.failedInteractionClaims;
+    this.lastWaterGatherContentions = state.metrics.waterGatherContentions;
     this.currentTickMovementFixedUnits = 0;
     this.currentTickStructuralSocialChanges = 0;
     this.currentTickActionTransitions = 0;
@@ -2021,8 +2398,10 @@ export class StreamingActivityCollector {
     this.observeDecisionsAndSelections(state, events);
     this.observeInterventionChanges(state, events);
     this.observeInterventionReroutes(state, events);
+    this.observeHydrationSelections(state, events);
     this.observeCreatures(state);
     for (const event of events) this.observeEvent(state, event);
+    this.observeHydrationState(state);
     this.observeRecovery(state);
     this.observeSpatial(state);
     this.observeScenarioRegionExposure(state);
@@ -2030,6 +2409,154 @@ export class StreamingActivityCollector {
     this.pruneAppliedInterventions(state.tick);
     this.latestState = state;
     this.lastObservedTick = state.tick;
+  }
+
+  private hydrationProfile(): HydrationActivityProfile {
+    const byCreature = [...this.hydrationCreatures.values()]
+      .sort((left, right) => left.id - right.id)
+      .map((accumulator): CreatureHydrationProfile => ({
+        creatureId: accumulator.id,
+        name: accumulator.name,
+        livingCreatureTicks: accumulator.livingCreatureTicks,
+        thirstUnitTicks: accumulator.thirstUnitTicks,
+        meanThirst:
+          accumulator.livingCreatureTicks === 0
+            ? 0
+            : round(accumulator.thirstUnitTicks / accumulator.livingCreatureTicks),
+        severeThirstTicks: accumulator.severeThirstTicks,
+        criticalThirstTicks: accumulator.criticalThirstTicks,
+        severeSpellCount: accumulator.severeSpellCount,
+        resolvedSevereSpellCount: accumulator.resolvedSevereSpellCount,
+        longestSevereSpellTicks: accumulator.longestSevereSpellTicks,
+      }));
+    const thirstUnitTicks = byCreature.reduce(
+      (total, creature) => total + creature.thirstUnitTicks,
+      0,
+    );
+    const severeThirstCreatureTicks = byCreature.reduce(
+      (total, creature) => total + creature.severeThirstTicks,
+      0,
+    );
+    const criticalThirstCreatureTicks = byCreature.reduce(
+      (total, creature) => total + creature.criticalThirstTicks,
+      0,
+    );
+    const severeSpellCount = byCreature.reduce(
+      (total, creature) => total + creature.severeSpellCount,
+      0,
+    );
+    const resolvedSevereSpellCount = byCreature.reduce(
+      (total, creature) => total + creature.resolvedSevereSpellCount,
+      0,
+    );
+    const waterSources = this.latestState.resourceNodes.filter(
+      (node) => node.kind === "WATER",
+    );
+    const interventionLatencies = new DistributionAccumulator();
+    for (const intervention of [...this.waterInterventions.values()].sort(
+      (left, right) => left.eventId - right.eventId,
+    )) {
+      if (intervention.firstResponseTick !== null) {
+        interventionLatencies.add(intervention.firstResponseTick - intervention.tick);
+      }
+    }
+    const interventionsWithResponse = [...this.waterInterventions.values()].filter(
+      (intervention) => intervention.firstResponseTick !== null,
+    ).length;
+    const contendedGatherAttempts =
+      this.lastWaterGatherContentions - this.initialWaterGatherContentions;
+
+    return {
+      need: {
+        severeThreshold: SEVERE_THIRST_THRESHOLD,
+        criticalThreshold: CRITICAL_THIRST_THRESHOLD,
+        livingCreatureTicks: this.hydrationLivingCreatureTicks,
+        thirstUnitTicks,
+        meanThirst:
+          this.hydrationLivingCreatureTicks === 0
+            ? 0
+            : round(thirstUnitTicks / this.hydrationLivingCreatureTicks),
+        severeThirstCreatureTicks,
+        criticalThirstCreatureTicks,
+        severeExposureRate:
+          this.hydrationLivingCreatureTicks === 0
+            ? 0
+            : round(severeThirstCreatureTicks / this.hydrationLivingCreatureTicks),
+        criticalExposureRate:
+          this.hydrationLivingCreatureTicks === 0
+            ? 0
+            : round(criticalThirstCreatureTicks / this.hydrationLivingCreatureTicks),
+        severeSpellCount,
+        resolvedSevereSpellCount,
+        longestSevereSpellTicks: Math.max(
+          0,
+          ...byCreature.map((creature) => creature.longestSevereSpellTicks),
+        ),
+        recoveryLatencyTicks: this.hydrationRecoveryLatencies.report(),
+        firstSevereTick: this.firstSevereThirstTick,
+        firstDrinkTick: this.firstWaterDrinkTick,
+        firstRecoveryTick: this.firstSevereThirstRecoveryTick,
+        byCreature,
+      },
+      flow: {
+        gatheredUnits: this.waterGatheredUnits,
+        drunkUnits: this.waterDrunkUnits,
+        sharedUnits: this.waterSharedUnits,
+        carriedWaterAtHorizon: livingCreatures(this.latestState).reduce(
+          (total, creature) => total + creature.inventory.water,
+          0,
+        ),
+        carriedWaterUnitTicks: this.carriedWaterUnitTicks,
+        carryingCreatureTicks: this.carryingCreatureTicks,
+        donorIds: [...this.waterDonorIds].sort((left, right) => left - right),
+        recipientIds: [...this.waterRecipientIds].sort((left, right) => left - right),
+        distinctDonors: this.waterDonorIds.size,
+        distinctRecipients: this.waterRecipientIds.size,
+      },
+      sources: {
+        nodeCount: waterSources.length,
+        initialStock: this.initialWaterSourceStock,
+        stockAtHorizon: waterSources.reduce(
+          (total, source) => total + source.currentStock,
+          0,
+        ),
+        maximumStockAtHorizon: waterSources.reduce(
+          (total, source) => total + source.maximumStock,
+          0,
+        ),
+        stockUnitTicks: this.waterSourceStockUnitTicks,
+        capacityUnitTicks: this.waterSourceCapacityUnitTicks,
+        utilization:
+          this.waterSourceCapacityUnitTicks === 0
+            ? 0
+            : round(1 - this.waterSourceStockUnitTicks / this.waterSourceCapacityUnitTicks),
+        depletedSourceTicks: this.depletedWaterSourceTicks,
+        anySourceDepletedTicks: this.anyWaterSourceDepletedTicks,
+        depletionEvents: this.waterSourceDepletionEvents,
+        replenishedUnits: this.waterReplenishedUnits,
+        drainedUnits: this.waterDrainedUnits,
+        gatherAttempts: this.waterGatherAttempts,
+        blockedGatherAttempts: this.blockedWaterGatherAttempts,
+        contendedGatherAttempts,
+        blockedByContentionGatherAttempts: this.blockedByContentionWaterGatherAttempts,
+        contentionRate:
+          this.waterGatherAttempts === 0
+            ? 0
+            : round(contendedGatherAttempts / this.waterGatherAttempts),
+        claimedSlotTicks: this.waterClaimedSlotTicks,
+        capacitySlotTicks: this.waterCapacitySlotTicks,
+        saturatedSourceTicks: this.saturatedWaterSourceTicks,
+        selection: this.waterSourceSelections.report(),
+      },
+      access: waterAccessProfile(this.latestState),
+      routes: waterRouteConcentration(this.waterRouteTraversals),
+      interventionResponses: {
+        windowTicks: INTERVENTION_RESPONSE_WINDOW_TICKS,
+        appliedWaterInterventions: this.waterInterventions.size,
+        interventionsWithResponse,
+        firstResponseLatencyTicks: interventionLatencies.report(),
+      },
+    };
   }
 
   private selectionConcentrationProfile(): SelectionConcentrationProfile {
@@ -2275,6 +2802,8 @@ export class StreamingActivityCollector {
         "Target concentration uses selected target entity IDs and selected candidate target tiles captured while decision records are retained; NONE is reported explicitly when an action has no target.",
         "Group concentration is the actor group carried by ACTION_STARTED events. The simulation does not retain a generic target-group field, so target ownership is not inferred.",
         "Location reachability is proved only for compiled named regions against the compiled initial map and creature starts. Dynamic obstacle histories can change later reachability and are not reclassified as static scenario facts.",
+        "Water contention is the authoritative count of GATHER_WATER claim attempts that encountered at least one occupied legal source slot. blockedByContentionGatherAttempts separately counts attempts made when every legal slot was occupied.",
+        "Water source stock, carried water, and thirst exposure are sampled from each post-tick state. Water-route concentration includes undirected movement edges traversed while GATHER_WATER or SHARE_WATER is the active action.",
       ],
     };
   }
@@ -2404,6 +2933,7 @@ export class StreamingActivityCollector {
     );
     const selectionConcentration = this.selectionConcentrationProfile();
     const desires = this.desireActivityProfile();
+    const hydration = this.hydrationProfile();
     const scenarioSpatial = this.scenarioSpatialProfile();
     const diagnostics = this.diagnosticProfile(
       selectionConcentration,
@@ -2535,6 +3065,7 @@ export class StreamingActivityCollector {
       horizon: horizonFacts(this.latestState),
       stalemate: this.stalemateProfile(),
       desires,
+      hydration,
       scenarioSpatial,
       diagnostics,
     };
@@ -2560,6 +3091,18 @@ export class StreamingActivityCollector {
         if (existing.tileIndex !== creature.tileIndex) {
           const routeKey = `${existing.tileIndex}:${creature.tileIndex}`;
           this.routeTraversals.set(routeKey, (this.routeTraversals.get(routeKey) ?? 0) + 1);
+          if (
+            existing.activeActionKind === "GATHER_WATER" ||
+            existing.activeActionKind === "SHARE_WATER"
+          ) {
+            const from = Math.min(existing.tileIndex, creature.tileIndex);
+            const to = Math.max(existing.tileIndex, creature.tileIndex);
+            const waterRouteKey = `${from}:${to}`;
+            this.waterRouteTraversals.set(
+              waterRouteKey,
+              (this.waterRouteTraversals.get(waterRouteKey) ?? 0) + 1,
+            );
+          }
           this.observeChokepointTransition(
             creature.id,
             existing.tileIndex,
@@ -2584,6 +3127,7 @@ export class StreamingActivityCollector {
         : null;
       existing.activeActionNavigationRevision =
         creature.activeAction?.navigationRevision ?? null;
+      existing.activeActionKind = creature.activeAction?.kind ?? null;
       if (creature.alive) this.recordDesireExposure(nextDesire);
 
       let completionsThisTick = 0;
@@ -2834,6 +3378,17 @@ export class StreamingActivityCollector {
       tick: event.tick,
       targetEntityIds: [...event.targetIds],
     });
+    if (
+      event.type === "PLAYER_REPLENISHED_WATER" ||
+      event.type === "PLAYER_DRAINED_WATER"
+    ) {
+      this.waterInterventions.set(event.id, {
+        eventId: event.id,
+        tick: event.tick,
+        targetEntityIds: [...event.targetIds],
+        firstResponseTick: null,
+      });
+    }
   }
 
   private pruneAppliedInterventions(observedStateTick: number): void {
@@ -2977,6 +3532,180 @@ export class StreamingActivityCollector {
     }
   }
 
+  private observeHydrationSelections(
+    state: SimulationState,
+    events: readonly DomainEvent[],
+  ): void {
+    const decisions = new Map(
+      state.decisionRecords.map((record) => [record.id, record] as const),
+    );
+    for (const event of events) {
+      const record = event.decisionRecordIds
+        .map((id) => decisions.get(id))
+        .find((candidate) => candidate !== undefined);
+      if (!record) continue;
+      const candidate = selectedCandidate(record);
+      if (!candidate) continue;
+
+      if (event.type === "ACTION_STARTED" || event.type === "PLAN_BLOCKED") {
+        if (candidate.action === "GATHER_WATER") {
+          this.waterGatherAttempts += 1;
+          this.waterSourceSelections.add(
+            candidate.targetEntityId === null
+              ? "NONE"
+              : `source:${candidate.targetEntityId.toString()}`,
+          );
+          if (event.type === "PLAN_BLOCKED") {
+            this.blockedWaterGatherAttempts += 1;
+            const source = state.resourceNodes.find(
+              (node) => node.kind === "WATER" && node.id === candidate.targetEntityId,
+            );
+            if (source) {
+              this.refreshWaterSlotCapacities(state);
+              const capacity = this.waterSlotCapacityBySource.get(source.id) ?? 0;
+              const claimed = state.creatures.filter(
+                (creature) =>
+                  creature.alive &&
+                  creature.activeAction?.kind === "GATHER_WATER" &&
+                  creature.activeAction.targetEntityId === source.id &&
+                  creature.activeAction.interactionClaim !== null,
+              ).length;
+              if (capacity > 0 && claimed >= capacity) {
+                this.blockedByContentionWaterGatherAttempts += 1;
+              }
+            }
+          }
+        }
+      }
+
+      if (
+        candidate.desire === "RELIEVE_THIRST" ||
+        candidate.action === "GATHER_WATER" ||
+        candidate.action === "DRINK" ||
+        candidate.action === "SHARE_WATER"
+      ) {
+        this.recordWaterInterventionResponse(event, record, candidate);
+      }
+    }
+  }
+
+  private recordWaterInterventionResponse(
+    event: DomainEvent,
+    record: DecisionRecord,
+    candidate: DecisionCandidate,
+  ): void {
+    const evidenceIds = new Set([
+      ...event.causedByEventIds,
+      ...candidate.factors.flatMap((factor) => [
+        ...factor.evidenceEventIds,
+        ...(factor.fact?.sourceEventIds ?? []),
+      ]),
+    ]);
+    for (const intervention of this.waterInterventions.values()) {
+      if (intervention.firstResponseTick !== null) continue;
+      const elapsed = event.tick - intervention.tick;
+      if (elapsed < 0 || elapsed > INTERVENTION_RESPONSE_WINDOW_TICKS) continue;
+      const targetLinked =
+        record.selectedTargetId !== null &&
+        intervention.targetEntityIds.includes(record.selectedTargetId);
+      if (evidenceIds.has(intervention.eventId) || targetLinked) {
+        intervention.firstResponseTick = event.tick;
+      }
+    }
+  }
+
+  private refreshWaterSlotCapacities(state: SimulationState): void {
+    if (this.waterSlotCapacityNavigationRevision === state.world.navigationRevision) {
+      return;
+    }
+    this.waterSlotCapacityBySource.clear();
+    const geometryState: SimulationState = { ...state, creatures: [] };
+    for (const source of state.resourceNodes
+      .filter((node) => node.kind === "WATER")
+      .sort((left, right) => left.id - right.id)) {
+      this.waterSlotCapacityBySource.set(
+        source.id,
+        availableInteractionSlots(
+          geometryState,
+          "GATHER_WATER",
+          source.id,
+          source.tileIndex,
+        ).length,
+      );
+    }
+    this.waterSlotCapacityNavigationRevision = state.world.navigationRevision;
+  }
+
+  private observeHydrationState(state: SimulationState): void {
+    const living = livingCreatures(state);
+    for (const creature of living) {
+      let accumulator = this.hydrationCreatures.get(creature.id);
+      if (!accumulator) {
+        accumulator = initialCreatureHydrationAccumulator(creature);
+        this.hydrationCreatures.set(creature.id, accumulator);
+      }
+      accumulator.livingCreatureTicks += 1;
+      accumulator.thirstUnitTicks += creature.needs.thirst;
+      this.hydrationLivingCreatureTicks += 1;
+      this.carriedWaterUnitTicks += creature.inventory.water;
+      if (creature.inventory.water > 0) this.carryingCreatureTicks += 1;
+
+      const severe = creature.needs.thirst >= SEVERE_THIRST_THRESHOLD;
+      if (severe) {
+        if (!accumulator.severeAtLastObservation) {
+          accumulator.severeSpellCount += 1;
+          accumulator.currentSevereSpellTicks = 0;
+          this.firstSevereThirstTick = firstTick(this.firstSevereThirstTick, state.tick);
+        }
+        accumulator.currentSevereSpellTicks += 1;
+        accumulator.severeThirstTicks += 1;
+        accumulator.longestSevereSpellTicks = Math.max(
+          accumulator.longestSevereSpellTicks,
+          accumulator.currentSevereSpellTicks,
+        );
+      } else if (accumulator.severeAtLastObservation) {
+        accumulator.resolvedSevereSpellCount += 1;
+        this.hydrationRecoveryLatencies.add(accumulator.currentSevereSpellTicks);
+        this.firstSevereThirstRecoveryTick = firstTick(
+          this.firstSevereThirstRecoveryTick,
+          state.tick,
+        );
+        accumulator.currentSevereSpellTicks = 0;
+      }
+      if (creature.needs.thirst >= CRITICAL_THIRST_THRESHOLD) {
+        accumulator.criticalThirstTicks += 1;
+      }
+      accumulator.severeAtLastObservation = severe;
+    }
+
+    const sources = state.resourceNodes
+      .filter((node) => node.kind === "WATER")
+      .sort((left, right) => left.id - right.id);
+    const stock = sources.reduce((total, source) => total + source.currentStock, 0);
+    const capacity = sources.reduce((total, source) => total + source.maximumStock, 0);
+    const depleted = sources.filter((source) => source.currentStock === 0).length;
+    this.waterSourceStockUnitTicks += stock;
+    this.waterSourceCapacityUnitTicks += capacity;
+    this.depletedWaterSourceTicks += depleted;
+    if (depleted > 0) this.anyWaterSourceDepletedTicks += 1;
+
+    this.refreshWaterSlotCapacities(state);
+    for (const source of sources) {
+      const sourceCapacity = this.waterSlotCapacityBySource.get(source.id) ?? 0;
+      const claimed = living.filter(
+        (creature) =>
+          creature.activeAction?.kind === "GATHER_WATER" &&
+          creature.activeAction.targetEntityId === source.id &&
+          creature.activeAction.interactionClaim !== null,
+      ).length;
+      this.waterClaimedSlotTicks += claimed;
+      this.waterCapacitySlotTicks += sourceCapacity;
+      if (sourceCapacity > 0 && claimed >= sourceCapacity) {
+        this.saturatedWaterSourceTicks += 1;
+      }
+    }
+  }
+
   private observeEvent(state: SimulationState, event: DomainEvent): void {
     if (interactionEventTypes.has(event.type)) {
       const eventType = event.type as InteractionEventType;
@@ -3043,13 +3772,44 @@ export class StreamingActivityCollector {
         break;
       case "PLAYER_ADDED_FOOD":
       case "PLAYER_REMOVED_FOOD":
+      case "PLAYER_REPLENISHED_WATER":
+      case "PLAYER_DRAINED_WATER":
       case "PLAYER_TOGGLED_OBSTACLE":
         if (event.commandOutcome === "APPLIED") {
+          if (event.type === "PLAYER_REPLENISHED_WATER") {
+            this.waterReplenishedUnits += event.quantity;
+          } else if (event.type === "PLAYER_DRAINED_WATER") {
+            this.waterDrainedUnits += event.quantity;
+          }
           this.milestones.firstInterventionTick = firstTick(
             this.milestones.firstInterventionTick,
             event.tick,
           );
         }
+        break;
+      case "WATER_GATHERED":
+        this.waterGatheredUnits += event.quantity;
+        break;
+      case "WATER_DRUNK":
+        this.waterDrunkUnits += event.quantity;
+        this.firstWaterDrinkTick = firstTick(this.firstWaterDrinkTick, event.tick);
+        break;
+      case "WATER_SHARED":
+        this.waterSharedUnits += event.quantity;
+        for (const actorId of event.actorIds) this.waterDonorIds.add(actorId);
+        for (const targetId of event.targetIds) this.waterRecipientIds.add(targetId);
+        break;
+      case "WATER_SOURCE_DEPLETED":
+        this.waterSourceDepletionEvents += 1;
+        break;
+      case "SEVERE_THIRST_STARTED":
+        this.firstSevereThirstTick = firstTick(this.firstSevereThirstTick, event.tick);
+        break;
+      case "SEVERE_THIRST_RESOLVED":
+        this.firstSevereThirstRecoveryTick = firstTick(
+          this.firstSevereThirstRecoveryTick,
+          event.tick,
+        );
         break;
       default:
         break;
@@ -3841,6 +4601,74 @@ export function summarizeActivityProfiles(
     scenarioSpatial: {
       regions: aggregateRegions,
       chokepoints: aggregateChokepoints,
+    },
+    hydration: {
+      gatheredUnits: profiles.reduce(
+        (total, profile) => total + profile.hydration.flow.gatheredUnits,
+        0,
+      ),
+      drunkUnits: profiles.reduce(
+        (total, profile) => total + profile.hydration.flow.drunkUnits,
+        0,
+      ),
+      sharedUnits: profiles.reduce(
+        (total, profile) => total + profile.hydration.flow.sharedUnits,
+        0,
+      ),
+      donorIds: [
+        ...new Set(profiles.flatMap((profile) => profile.hydration.flow.donorIds)),
+      ].sort((left, right) => left - right),
+      recipientIds: [
+        ...new Set(profiles.flatMap((profile) => profile.hydration.flow.recipientIds)),
+      ].sort((left, right) => left - right),
+      seedDistributions: {
+        meanThirst: summarize(profiles.map((profile) => profile.hydration.need.meanThirst)),
+        severeExposureRate: summarize(
+          profiles.map((profile) => profile.hydration.need.severeExposureRate),
+        ),
+        criticalExposureRate: summarize(
+          profiles.map((profile) => profile.hydration.need.criticalExposureRate),
+        ),
+        longestSevereSpellTicks: summarize(
+          profiles.map((profile) => profile.hydration.need.longestSevereSpellTicks),
+        ),
+        recoveryLatencyMedianTicks: summarizePresent(
+          profiles.map((profile) => profile.hydration.need.recoveryLatencyTicks.median),
+        ),
+        carriedWaterAtHorizon: summarize(
+          profiles.map((profile) => profile.hydration.flow.carriedWaterAtHorizon),
+        ),
+        depletedSourceTicks: summarize(
+          profiles.map((profile) => profile.hydration.sources.depletedSourceTicks),
+        ),
+        sourceUtilization: summarize(
+          profiles.map((profile) => profile.hydration.sources.utilization),
+        ),
+        sourceSelectionHerfindahlIndex: summarize(
+          profiles.map((profile) => profile.hydration.sources.selection.herfindahlIndex),
+        ),
+        gatherContentionRate: summarize(
+          profiles.map((profile) => profile.hydration.sources.contentionRate),
+        ),
+        unreachableWaterAccessPairs: summarize(
+          profiles.map((profile) => profile.hydration.access.unreachablePairs),
+        ),
+        waterAccessWeightedCostMedian: summarizePresent(
+          profiles.map((profile) => profile.hydration.access.weightedCost.median),
+        ),
+        waterRouteDominantEdgeShare: summarize(
+          profiles.map((profile) => profile.hydration.routes.dominantEdgeShare),
+        ),
+        waterRouteHerfindahlIndex: summarize(
+          profiles.map((profile) => profile.hydration.routes.herfindahlIndex),
+        ),
+        waterInterventionResponseLatencyMedianTicks: summarizePresent(
+          profiles.map(
+            (profile) =>
+              profile.hydration.interventionResponses.firstResponseLatencyTicks.median,
+          ),
+        ),
+      },
     },
     warnings: warnings.sort(compareText),
   };

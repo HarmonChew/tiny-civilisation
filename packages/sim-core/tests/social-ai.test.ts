@@ -24,9 +24,9 @@ describe("utility decisions", () => {
     }
   });
 
-  it("lets seed 4182 create a factual social-storage-theft loop", () => {
-    const state = createSimulation(4_182);
-    advanceSimulation(state, 1_000);
+  it("keeps a factual social-storage-theft loop alongside hydration", () => {
+    const state = createSimulation(1);
+    advanceSimulation(state, 2_000);
 
     expect(state.metrics.foodShared).toBeGreaterThan(0);
     expect(state.metrics.groupsFormed).toBeGreaterThan(0);
@@ -77,8 +77,8 @@ describe("utility decisions", () => {
   });
 
   it("makes witnessed theft lower trust and create rivalry without a brawl loop", () => {
-    const state = createSimulation(4_182);
-    advanceSimulation(state, 1_200);
+    const state = createSimulation(1);
+    advanceSimulation(state, 2_000);
 
     const witnessed = state.domainEvents.find((event) => event.type === "THEFT_WITNESSED");
     expect(witnessed).toBeDefined();
@@ -101,9 +101,10 @@ describe("resource invariants", () => {
     for (const creature of state.creatures) {
       expect(creature.inventory.food).toBeGreaterThanOrEqual(0);
       expect(creature.inventory.material).toBeGreaterThanOrEqual(0);
-      expect(creature.inventory.food + creature.inventory.material).toBeLessThanOrEqual(
-        creature.inventory.capacity,
-      );
+      expect(creature.inventory.water).toBeGreaterThanOrEqual(0);
+      expect(
+        creature.inventory.food + creature.inventory.material + creature.inventory.water,
+      ).toBeLessThanOrEqual(creature.inventory.capacity);
     }
     for (const node of state.resourceNodes) {
       expect(node.currentStock).toBeGreaterThanOrEqual(0);

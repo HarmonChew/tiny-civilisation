@@ -119,9 +119,9 @@ export interface LongRunningOperationOptions {
 }
 
 /**
- * Runtime-only replay request. A target tick may be supplied without a hash
- * for an explicitly unverified preview; persisted replay contracts still
- * require finalTick/finalHash as a pair.
+ * Replay request. A target tick may be supplied without a hash for an
+ * explicitly unverified reconstruction or preview. A hash always requires
+ * its target tick.
  */
 export type RuntimeReplay = Omit<SimulationReplayV1, "finalTick" | "finalHash"> & {
   readonly finalTick?: number;

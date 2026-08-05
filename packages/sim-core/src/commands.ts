@@ -19,6 +19,12 @@ function resolveCommandTile(state: SimulationState, command: PlayerCommand): num
       .sort((left, right) => left.id - right.id)[0];
     if (foodNode) return foodNode.tileIndex;
   }
+  if (command.type === "REPLENISH_WATER" || command.type === "DRAIN_WATER") {
+    const waterNode = state.resourceNodes
+      .filter((node) => node.kind === "WATER")
+      .sort((left, right) => left.id - right.id)[0];
+    if (waterNode) return waterNode.tileIndex;
+  }
   const center = tileIndexAt(
     state.world,
     Math.floor(state.world.width / 2),
@@ -42,16 +48,20 @@ export function queuePlayerCommand(
   if (command.type === "ADD_FOOD" && !isWalkableTile(state, tileIndex)) {
     tileIndex = findNearestWalkable(state, tileIndex);
   }
-  const isFoodCommand = command.type === "ADD_FOOD" || command.type === "REMOVE_FOOD";
-  const requestedAmount = isFoodCommand ? (command.amount ?? 12) : 0;
+  const isQuantityCommand =
+    command.type === "ADD_FOOD" ||
+    command.type === "REMOVE_FOOD" ||
+    command.type === "REPLENISH_WATER" ||
+    command.type === "DRAIN_WATER";
+  const requestedAmount = isQuantityCommand ? (command.amount ?? 12) : 0;
   if (
-    isFoodCommand &&
+    isQuantityCommand &&
     (!Number.isSafeInteger(requestedAmount) ||
       requestedAmount < 1 ||
       requestedAmount > MAX_PLAYER_COMMAND_AMOUNT)
   ) {
     throw new RangeError(
-      `Food command amount must be a whole number from 1 to ${MAX_PLAYER_COMMAND_AMOUNT.toString()}.`,
+      `Resource command amount must be a whole number from 1 to ${MAX_PLAYER_COMMAND_AMOUNT.toString()}.`,
     );
   }
   const requestedTick = command.applyAtTick ?? state.tick;
@@ -64,7 +74,7 @@ export function queuePlayerCommand(
     applyAtTick,
     type: command.type,
     tileIndex,
-    amount: isFoodCommand ? requestedAmount : 0,
+    amount: isQuantityCommand ? requestedAmount : 0,
     blocked:
       command.type === "TOGGLE_OBSTACLE" && typeof command.blocked === "boolean"
         ? command.blocked
@@ -164,6 +174,92 @@ export function applyScheduledCommands(state: SimulationState): void {
         [],
         [],
         55,
+      );
+    } else if (command.type === "REPLENISH_WATER") {
+      const node =
+        state.resourceNodes.find(
+          (candidate) =>
+            candidate.kind === "WATER" && candidate.tileIndex === command.tileIndex,
+        ) ?? null;
+      const rejection = !node
+        ? "NO_WATER_SOURCE"
+        : node.currentStock >= node.maximumStock
+          ? "SOURCE_FULL"
+          : null;
+      const quantity =
+        node && rejection === null
+          ? Math.min(command.amount, node.maximumStock - node.currentStock)
+          : 0;
+      if (node) node.currentStock += quantity;
+      const event = emitDomainEvent(state, {
+        type: "PLAYER_REPLENISHED_WATER",
+        targetIds: node ? [node.id] : [],
+        locationTileIndex: command.tileIndex,
+        resourceKind: "WATER",
+        quantity,
+        importance: rejection === null ? 55 : 20,
+        commandId: command.commandId,
+        commandOutcome: rejection === null ? "APPLIED" : "REJECTED",
+        commandRejectionReason: rejection,
+        summary:
+          rejection === "NO_WATER_SOURCE"
+            ? "Water could not be replenished because no potable source exists on that tile."
+            : rejection === "SOURCE_FULL"
+              ? "The potable water source was already full."
+              : `The observer replenished ${quantity} water units.`,
+      });
+      addHistory(
+        state,
+        "INTERVENTION",
+        rejection === null
+          ? "A water source was replenished"
+          : "Water replenishment failed",
+        event.summary,
+        [event.id],
+        [],
+        [],
+        rejection === null ? 55 : 20,
+      );
+    } else if (command.type === "DRAIN_WATER") {
+      const node =
+        state.resourceNodes.find(
+          (candidate) =>
+            candidate.kind === "WATER" && candidate.tileIndex === command.tileIndex,
+        ) ?? null;
+      const rejection = !node
+        ? "NO_WATER_SOURCE"
+        : node.currentStock <= 0
+          ? "SOURCE_EMPTY"
+          : null;
+      const quantity =
+        node && rejection === null ? Math.min(command.amount, node.currentStock) : 0;
+      if (node) node.currentStock -= quantity;
+      const event = emitDomainEvent(state, {
+        type: "PLAYER_DRAINED_WATER",
+        targetIds: node ? [node.id] : [],
+        locationTileIndex: command.tileIndex,
+        resourceKind: "WATER",
+        quantity,
+        importance: rejection === null ? 55 : 20,
+        commandId: command.commandId,
+        commandOutcome: rejection === null ? "APPLIED" : "REJECTED",
+        commandRejectionReason: rejection,
+        summary:
+          rejection === "NO_WATER_SOURCE"
+            ? "Water could not be drained because no potable source exists on that tile."
+            : rejection === "SOURCE_EMPTY"
+              ? "The potable water source was already empty."
+              : `The observer drained ${quantity} water units.`,
+      });
+      addHistory(
+        state,
+        "INTERVENTION",
+        rejection === null ? "A water source was drained" : "Water drainage failed",
+        event.summary,
+        [event.id],
+        [],
+        [],
+        rejection === null ? 55 : 20,
       );
     } else {
       const tile = state.world.tiles[command.tileIndex];

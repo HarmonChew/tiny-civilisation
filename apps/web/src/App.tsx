@@ -232,6 +232,7 @@ export default function App() {
     resources: true,
     intentions: false,
     groups: true,
+    traffic: true,
   });
   const [filter, setFilter] = useState<TimelineCategory>("all");
   const [mobileRegion, setMobileRegion] = useState<MobileRegion>("dish");
@@ -413,6 +414,10 @@ export default function App() {
           setPlaying(false);
           clearTransient();
           focusTimelineEvent(moment.latestEvent, "MOMENT");
+          // Medium layouts present the inspector as a covering panel. Keep the
+          // isolated replay and its beat controls visible; the prior region is
+          // restored with the rest of the replay session on exit.
+          setMobileRegion("dish");
           const replayed = await experimentWorkspace.replayTimelineEvent(
             moment.latestEvent,
             pausedView,

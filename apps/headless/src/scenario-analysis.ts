@@ -12,27 +12,35 @@ import {
 
 import type { ActivityProfile, BinaryOutcomeAggregate } from "./activity-collector.js";
 import {
-  PENDING_SCENARIO_OUTCOME_BAND_DIMENSIONS,
+  PAIRED_MACRO_BANDS,
+  PAIRED_MACRO_BAND_TABLE_VERSION,
+  PHASE_4_1_CALIBRATION_SEED_COUNT,
+  PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE,
+  REQUIRED_PASSING_PHASE_3_MACRO_DIMENSIONS,
   SCENARIO_EXPECTED_BANDS,
   SCENARIO_EXPECTED_BAND_TABLE_VERSION,
+  SCENARIO_OUTCOME_BAND_TABLE_VERSION,
+  SCENARIO_OUTCOME_DOMINANCE_RATIONALES,
+  SCENARIO_OUTCOME_DOMINANCE_THRESHOLD,
+  SCENARIO_OUTCOME_INCIDENCE_BANDS,
+  type FrozenCalibrationProvenance,
+  type FrozenPairedMacroMetricId,
+  type FrozenPhase3MacroDimension,
   type ScenarioBandMetricId,
+  type ScenarioOutcomeDominanceRationaleDefinition,
+  type ScenarioOutcomeLabelId,
 } from "./scenario-bands.js";
 import {
   summarizeScenarioIdentity,
   type ScenarioDefinitionIdentity,
 } from "./scenario-reporting.js";
 
-export const SCENARIO_ANALYSIS_SCHEMA_VERSION = 1 as const;
-export const OUTCOME_CLASSIFIER_VERSION = 1 as const;
+export const SCENARIO_ANALYSIS_SCHEMA_VERSION = 3 as const;
+export const OUTCOME_CLASSIFIER_VERSION = 2 as const;
 
 export type ScenarioCorpusName = "smoke" | "nightly" | "calibration" | "holdout";
 
-export type OutcomeLabelId =
-  | "COOPERATIVE_SHARED_STORAGE"
-  | "FRAGMENTED_SOCIAL_STRUCTURE"
-  | "PERSISTENT_PRIVATE_RESERVES"
-  | "RECURRING_CONFLICT"
-  | "QUIET_STALEMATE";
+export type OutcomeLabelId = ScenarioOutcomeLabelId;
 
 export type EvaluationStatus = "PASS" | "FAIL" | "NOT_EVALUATED";
 export type EvaluationSummaryStatus = EvaluationStatus | "PARTIAL";
@@ -110,6 +118,52 @@ export interface ScenarioBandEvaluation {
   readonly provenance: (typeof SCENARIO_EXPECTED_BANDS)[number]["provenance"];
 }
 
+export interface ScenarioOutcomeBandEvaluation {
+  readonly tableVersion: typeof SCENARIO_OUTCOME_BAND_TABLE_VERSION;
+  readonly labelId: OutcomeLabelId;
+  readonly metricPath: string;
+  readonly status: EvaluationStatus;
+  readonly observed: number | null;
+  readonly eligibleRuns: number;
+  readonly comparison: "GTE";
+  readonly threshold: number;
+  readonly requiredEligibleRuns: typeof PHASE_4_1_CALIBRATION_SEED_COUNT;
+  readonly reason: string | null;
+  readonly provenance: FrozenCalibrationProvenance;
+}
+
+export interface ScenarioOutcomeDominanceEvaluation {
+  readonly labelId: OutcomeLabelId;
+  readonly metricPath: string;
+  readonly status: EvaluationStatus;
+  readonly incidence: number | null;
+  readonly occurrences: number;
+  readonly eligibleRuns: number;
+  readonly comparison: "GT";
+  readonly threshold: typeof SCENARIO_OUTCOME_DOMINANCE_THRESHOLD;
+  readonly rationaleRequired: boolean;
+  readonly rationale: ScenarioOutcomeDominanceRationaleDefinition | null;
+  readonly reason: string | null;
+}
+
+export interface ScenarioOutcomeBandReport {
+  readonly tableVersion: typeof SCENARIO_OUTCOME_BAND_TABLE_VERSION;
+  readonly status: EvaluationSummaryStatus;
+  readonly eligibility: {
+    readonly status: "FULL_CALIBRATION" | "FULL_HOLDOUT" | "NOT_EVALUATED";
+    readonly reason: string | null;
+  };
+  readonly releaseClaim: false;
+  readonly provenance: FrozenCalibrationProvenance;
+  readonly evaluations: readonly ScenarioOutcomeBandEvaluation[];
+  readonly dominance: {
+    readonly status: EvaluationSummaryStatus;
+    readonly threshold: typeof SCENARIO_OUTCOME_DOMINANCE_THRESHOLD;
+    readonly evaluations: readonly ScenarioOutcomeDominanceEvaluation[];
+    readonly rationaleFailures: readonly OutcomeLabelId[];
+  };
+}
+
 export interface ScenarioExpectedBandReport {
   readonly tableVersion: typeof SCENARIO_EXPECTED_BAND_TABLE_VERSION;
   readonly status: EvaluationSummaryStatus;
@@ -130,11 +184,7 @@ export interface ScenarioExpectedBandReport {
     readonly holdoutEvidence: "FULL_HOLDOUT_PRESENT" | "NOT_PRESENT";
   };
   readonly evaluations: readonly ScenarioBandEvaluation[];
-  readonly scenarioOutcomeBands: {
-    readonly status: "PENDING_FULL_CALIBRATION_AND_HOLDOUT";
-    readonly releaseClaim: false;
-    readonly pendingDimensions: typeof PENDING_SCENARIO_OUTCOME_BAND_DIMENSIONS;
-  };
+  readonly scenarioOutcomeBands: ScenarioOutcomeBandReport;
 }
 
 export interface ScenarioAnalysisReport {
@@ -153,7 +203,7 @@ export interface ScenarioAnalysisReport {
   readonly expectedBands: ScenarioExpectedBandReport;
 }
 
-type MacroDimension = "SOCIAL" | "STORAGE" | "CONFLICT" | "SPATIAL";
+type MacroDimension = "SOCIAL" | "STORAGE" | "CONFLICT" | "SPATIAL" | "HYDRATION";
 
 type MacroMetricId =
   | "GROUP_COUNT"
@@ -162,7 +212,11 @@ type MacroMetricId =
   | "STORED_RESOURCE_UNITS"
   | "ATTACK_EVENT_COUNT"
   | "CREATURE_PAIR_DISTANCE_MEDIAN"
-  | "ROUTE_HERFINDAHL_INDEX";
+  | "ROUTE_HERFINDAHL_INDEX"
+  | "SEVERE_THIRST_EXPOSURE_RATE"
+  | "DEPLETED_WATER_SOURCE_TICKS"
+  | "WATER_SHARED_UNITS"
+  | "WATER_ROUTE_HERFINDAHL_INDEX";
 
 export interface PairedMetricDelta {
   readonly seed: number;
@@ -202,6 +256,56 @@ export interface PairedScenarioComparison {
   readonly metrics: readonly PairedMetricSummary[];
 }
 
+export interface FrozenPairedMacroBandEvaluation {
+  readonly tableVersion: typeof PAIRED_MACRO_BAND_TABLE_VERSION;
+  readonly dimension: FrozenPhase3MacroDimension;
+  readonly leftScenarioId: ScenarioId;
+  readonly rightScenarioId: ScenarioId;
+  readonly metricId: FrozenPairedMacroMetricId;
+  readonly metricPath: string;
+  readonly status: EvaluationStatus;
+  readonly pairedSeedCount: number;
+  readonly meanDelta: number | null;
+  readonly absoluteMeanDelta: number | null;
+  readonly minimumAbsoluteMeanDelta: number;
+  readonly cohenDz: number | null;
+  readonly absoluteCohenDz: number | null;
+  readonly minimumAbsoluteCohenDz: number;
+  readonly reason: string | null;
+  readonly provenance: FrozenCalibrationProvenance;
+}
+
+export interface FrozenPairedMacroBandReport {
+  readonly tableVersion: typeof PAIRED_MACRO_BAND_TABLE_VERSION;
+  readonly status: EvaluationStatus;
+  readonly bandEvaluationStatus: EvaluationSummaryStatus;
+  readonly releaseClaim: false;
+  readonly provenance: FrozenCalibrationProvenance;
+  readonly corpusValidation: {
+    readonly status:
+      | "FULL_CALIBRATION"
+      | "FULL_HOLDOUT"
+      | "NOT_FULL_CALIBRATION_OR_HOLDOUT"
+      | "CORPUS_MISMATCH"
+      | "HORIZON_MISMATCH";
+    readonly expectedSeeds: readonly number[];
+    readonly observedSeedsByScenario: Readonly<Record<ScenarioId, readonly number[]>>;
+    readonly expectedTicks: number;
+    readonly observedTicks: number;
+    readonly reason: string | null;
+  };
+  readonly evaluations: readonly FrozenPairedMacroBandEvaluation[];
+  readonly dimensionRequirement: {
+    readonly status: EvaluationStatus;
+    readonly metricPath: "evaluations[status=PASS].dimension|distinctCount";
+    readonly observed: number | null;
+    readonly comparison: "GTE";
+    readonly threshold: typeof REQUIRED_PASSING_PHASE_3_MACRO_DIMENSIONS;
+    readonly passingDimensions: readonly FrozenPhase3MacroDimension[];
+    readonly reason: string | null;
+  };
+}
+
 export interface ConvergenceDiagnostic {
   readonly leftScenarioId: ScenarioId;
   readonly rightScenarioId: ScenarioId;
@@ -220,6 +324,10 @@ const OUTCOME_LABEL_ORDER: readonly OutcomeLabelId[] = [
   "FRAGMENTED_SOCIAL_STRUCTURE",
   "PERSISTENT_PRIVATE_RESERVES",
   "RECURRING_CONFLICT",
+  "SHARED_HYDRATION",
+  "SOURCE_BOTTLENECK",
+  "PERSISTENT_DEHYDRATION",
+  "CONCENTRATED_WATER_ROUTES",
   "QUIET_STALEMATE",
 ];
 
@@ -228,6 +336,10 @@ const OUTCOME_LABEL_TITLES: Readonly<Record<OutcomeLabelId, string>> = {
   FRAGMENTED_SOCIAL_STRUCTURE: "Fragmented social structure",
   PERSISTENT_PRIVATE_RESERVES: "Persistent private reserves",
   RECURRING_CONFLICT: "Recurring conflict",
+  SHARED_HYDRATION: "Shared hydration",
+  SOURCE_BOTTLENECK: "Source bottleneck",
+  PERSISTENT_DEHYDRATION: "Persistent dehydration",
+  CONCENTRATED_WATER_ROUTES: "Concentrated water routes",
   QUIET_STALEMATE: "Quiet stalemate",
 };
 
@@ -365,7 +477,10 @@ export function summarizeRunOutcome(profile: ActivityProfile): RunOutcomeSummary
 
   if (hasObservationWindow) {
     const sharedFoodEvents = interactionCount(profile, "FOOD_SHARED");
-    const storedResources = profile.horizon.storage.food + profile.horizon.storage.material;
+    const storedResources =
+      profile.horizon.storage.food +
+      profile.horizon.storage.material +
+      profile.horizon.storage.water;
     if (
       profile.horizon.storage.completedStorageCount >= 1 &&
       storedResources >= 1 &&
@@ -385,7 +500,7 @@ export function summarizeRunOutcome(profile: ActivityProfile): RunOutcomeSummary
             1,
           ),
           outcomeEvidence(
-            "profile.horizon.storage.food+profile.horizon.storage.material",
+            "profile.horizon.storage.food+profile.horizon.storage.material+profile.horizon.storage.water",
             storedResources,
             "GTE",
             1,
@@ -432,7 +547,8 @@ export function summarizeRunOutcome(profile: ActivityProfile): RunOutcomeSummary
     const keep = action(profile, "KEEP");
     const privateResources =
       profile.horizon.resources.ungroupedCarriedFood +
-      profile.horizon.resources.ungroupedCarriedMaterial;
+      profile.horizon.resources.ungroupedCarriedMaterial +
+      profile.horizon.resources.ungroupedCarriedWater;
     if (
       keep.count >= 1 &&
       privateResources >= 1 &&
@@ -446,7 +562,7 @@ export function summarizeRunOutcome(profile: ActivityProfile): RunOutcomeSummary
         evidence: [
           outcomeEvidence("profile.actions.byKind[KEEP].count", keep.count, "GTE", 1),
           outcomeEvidence(
-            "profile.horizon.resources.ungroupedCarriedFood+profile.horizon.resources.ungroupedCarriedMaterial",
+            "profile.horizon.resources.ungroupedCarriedFood+profile.horizon.resources.ungroupedCarriedMaterial+profile.horizon.resources.ungroupedCarriedWater",
             privateResources,
             "GTE",
             1,
@@ -474,6 +590,126 @@ export function summarizeRunOutcome(profile: ActivityProfile): RunOutcomeSummary
             attacks,
             "GTE",
             2,
+          ),
+        ],
+      });
+    }
+
+    if (
+      profile.hydration.flow.sharedUnits >= 4 &&
+      profile.hydration.flow.distinctRecipients >= 3
+    ) {
+      labels.push({
+        id: "SHARED_HYDRATION",
+        title: OUTCOME_LABEL_TITLES.SHARED_HYDRATION,
+        factualSummary:
+          "At least four water units were shared across at least three distinct recipients.",
+        evidence: [
+          outcomeEvidence(
+            "profile.hydration.flow.sharedUnits",
+            profile.hydration.flow.sharedUnits,
+            "GTE",
+            4,
+          ),
+          outcomeEvidence(
+            "profile.hydration.flow.distinctRecipients",
+            profile.hydration.flow.distinctRecipients,
+            "GTE",
+            3,
+          ),
+        ],
+      });
+    }
+
+    const depletedSourceBottleneck = profile.hydration.sources.depletedSourceTicks >= 500;
+    const contentionBottleneck =
+      profile.hydration.sources.gatherAttempts > 0 &&
+      profile.hydration.sources.contentionRate >= 0.1;
+    if (depletedSourceBottleneck || contentionBottleneck) {
+      const evidence: OutcomeEvidence[] = [];
+      if (depletedSourceBottleneck) {
+        evidence.push(
+          outcomeEvidence(
+            "profile.hydration.sources.depletedSourceTicks",
+            profile.hydration.sources.depletedSourceTicks,
+            "GTE",
+            500,
+          ),
+        );
+      }
+      if (contentionBottleneck) {
+        evidence.push(
+          outcomeEvidence(
+            "profile.hydration.sources.contentionRate",
+            profile.hydration.sources.contentionRate,
+            "GTE",
+            0.1,
+          ),
+        );
+      }
+      labels.push({
+        id: "SOURCE_BOTTLENECK",
+        title: OUTCOME_LABEL_TITLES.SOURCE_BOTTLENECK,
+        factualSummary:
+          "Potable-water access met the declared depletion or contention threshold.",
+        evidence,
+      });
+    }
+
+    const severeExposure = profile.hydration.need.severeExposureRate >= 0.1;
+    const longSevereSpell = profile.hydration.need.longestSevereSpellTicks >= 1_000;
+    if (severeExposure || longSevereSpell) {
+      const evidence: OutcomeEvidence[] = [];
+      if (severeExposure) {
+        evidence.push(
+          outcomeEvidence(
+            "profile.hydration.need.severeExposureRate",
+            profile.hydration.need.severeExposureRate,
+            "GTE",
+            0.1,
+          ),
+        );
+      }
+      if (longSevereSpell) {
+        evidence.push(
+          outcomeEvidence(
+            "profile.hydration.need.longestSevereSpellTicks",
+            profile.hydration.need.longestSevereSpellTicks,
+            "GTE",
+            1_000,
+          ),
+        );
+      }
+      labels.push({
+        id: "PERSISTENT_DEHYDRATION",
+        title: OUTCOME_LABEL_TITLES.PERSISTENT_DEHYDRATION,
+        factualSummary:
+          "Severe thirst met the declared exposure-share or continuous-spell threshold.",
+        evidence,
+      });
+    }
+
+    if (
+      profile.hydration.routes.dominantEdgeShare >= 0.35 &&
+      profile.hydration.routes.herfindahlIndex >= 0.15
+    ) {
+      labels.push({
+        id: "CONCENTRATED_WATER_ROUTES",
+        title: OUTCOME_LABEL_TITLES.CONCENTRATED_WATER_ROUTES,
+        factualSummary:
+          "Water-trip movement concentrated on a dominant corridor under both declared route thresholds.",
+        evidence: [
+          outcomeEvidence(
+            "profile.hydration.routes.dominantEdgeShare",
+            profile.hydration.routes.dominantEdgeShare,
+            "GTE",
+            0.35,
+          ),
+          outcomeEvidence(
+            "profile.hydration.routes.herfindahlIndex",
+            profile.hydration.routes.herfindahlIndex,
+            "GTE",
+            0.15,
           ),
         ],
       });
@@ -573,6 +809,8 @@ function corpusValidation(
   const contract = CORPUS_CONTRACT[context.corpus];
   const observedSeeds = profiles.map((profile) => profile.seed).sort((a, b) => a - b);
   const seedsMatch =
+    context.seeds.length === contract.seeds.length &&
+    observedSeeds.length === contract.seeds.length &&
     sameNumbers(context.seeds, contract.seeds) &&
     sameNumbers(observedSeeds, contract.seeds);
   const horizonMatches =
@@ -664,6 +902,150 @@ function compareBand(
   return comparison === "GTE" ? observed >= threshold : observed < threshold;
 }
 
+function outcomeBandEligibility(
+  validation: ScenarioExpectedBandReport["corpusValidation"],
+  context: ScenarioAnalysisContext,
+): ScenarioOutcomeBandReport["eligibility"] {
+  if (validation.status !== "MATCHED_LOCKED_CORPUS") {
+    return {
+      status: "NOT_EVALUATED",
+      reason:
+        validation.status === "CORPUS_MISMATCH"
+          ? "Outcome-incidence bands require the complete locked 64-seed corpus."
+          : "Outcome-incidence bands require the locked 10,000-tick horizon.",
+    };
+  }
+  if (context.corpus === "calibration") {
+    return { status: "FULL_CALIBRATION", reason: null };
+  }
+  if (context.corpus === "holdout") {
+    return { status: "FULL_HOLDOUT", reason: null };
+  }
+  return {
+    status: "NOT_EVALUATED",
+    reason:
+      "Frozen outcome-incidence bands evaluate only the full calibration or full holdout corpus.",
+  };
+}
+
+export function evaluateScenarioOutcomeBands(
+  scenarioId: ScenarioId,
+  profiles: readonly ActivityProfile[],
+  context: ScenarioAnalysisContext,
+): ScenarioOutcomeBandReport {
+  const validation = corpusValidation(profiles, context);
+  const eligibility = outcomeBandEligibility(validation, context);
+  const eligible = eligibility.status !== "NOT_EVALUATED";
+  const incidences = labelIncidence(
+    profiles.map((profile) => summarizeRunOutcome(profile)),
+  );
+  const definitions = SCENARIO_OUTCOME_INCIDENCE_BANDS.filter(
+    (definition) => definition.scenarioId === scenarioId,
+  );
+  const evaluations = definitions.map((definition): ScenarioOutcomeBandEvaluation => {
+    const incidence = incidences.find(
+      (candidate) => candidate.labelId === definition.labelId,
+    );
+    const observed = incidence?.occurrences ?? null;
+    const eligibleRuns = incidence?.eligibleRuns ?? 0;
+    const reason = !eligible
+      ? eligibility.reason
+      : incidence === undefined
+        ? "The required outcome label is absent from the classifier incidence table."
+        : eligibleRuns !== definition.requiredEligibleRuns
+          ? `The label must be eligible in all ${definition.requiredEligibleRuns.toString()} locked runs.`
+          : null;
+    const status = !eligible
+      ? "NOT_EVALUATED"
+      : reason !== null || observed === null
+        ? "FAIL"
+        : observed >= definition.threshold
+          ? "PASS"
+          : "FAIL";
+    return {
+      tableVersion: definition.tableVersion,
+      labelId: definition.labelId,
+      metricPath: definition.metricPath,
+      status,
+      observed,
+      eligibleRuns,
+      comparison: definition.comparison,
+      threshold: definition.threshold,
+      requiredEligibleRuns: definition.requiredEligibleRuns,
+      reason:
+        reason ??
+        (status === "FAIL"
+          ? "The label incidence is below its frozen calibration minimum."
+          : null),
+      provenance: definition.provenance,
+    };
+  });
+
+  const dominanceEvaluations = OUTCOME_LABEL_ORDER.map(
+    (labelId): ScenarioOutcomeDominanceEvaluation => {
+      const incidence = incidences.find((candidate) => candidate.labelId === labelId);
+      const rationale =
+        SCENARIO_OUTCOME_DOMINANCE_RATIONALES.find(
+          (candidate) =>
+            candidate.scenarioId === scenarioId && candidate.labelId === labelId,
+        ) ?? null;
+      const value = incidence?.incidence ?? null;
+      const rationaleRequired =
+        value !== null && value > SCENARIO_OUTCOME_DOMINANCE_THRESHOLD;
+      const incomplete =
+        incidence === undefined ||
+        incidence.eligibleRuns !== PHASE_4_1_CALIBRATION_SEED_COUNT;
+      const status = !eligible
+        ? "NOT_EVALUATED"
+        : incomplete || (rationaleRequired && rationale === null)
+          ? "FAIL"
+          : "PASS";
+      return {
+        labelId,
+        metricPath: `analysis.outcomes.incidence[${labelId}].incidence`,
+        status,
+        incidence: value,
+        occurrences: incidence?.occurrences ?? 0,
+        eligibleRuns: incidence?.eligibleRuns ?? 0,
+        comparison: "GT",
+        threshold: SCENARIO_OUTCOME_DOMINANCE_THRESHOLD,
+        rationaleRequired,
+        rationale,
+        reason: !eligible
+          ? eligibility.reason
+          : incomplete
+            ? `Dominance review requires ${PHASE_4_1_CALIBRATION_SEED_COUNT.toString()} eligible runs for every label.`
+            : rationaleRequired && rationale === null
+              ? "Incidence exceeds 85% without a checked-in mechanics-and-scenario rationale."
+              : null,
+      };
+    },
+  );
+  const rationaleFailures = dominanceEvaluations
+    .filter(
+      (evaluation) =>
+        evaluation.status === "FAIL" &&
+        evaluation.rationaleRequired &&
+        evaluation.rationale === null,
+    )
+    .map((evaluation) => evaluation.labelId);
+
+  return {
+    tableVersion: SCENARIO_OUTCOME_BAND_TABLE_VERSION,
+    status: evaluationSummaryStatus([...evaluations, ...dominanceEvaluations]),
+    eligibility,
+    releaseClaim: false,
+    provenance: PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE,
+    evaluations,
+    dominance: {
+      status: evaluationSummaryStatus(dominanceEvaluations),
+      threshold: SCENARIO_OUTCOME_DOMINANCE_THRESHOLD,
+      evaluations: dominanceEvaluations,
+      rationaleFailures,
+    },
+  };
+}
+
 export function evaluateScenarioExpectedBands(
   scenarioId: ScenarioId,
   profiles: readonly ActivityProfile[],
@@ -722,11 +1104,7 @@ export function evaluateScenarioExpectedBands(
           : "NOT_PRESENT",
     },
     evaluations,
-    scenarioOutcomeBands: {
-      status: "PENDING_FULL_CALIBRATION_AND_HOLDOUT",
-      releaseClaim: false,
-      pendingDimensions: PENDING_SCENARIO_OUTCOME_BAND_DIMENSIONS,
-    },
+    scenarioOutcomeBands: evaluateScenarioOutcomeBands(scenarioId, profiles, context),
   };
 }
 
@@ -936,6 +1314,30 @@ const MACRO_METRICS: readonly MacroMetricDefinition[] = [
     metricPath: "profile.spatial.routes.herfindahlIndex",
     read: (profile) => profile.spatial.routes.herfindahlIndex,
   },
+  {
+    id: "SEVERE_THIRST_EXPOSURE_RATE",
+    dimension: "HYDRATION",
+    metricPath: "profile.hydration.need.severeExposureRate",
+    read: (profile) => profile.hydration.need.severeExposureRate,
+  },
+  {
+    id: "DEPLETED_WATER_SOURCE_TICKS",
+    dimension: "HYDRATION",
+    metricPath: "profile.hydration.sources.depletedSourceTicks",
+    read: (profile) => profile.hydration.sources.depletedSourceTicks,
+  },
+  {
+    id: "WATER_SHARED_UNITS",
+    dimension: "HYDRATION",
+    metricPath: "profile.hydration.flow.sharedUnits",
+    read: (profile) => profile.hydration.flow.sharedUnits,
+  },
+  {
+    id: "WATER_ROUTE_HERFINDAHL_INDEX",
+    dimension: "HYDRATION",
+    metricPath: "profile.hydration.routes.herfindahlIndex",
+    read: (profile) => profile.hydration.routes.herfindahlIndex,
+  },
 ];
 
 function pairedMetricSummary(
@@ -1022,6 +1424,190 @@ export function pairedScenarioComparisons(
   return comparisons;
 }
 
+function sameNumbersWithCardinality(
+  left: readonly number[],
+  right: readonly number[],
+): boolean {
+  return left.length === right.length && sameNumbers(left, right);
+}
+
+function validateFrozenPairedMacroCorpus(
+  runs: readonly ScenarioAnalysisRun[],
+  context: ScenarioAnalysisContext,
+): FrozenPairedMacroBandReport["corpusValidation"] {
+  const contract = CORPUS_CONTRACT[context.corpus];
+  const observedSeedsByScenario = Object.fromEntries(
+    SCENARIO_CATALOG.map((scenario) => [
+      scenario.scenarioId,
+      runs
+        .filter((run) => run.scenario.scenarioId === scenario.scenarioId)
+        .map((run) => run.scenario.seed)
+        .sort((left, right) => left - right),
+    ]),
+  ) as unknown as Record<ScenarioId, readonly number[]>;
+  const base = {
+    expectedSeeds: contract.seeds,
+    observedSeedsByScenario,
+    expectedTicks: contract.ticks,
+    observedTicks: context.requestedTicks,
+  };
+  if (context.corpus !== "calibration" && context.corpus !== "holdout") {
+    return {
+      ...base,
+      status: "NOT_FULL_CALIBRATION_OR_HOLDOUT",
+      reason:
+        "Frozen paired macro bands evaluate only the full calibration or full holdout corpus.",
+    };
+  }
+  const seedsMatch =
+    sameNumbersWithCardinality(context.seeds, contract.seeds) &&
+    SCENARIO_CATALOG.every((scenario) =>
+      sameNumbersWithCardinality(
+        observedSeedsByScenario[scenario.scenarioId],
+        contract.seeds,
+      ),
+    );
+  if (!seedsMatch) {
+    return {
+      ...base,
+      status: "CORPUS_MISMATCH",
+      reason:
+        "Every catalog scenario must contain each locked seed exactly once before paired bands are evaluated.",
+    };
+  }
+  const horizonMatches =
+    context.requestedTicks === contract.ticks &&
+    runs.every((run) => run.profile.window.observedTicks === contract.ticks);
+  if (!horizonMatches) {
+    return {
+      ...base,
+      status: "HORIZON_MISMATCH",
+      reason: "Every paired run must use the locked 10,000-tick horizon.",
+    };
+  }
+  return {
+    ...base,
+    status: context.corpus === "calibration" ? "FULL_CALIBRATION" : "FULL_HOLDOUT",
+    reason: null,
+  };
+}
+
+export function evaluateFrozenPairedMacroBands(
+  runs: readonly ScenarioAnalysisRun[],
+  comparisons: readonly PairedScenarioComparison[],
+  context: ScenarioAnalysisContext,
+): FrozenPairedMacroBandReport {
+  const corpusValidation = validateFrozenPairedMacroCorpus(runs, context);
+  const corpusEligible =
+    corpusValidation.status === "FULL_CALIBRATION" ||
+    corpusValidation.status === "FULL_HOLDOUT";
+  const expectedSeeds = corpusValidation.expectedSeeds;
+  const evaluations = PAIRED_MACRO_BANDS.map(
+    (definition): FrozenPairedMacroBandEvaluation => {
+      const comparison = comparisons.find(
+        (candidate) =>
+          candidate.leftScenarioId === definition.leftScenarioId &&
+          candidate.rightScenarioId === definition.rightScenarioId,
+      );
+      const metric = comparison?.metrics.find(
+        (candidate) => candidate.metricId === definition.metricId,
+      );
+      const pairedSeeds = metric?.pairs.map((pair) => pair.seed) ?? [];
+      const pairedSeedCount = metric?.summary.pairedSeedCount ?? 0;
+      const meanDelta = metric?.summary.meanDelta ?? null;
+      const cohenDz = metric?.effect.value ?? null;
+      const absoluteMeanDelta = meanDelta === null ? null : Math.abs(meanDelta);
+      const absoluteCohenDz = cohenDz === null ? null : Math.abs(cohenDz);
+      const pairSetMatches =
+        pairedSeedCount === definition.requiredPairedSeeds &&
+        sameNumbersWithCardinality(pairedSeeds, expectedSeeds);
+      const evidencePresent =
+        comparison !== undefined &&
+        metric !== undefined &&
+        pairSetMatches &&
+        absoluteMeanDelta !== null &&
+        absoluteCohenDz !== null;
+      const passed =
+        evidencePresent &&
+        absoluteMeanDelta >= definition.minimumAbsoluteMeanDelta &&
+        absoluteCohenDz >= definition.minimumAbsoluteCohenDz;
+      const status = !corpusEligible
+        ? "NOT_EVALUATED"
+        : evidencePresent
+          ? passed
+            ? "PASS"
+            : "FAIL"
+          : "FAIL";
+      const reason = !corpusEligible
+        ? corpusValidation.reason
+        : comparison === undefined
+          ? "The frozen scenario pair is absent."
+          : metric === undefined
+            ? "The frozen paired metric is absent."
+            : !pairSetMatches
+              ? `The metric must contain all ${definition.requiredPairedSeeds.toString()} locked paired seeds exactly once.`
+              : absoluteMeanDelta === null || absoluteCohenDz === null
+                ? "Both paired mean delta and Cohen dz must be present."
+                : !passed
+                  ? "The paired materiality magnitude is below one or both frozen thresholds."
+                  : null;
+      return {
+        tableVersion: definition.tableVersion,
+        dimension: definition.dimension,
+        leftScenarioId: definition.leftScenarioId,
+        rightScenarioId: definition.rightScenarioId,
+        metricId: definition.metricId,
+        metricPath: definition.metricPath,
+        status,
+        pairedSeedCount,
+        meanDelta,
+        absoluteMeanDelta,
+        minimumAbsoluteMeanDelta: definition.minimumAbsoluteMeanDelta,
+        cohenDz,
+        absoluteCohenDz,
+        minimumAbsoluteCohenDz: definition.minimumAbsoluteCohenDz,
+        reason,
+        provenance: definition.provenance,
+      };
+    },
+  );
+  const passingDimensions = [
+    ...new Set(
+      evaluations
+        .filter((evaluation) => evaluation.status === "PASS")
+        .map((evaluation) => evaluation.dimension),
+    ),
+  ];
+  const dimensionStatus = !corpusEligible
+    ? "NOT_EVALUATED"
+    : passingDimensions.length >= REQUIRED_PASSING_PHASE_3_MACRO_DIMENSIONS
+      ? "PASS"
+      : "FAIL";
+
+  return {
+    tableVersion: PAIRED_MACRO_BAND_TABLE_VERSION,
+    status: dimensionStatus,
+    bandEvaluationStatus: evaluationSummaryStatus(evaluations),
+    releaseClaim: false,
+    provenance: PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE,
+    corpusValidation,
+    evaluations,
+    dimensionRequirement: {
+      status: dimensionStatus,
+      metricPath: "evaluations[status=PASS].dimension|distinctCount",
+      observed: corpusEligible ? passingDimensions.length : null,
+      comparison: "GTE",
+      threshold: REQUIRED_PASSING_PHASE_3_MACRO_DIMENSIONS,
+      passingDimensions,
+      reason: !corpusEligible
+        ? corpusValidation.reason
+        : dimensionStatus === "FAIL"
+          ? "Fewer than three distinct original Phase 3 macro dimensions pass their frozen materiality bands."
+          : null,
+    },
+  };
+}
+
 export function convergenceDiagnostics(
   comparisons: readonly PairedScenarioComparison[],
 ): ConvergenceDiagnostic[] {
@@ -1030,6 +1616,7 @@ export function convergenceDiagnostics(
     "STORAGE",
     "CONFLICT",
     "SPATIAL",
+    "HYDRATION",
   ];
   return comparisons.flatMap((comparison) =>
     dimensions.map((dimension): ConvergenceDiagnostic => {

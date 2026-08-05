@@ -24,13 +24,13 @@ import type {
 } from "../runtime/types";
 
 /** Changes whenever the Worker transport envelope changes incompatibly. */
-export const RUNTIME_PROTOCOL_VERSION = 2 as const;
+export const RUNTIME_PROTOCOL_VERSION = 3 as const;
 
 export type RuntimeOperation =
   | {
       readonly type: "create";
       readonly scenario?: ScenarioReferenceV2;
-      /** Legacy direct-seed creation maps explicitly to petri-world@1. */
+      /** Legacy direct-seed creation maps explicitly to the current petri-world definition. */
       readonly seed?: number;
     }
   | { readonly type: "set-playing"; readonly playing: boolean }

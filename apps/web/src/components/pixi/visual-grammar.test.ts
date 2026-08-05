@@ -34,6 +34,7 @@ function creature(overrides: Partial<CreatureView> = {}): CreatureView {
     health: 90,
     hunger: 20,
     fatigue: 25,
+    thirst: 30,
     traits: [],
     inventory: [],
     candidates: [],
@@ -46,9 +47,12 @@ function creature(overrides: Partial<CreatureView> = {}): CreatureView {
 describe("dish visual grammar", () => {
   it("maps every current action family to a distinct readable treatment", () => {
     expect(actionFamily("GATHER_FOOD")).toBe("gather");
+    expect(actionFamily("GATHER_WATER")).toBe("gather");
     expect(actionFamily("EAT")).toBe("eat");
+    expect(actionFamily("DRINK")).toBe("drink");
     expect(actionFamily("BUILD_STORAGE")).toBe("build");
     expect(actionFamily("SHARE")).toBe("share");
+    expect(actionFamily("SHARE_WATER")).toBe("share");
     expect(actionFamily("GUARD")).toBe("guard");
     expect(actionFamily("ATTACK")).toBe("conflict");
     expect(actionFamily("STEAL")).toBe("conflict");
@@ -93,10 +97,11 @@ describe("dish visual grammar", () => {
           inventory: [
             { kind: "FOOD", quantity: 2 },
             { kind: "MATERIAL", quantity: 3 },
+            { kind: "WATER", quantity: 4 },
           ],
         }),
       ),
-    ).toEqual({ food: 2, material: 3 });
+    ).toEqual({ food: 2, material: 3, water: 4 });
     expect(compactLabel("PRESERVE_PRIVATE_RESERVE", 16)).toBe("Preserve privat…");
   });
 });

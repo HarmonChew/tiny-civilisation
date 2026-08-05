@@ -17,6 +17,7 @@ import {
   setExperimentBranchResult,
   type CausalEvidenceProjectionV1,
   type DomainEvent,
+  type ExperimentOutcomeMetrics,
   type ExperimentV1,
   type InterventionLogEntryV1,
   type ScenarioReferenceV2,
@@ -41,6 +42,7 @@ import { createExperimentStorage } from "../storage/experiment-storage";
 import type { SimulationController } from "./useSimulationController";
 import {
   causalDetailFromProjection,
+  comparisonMetrics,
   createMomentReplayPresentation,
   interventionNavigationActions,
   interventionResponseRecord,
@@ -267,6 +269,87 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+describe("equal-horizon comparison metrics", () => {
+  it("uses the Phase 4 outcome keys and reports direction without judging it", () => {
+    const baseline: ExperimentOutcomeMetrics = {
+      population: 8,
+      wildFood: 40,
+      wildMaterial: 30,
+      wildWater: 24,
+      storedFood: 4,
+      storedMaterial: 3,
+      carriedWater: 2,
+      averageThirst: 2_000,
+      severeThirst: 1,
+      severeThirstExposureTicks: 400,
+      groups: 2,
+      averageTrust: 500,
+      foodShared: 3,
+      waterGathered: 8,
+      waterDrunk: 6,
+      waterShared: 1,
+      interactionContentions: 9,
+      waterGatherContentions: 3,
+      unreachableWaterAccessPairs: 0,
+      averageWaterAccessCost: 12,
+      routeConcentration: 0.25,
+      thefts: 1,
+      attacks: 0,
+      storagesCompleted: 1,
+    };
+    const branch: ExperimentOutcomeMetrics = {
+      ...baseline,
+      averageThirst: 2_500,
+      severeThirst: 2,
+      severeThirstExposureTicks: 350,
+      interactionContentions: 20,
+      waterGatherContentions: 7,
+      routeConcentration: 0.1,
+    };
+    const delta = Object.fromEntries(
+      (Object.keys(baseline) as (keyof ExperimentOutcomeMetrics)[]).map((key) => [
+        key,
+        branch[key] - baseline[key],
+      ]),
+    ) as unknown as ExperimentOutcomeMetrics;
+
+    const metrics = comparisonMetrics(baseline, branch, delta);
+    const byId = new Map(metrics.map((metric) => [metric.id, metric]));
+
+    expect(byId.get("severeThirst")).toMatchObject({
+      label: "Creatures currently in severe thirst",
+      baseline: 1,
+      branch: 2,
+      delta: 1,
+      deltaDirection: "increase",
+      note: "Count at the equal-horizon tick",
+    });
+    expect(byId.get("severeThirstExposureTicks")).toMatchObject({
+      label: "Cumulative severe-thirst exposure",
+      delta: 50,
+      deltaDirection: "decrease",
+      note: "Creature-ticks since the run began",
+    });
+    expect(byId.get("waterGatherContentions")).toMatchObject({
+      label: "Water-gather contention attempts",
+      baseline: 3,
+      branch: 7,
+      delta: 4,
+      deltaDirection: "increase",
+    });
+    expect(byId.get("routeConcentration")).toMatchObject({
+      label: "Recent route concentration (all traffic)",
+      baseline: "25.0%",
+      branch: "10.0%",
+      delta: "15.0%",
+      deltaDirection: "decrease",
+    });
+    expect(byId.has("interactionContentions")).toBe(false);
+    expect(byId.has("waterRouteConcentration")).toBe(false);
+    expect(metrics.some((metric) => "deltaTone" in metric)).toBe(false);
+  });
+});
+
 describe("phase 3 scenario identity", () => {
   it("keeps scenario and seed independent and starts with the full reference", async () => {
     const restart = vi.fn(
@@ -349,6 +432,59 @@ describe("phase 3 scenario identity", () => {
     );
   });
 
+  it("reruns a standalone Phase 3 import at its preserved horizon as unverified", async () => {
+    const reference = createScenarioReference("split-banks", 2_469);
+    const { frame } = scenarioFrame(reference, 8);
+    let current = createExperiment(reference);
+    current = setExperimentBranchResult(
+      current,
+      current.rootBranchId,
+      frame.tick,
+      frame.hash!,
+    );
+    const legacy = JSON.parse(serializeExperiment(current)) as {
+      schemaVersion: number;
+      behaviorVersion: number;
+      stateSchemaVersion: number;
+      scenario: { behaviorVersion: number; scenarioVersion: number };
+    };
+    legacy.schemaVersion = 3;
+    legacy.behaviorVersion = 3;
+    legacy.stateSchemaVersion = 3;
+    legacy.scenario.behaviorVersion = 3;
+    legacy.scenario.scenarioVersion = 1;
+    const replay = vi.fn(async (_replay: SimulationReplayV1) => ({
+      cancelled: false,
+      expectedHash: null,
+      actualHash: frame.hash!,
+      hashMatches: null,
+      frame,
+    }));
+    const simulation = simulationController({ replay });
+    const { result } = renderHook(() =>
+      useExperimentWorkspace({ simulation, onSelectCreature: vi.fn() }),
+    );
+
+    const file = new File([JSON.stringify(legacy)], "phase-3-experiment.json", {
+      type: "application/json",
+    });
+    act(() => result.current.props.actions.onImport(file));
+
+    await waitFor(() =>
+      expect(result.current.props.actions.status).toMatchObject({ phase: "success" }),
+    );
+    expect(replay).toHaveBeenCalledOnce();
+    expect(replay.mock.calls[0]?.[0]).toMatchObject({
+      scenario: reference,
+      seed: reference.seed,
+      finalTick: frame.tick,
+    });
+    expect(replay.mock.calls[0]?.[0].finalHash).toBeUndefined();
+    expect(result.current.props.actions.status?.message).toContain(
+      "Upgraded; prior verification unavailable.",
+    );
+  });
+
   it.each([
     { label: "malformed", contents: "{not-json" },
     {
@@ -401,7 +537,7 @@ describe("phase 3 scenario identity", () => {
     await createExperimentStorage().save(
       JSON.stringify({
         kind: "tiny-civilisation/workspace",
-        schemaVersion: 2,
+        schemaVersion: 3,
         activeBranchId: experiment.rootBranchId,
         experiment,
         simulationSave: serializeSimulationSave(savedState),
@@ -445,6 +581,70 @@ describe("phase 3 scenario identity", () => {
     expect(result.current.props.scenarioLabel).toBe("Split Banks");
     expect(result.current.props.actions.status?.message).toContain(
       "Restored tick 9 without changing its hash.",
+    );
+  });
+
+  it("loads a Phase 3 workspace without preserving obsolete verification claims", async () => {
+    const reference = createScenarioReference("split-banks", 7_778);
+    const { state: upgradedState } = scenarioFrame(reference, 9);
+    const legacyExperiment = JSON.parse(
+      serializeExperiment(createExperiment(reference)),
+    ) as {
+      schemaVersion: number;
+      behaviorVersion: number;
+      stateSchemaVersion: number;
+      scenario: { behaviorVersion: number; scenarioVersion: number };
+    };
+    legacyExperiment.schemaVersion = 3;
+    legacyExperiment.behaviorVersion = 3;
+    legacyExperiment.stateSchemaVersion = 3;
+    legacyExperiment.scenario.behaviorVersion = 3;
+    legacyExperiment.scenario.scenarioVersion = 1;
+    await createExperimentStorage().save(
+      JSON.stringify({
+        kind: "tiny-civilisation/workspace",
+        schemaVersion: 2,
+        activeBranchId: "baseline",
+        experiment: legacyExperiment,
+        simulationSave: JSON.stringify({
+          kind: "tiny-civilisation/save",
+          schemaVersion: 2,
+          behaviorVersion: 3,
+          stateSchemaVersion: 3,
+          state: {},
+        }),
+      }),
+    );
+
+    const initialState = createSimulation(4_182);
+    const load = vi.fn(async () => makeWorldView(upgradedState));
+    const simulation = simulationController({
+      view: makeWorldView(initialState),
+      scenario: initialState.scenario,
+      seed: initialState.seed,
+      getState: vi.fn(async () => upgradedState),
+      load,
+      save: vi.fn(async () => serializeSimulationSave(initialState)),
+      getCheckpoint: vi.fn(async () => ({
+        tick: upgradedState.tick,
+        hash: hashSimulationState(upgradedState),
+        state: upgradedState,
+      })),
+    });
+    const { result } = renderHook(() =>
+      useExperimentWorkspace({ simulation, onSelectCreature: vi.fn() }),
+    );
+
+    await waitFor(() => expect(result.current.props.actions.canLoad).toBe(true));
+    act(() => result.current.props.actions.onLoad());
+    await waitFor(() =>
+      expect(result.current.props.actions.status).toMatchObject({ phase: "success" }),
+    );
+
+    expect(load).toHaveBeenCalledOnce();
+    expect(result.current.props.scenarioLabel).toBe("Split Banks");
+    expect(result.current.props.actions.status?.message).toContain(
+      "Upgraded; prior verification unavailable.",
     );
   });
 });
@@ -871,7 +1071,7 @@ describe("isolated experiment replay", () => {
       expect(simulation.view.tick).toBe(70);
       expect(simulation.view.hash).toBe(liveView.hash);
       expect(result.current.props.currentTick).toBe(70);
-      expect(result.current.props.open).toBe(true);
+      expect(result.current.props.open).toBe(false);
       expect(result.current.props.section).toBe("replay");
       expect(result.current.props.replay.replay).toMatchObject({
         phase: "complete",
@@ -893,6 +1093,9 @@ describe("isolated experiment replay", () => {
         "Action",
         "Aftermath",
       ]);
+      expect(result.current.momentReplay?.beats[3]?.summary).toContain(
+        "Aftermath retained the factual state",
+      );
       expect(result.current.momentReplay?.activeBeatIndex).toBe(0);
 
       act(() => result.current.selectMomentReplayBeat(3));
@@ -1356,7 +1559,7 @@ describe("experiment intervention navigation", () => {
       locationTileIndex: 7,
     };
     const trace: InterventionResponseTrace = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       command: { commandId: 1, applyAtTick: 10, type: "ADD_FOOD", tileIndex: 7 },
       participantIds: [1],
       windowTicks: 120,
@@ -1621,7 +1824,7 @@ describe("experiment intervention presentation", () => {
       locationTileIndex: 5,
     };
     const trace: InterventionResponseTrace = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       command: { commandId: 1, applyAtTick: 10, type: "ADD_FOOD", tileIndex: 5 },
       participantIds: [1],
       windowTicks: 120,

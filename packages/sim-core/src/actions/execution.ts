@@ -243,11 +243,12 @@ function gatherResource(
   const skillBonus = kind === "FOOD" && creature.skills.foraging >= 6_000 ? 1 : 0;
   const quantity = Math.min(node.currentStock, capacity, 2 + skillBonus);
   node.currentStock -= quantity;
+  let gatheredEvent: DomainEvent;
   if (kind === "FOOD") {
     creature.inventory.food += quantity;
     creature.skills.foraging = clampUnit(creature.skills.foraging + 5);
     state.metrics.foodGathered += quantity;
-    emitDomainEvent(state, {
+    gatheredEvent = emitDomainEvent(state, {
       type: "FOOD_GATHERED",
       actorIds: [creature.id],
       targetIds: [node.id],
@@ -258,9 +259,9 @@ function gatherResource(
       decisionRecordIds: currentDecisionIds(creature),
       summary: `${creature.name} gathered ${quantity} food.`,
     });
-  } else {
+  } else if (kind === "MATERIAL") {
     creature.inventory.material += quantity;
-    emitDomainEvent(state, {
+    gatheredEvent = emitDomainEvent(state, {
       type: "MATERIAL_GATHERED",
       actorIds: [creature.id],
       targetIds: [node.id],
@@ -270,6 +271,36 @@ function gatherResource(
       quantity,
       decisionRecordIds: currentDecisionIds(creature),
       summary: `${creature.name} gathered ${quantity} material.`,
+    });
+  } else {
+    creature.inventory.water += quantity;
+    state.metrics.waterGathered += quantity;
+    gatheredEvent = emitDomainEvent(state, {
+      type: "WATER_GATHERED",
+      actorIds: [creature.id],
+      targetIds: [node.id],
+      groupIds: creature.groupId === null ? [] : [creature.groupId],
+      locationTileIndex: node.tileIndex,
+      resourceKind: "WATER",
+      quantity,
+      decisionRecordIds: currentDecisionIds(creature),
+      importance: node.currentStock === 0 ? 38 : 12,
+      summary: `${creature.name} gathered ${quantity} water.`,
+    });
+  }
+  if (kind === "WATER" && node.currentStock === 0) {
+    emitDomainEvent(state, {
+      type: "WATER_SOURCE_DEPLETED",
+      actorIds: [creature.id],
+      targetIds: [node.id],
+      groupIds: creature.groupId === null ? [] : [creature.groupId],
+      locationTileIndex: node.tileIndex,
+      resourceKind: "WATER",
+      quantity: 0,
+      causedByEventIds: [gatheredEvent.id],
+      decisionRecordIds: currentDecisionIds(creature),
+      importance: 64,
+      summary: `${creature.name} drew the potable water source empty.`,
     });
   }
 }
@@ -335,6 +366,73 @@ function shareFood(
   if (group && recipient.groupId === group.id) {
     group.sharingNorm = clamp(group.sharingNorm + 90, -UNIT_MAX, UNIT_MAX);
   }
+}
+
+function shareWater(
+  state: SimulationState,
+  creature: CreatureState,
+  targetId: number | null,
+): void {
+  const recipient = targetId === null ? null : getCreature(state, targetId);
+  if (
+    !recipient?.alive ||
+    creature.inventory.water <= 0 ||
+    creature.needs.thirst >= 7_000 ||
+    recipient.needs.thirst < 6_000 ||
+    inventorySpace(recipient.inventory) <= 0
+  ) {
+    return;
+  }
+  creature.inventory.water -= 1;
+  recipient.inventory.water += 1;
+  state.metrics.waterShared += 1;
+  const event = emitDomainEvent(state, {
+    type: "WATER_SHARED",
+    actorIds: [creature.id],
+    targetIds: [recipient.id],
+    groupIds:
+      creature.groupId !== null && creature.groupId === recipient.groupId
+        ? [creature.groupId]
+        : [],
+    locationTileIndex: creature.tileIndex,
+    resourceKind: "WATER",
+    quantity: 1,
+    decisionRecordIds: currentDecisionIds(creature),
+    importance: recipient.needs.thirst >= 8_000 ? 46 : 28,
+    summary: `${creature.name} shared water with ${recipient.name}.`,
+  });
+  changeRelationship(
+    state,
+    recipient.id,
+    creature.id,
+    {
+      trust: 1_150 + Math.floor(recipient.needs.thirst / 18),
+      familiarity: 500,
+    },
+    event.id,
+  );
+  changeRelationship(
+    state,
+    creature.id,
+    recipient.id,
+    { trust: 220, familiarity: 320 },
+    event.id,
+  );
+  addMemory(
+    state,
+    recipient,
+    "HELP_RECEIVED",
+    creature.id,
+    creature.tileIndex,
+    5_000,
+    6_000 + recipient.needs.thirst / 4,
+    [event.id],
+  );
+  const group = getGroup(state, creature.groupId ?? -1);
+  if (group && recipient.groupId === group.id) {
+    group.sharingNorm = clamp(group.sharingNorm + 110, -UNIT_MAX, UNIT_MAX);
+  }
+  recipient.nextDecisionTick = Math.min(recipient.nextDecisionTick, state.tick + 1);
 }
 
 function witnessTheft(
@@ -475,6 +573,7 @@ function ensureStorageSite(state: SimulationState, group: GroupState): Structure
       capacity: 80,
       food: 0,
       material: 0,
+      water: 0,
     },
     guardIds: [],
     completedTick: null,
@@ -827,6 +926,40 @@ const resolveEat: ActionResolver = (state, creature) => {
   });
 };
 
+const resolveDrink: ActionResolver = (state, creature) => {
+  if (creature.inventory.water <= 0) return;
+  const previousThirst = creature.needs.thirst;
+  creature.inventory.water -= 1;
+  creature.needs.thirst = clampUnit(creature.needs.thirst - 6_500);
+  creature.health = clampUnit(creature.health + 150);
+  state.metrics.waterDrunk += 1;
+  const event = emitDomainEvent(state, {
+    type: "WATER_DRUNK",
+    actorIds: [creature.id],
+    groupIds: creature.groupId === null ? [] : [creature.groupId],
+    locationTileIndex: creature.tileIndex,
+    resourceKind: "WATER",
+    quantity: 1,
+    decisionRecordIds: currentDecisionIds(creature),
+    importance: previousThirst >= 8_000 ? 34 : 8,
+    summary: `${creature.name} drank one water.`,
+  });
+  if (previousThirst >= 8_000 && creature.needs.thirst < 8_000) {
+    emitDomainEvent(state, {
+      type: "SEVERE_THIRST_RESOLVED",
+      actorIds: [creature.id],
+      groupIds: creature.groupId === null ? [] : [creature.groupId],
+      locationTileIndex: creature.tileIndex,
+      resourceKind: "WATER",
+      quantity: creature.needs.thirst,
+      causedByEventIds: [event.id],
+      decisionRecordIds: currentDecisionIds(creature),
+      importance: 42,
+      summary: `${creature.name} recovered from severe thirst after drinking.`,
+    });
+  }
+};
+
 const resolveRest: ActionResolver = (_state, creature) => {
   creature.needs.fatigue = clampUnit(creature.needs.fatigue - 5_200);
   creature.health = clampUnit(creature.health + 120);
@@ -866,9 +999,14 @@ const ACTION_RESOLVERS: Record<ActionKind, ActionResolver> = {
   GATHER_FOOD: (state, creature, action) => gatherResource(state, creature, action, "FOOD"),
   GATHER_MATERIAL: (state, creature, action) =>
     gatherResource(state, creature, action, "MATERIAL"),
+  GATHER_WATER: (state, creature, action) =>
+    gatherResource(state, creature, action, "WATER"),
   EAT: resolveEat,
+  DRINK: resolveDrink,
   REST: resolveRest,
   SHARE: (state, creature, action) => shareFood(state, creature, action.targetEntityId),
+  SHARE_WATER: (state, creature, action) =>
+    shareWater(state, creature, action.targetEntityId),
   KEEP: noActionResolution,
   STEAL: (state, creature, action) => stealFood(state, creature, action.targetEntityId),
   DEPOSIT: (state, creature, action) => depositFood(state, creature, action.targetEntityId),

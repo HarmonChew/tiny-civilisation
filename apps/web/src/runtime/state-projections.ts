@@ -11,6 +11,12 @@ function rejectionGuidance(reason: CommandRejectionReason): string {
   switch (reason) {
     case "OCCUPIED_TILE":
       return "The target tile was occupied by a creature, resource, or structure. Choose an empty tile and try again.";
+    case "NO_WATER_SOURCE":
+      return "There is no water source at the target tile. Choose a tile with a visible water source and try again.";
+    case "SOURCE_FULL":
+      return "The target water source is already full. Choose another source or drain it before replenishing.";
+    case "SOURCE_EMPTY":
+      return "The target water source is already empty. Choose a source that still holds water.";
     case null:
       return "The simulation rejected this intervention. Review the target and try again.";
   }

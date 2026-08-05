@@ -8,7 +8,7 @@ const clamp = (value: number, minimum: number, maximum: number): number =>
 
 const clampUnit = (value: number): number => clamp(value, 0, UNIT_MAX);
 const inventoryTotal = (inventory: Inventory): number =>
-  inventory.food + inventory.material;
+  inventory.food + inventory.material + inventory.water;
 
 export function maintainBoundedSocialState(state: SimulationState): void {
   if (state.tick === 0 || state.tick % 100 !== 0) return;
@@ -39,14 +39,19 @@ export function maintainBoundedSocialState(state: SimulationState): void {
 export function validateAuthoritativeInvariants(state: SimulationState): void {
   repairInteractionClaims(state);
   for (const creature of state.creatures) {
+    creature.needs.thirst = clampUnit(creature.needs.thirst);
     creature.inventory.food = Math.max(0, Math.floor(creature.inventory.food));
     creature.inventory.material = Math.max(0, Math.floor(creature.inventory.material));
+    creature.inventory.water = Math.max(0, Math.floor(creature.inventory.water));
     const overflow = inventoryTotal(creature.inventory) - creature.inventory.capacity;
     if (overflow > 0) {
       const materialReduction = Math.min(overflow, creature.inventory.material);
       creature.inventory.material -= materialReduction;
-      const remaining = overflow - materialReduction;
-      creature.inventory.food = Math.max(0, creature.inventory.food - remaining);
+      const afterMaterial = overflow - materialReduction;
+      const waterReduction = Math.min(afterMaterial, creature.inventory.water);
+      creature.inventory.water -= waterReduction;
+      const afterWater = afterMaterial - waterReduction;
+      creature.inventory.food = Math.max(0, creature.inventory.food - afterWater);
     }
   }
   for (const node of state.resourceNodes) {
@@ -55,5 +60,6 @@ export function validateAuthoritativeInvariants(state: SimulationState): void {
   for (const structure of state.structures) {
     structure.inventory.food = Math.max(0, structure.inventory.food);
     structure.inventory.material = Math.max(0, structure.inventory.material);
+    structure.inventory.water = 0;
   }
 }

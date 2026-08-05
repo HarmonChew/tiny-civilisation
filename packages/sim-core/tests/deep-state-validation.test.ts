@@ -66,6 +66,55 @@ describe("deep persisted state validation", () => {
     );
   });
 
+  it("enforces Phase 4 thirst, shared inventory, water-source, and storage bounds", () => {
+    const thirst = clonedState();
+    thirst.creatures[0]!.needs.thirst = 10_001;
+    expect(() => assertCompatibleSimulationState(thirst)).toThrow(
+      "creatures[0].needs.thirst must be between 0 and 10000",
+    );
+
+    const carrying = clonedState();
+    carrying.creatures[0]!.inventory.water = carrying.creatures[0]!.inventory.capacity + 1;
+    expect(() => assertCompatibleSimulationState(carrying)).toThrow(
+      "creatures[0].inventory exceeds its capacity",
+    );
+
+    const sourceTerrain = clonedState();
+    const water = sourceTerrain.resourceNodes.find((node) => node.kind === "WATER")!;
+    water.tileIndex = sourceTerrain.world.tiles.find(
+      (tile) => tile.terrain === "GROUND" && !tile.blocked,
+    )!.index;
+    expect(() => assertCompatibleSimulationState(sourceTerrain)).toThrow(
+      "must reference shallow-water terrain for a water source",
+    );
+
+    const stock = clonedState();
+    const stockNode = stock.resourceNodes[0]!;
+    stockNode.currentStock = stockNode.maximumStock + 1;
+    expect(() => assertCompatibleSimulationState(stock)).toThrow(
+      "currentStock exceeds maximumStock",
+    );
+
+    const structure = clonedState();
+    const structureId = structure.nextEntityId++;
+    structure.structures.push({
+      id: structureId,
+      kind: "STORAGE",
+      tileIndex: 1,
+      groupId: 999,
+      material: 0,
+      materialRequired: 0,
+      progress: 0,
+      workRequired: 1,
+      inventory: { capacity: 10, food: 0, material: 0, water: 1 },
+      guardIds: [],
+      completedTick: 0,
+    });
+    expect(() => assertCompatibleSimulationState(structure)).toThrow(
+      "inventory.water must be zero before communal water storage exists",
+    );
+  });
+
   it("rejects stable dangling cross-references and invalid counters", () => {
     const group = clonedState();
     if (!group.creatures[0]) throw new Error("Missing fixture creature.");
@@ -103,7 +152,7 @@ describe("deep persisted state validation", () => {
     ];
     invalidFood.nextCommandId = 2;
     expect(() => assertCompatibleSimulationState(invalidFood)).toThrow(
-      "amount must be positive for food",
+      "amount must be positive for a resource intervention",
     );
 
     const missed = clonedState();

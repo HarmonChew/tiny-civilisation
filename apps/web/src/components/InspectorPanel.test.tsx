@@ -28,8 +28,22 @@ const creature: CreatureView = {
   health: 92,
   hunger: 31,
   fatigue: 22,
+  thirst: 42,
+  waterAccess: {
+    sourceId: 91,
+    sourceStock: 18,
+    sourceCapacity: 30,
+    weightedCost: 120,
+    reachableSources: 1,
+    totalSources: 1,
+    interactionCapacity: 3,
+    claimedInteractionSlots: 1,
+  },
   traits: [],
-  inventory: [{ kind: "food", quantity: 2 }],
+  inventory: [
+    { kind: "food", quantity: 2 },
+    { kind: "water", quantity: 3 },
+  ],
   candidates: [
     {
       action: "GUARD",
@@ -45,6 +59,15 @@ const creature: CreatureView = {
           evidenceEventIds: [],
           factLabel: "Shared store needs watching",
           factValue: 2,
+        },
+        {
+          key: "weighted travel cost",
+          label: "Weighted travel cost",
+          contribution: -700,
+          evidenceEventIds: [],
+          factLabel: "Weighted travel cost",
+          factValue: 70,
+          factUnit: "MOVE_COST",
         },
       ],
     },
@@ -94,5 +117,13 @@ describe("InspectorPanel", () => {
     expect(within(summary).getByText(creature.summary.reason)).toBeTruthy();
     expect(screen.getByText(/Protect person or group.*Guard shared asset/u)).toBeTruthy();
     expect(screen.getByText("retained value 2")).toBeTruthy();
+    expect(screen.getByText("weighted travel cost 70 move-cost units")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "Thirst: 42 percent" })).toBeTruthy();
+    expect(screen.getByText("Water")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
+    const waterAccess = screen.getByLabelText("Aro water access").textContent ?? "";
+    expect(waterAccess).toContain("Source 91: 18/30");
+    expect(waterAccess).toContain("120 move-cost units");
+    expect(waterAccess).toContain("1/3 claimed");
   });
 });

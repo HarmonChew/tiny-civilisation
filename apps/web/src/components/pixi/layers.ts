@@ -16,6 +16,7 @@ import {
   type PixiRuntime,
 } from "./runtime";
 import { actionFamily } from "./visual-grammar";
+import { deriveTrafficTrails, trafficTrailStyle } from "./traffic-trails";
 import { drawResourceMark, drawStructureMark } from "./world-marks";
 
 const terrainColor = (tile: TileView): number => {
@@ -90,10 +91,13 @@ export function drawInterventionPreview(
   const graphics = runtime.layers.interventionPreview;
   graphics.clear();
   if (!tile || tool === "inspect") return;
+  const removing = tool === "remove-food" || tool === "drain-water";
   const color =
-    disabled || tool === "remove-food" || (tool === "obstacle" && !tile.blocked)
+    disabled || removing || (tool === "obstacle" && !tile.blocked)
       ? PALETTE.danger
-      : PALETTE.action;
+      : tool === "replenish-water"
+        ? PALETTE.water
+        : PALETTE.action;
   graphics
     .rect(tile.x + 0.08, tile.y + 0.08, 0.84, 0.84)
     .fill({ color, alpha: disabled ? 0.08 : 0.2 })
@@ -105,6 +109,15 @@ export function drawInterventionPreview(
       .moveTo(tile.x + 0.76, tile.y + 0.24)
       .lineTo(tile.x + 0.24, tile.y + 0.76)
       .stroke({ color, width: 0.09, alpha: 1 });
+  }
+  if (tool === "replenish-water" || tool === "drain-water") {
+    graphics
+      .moveTo(tile.x + 0.5, tile.y + 0.24)
+      .lineTo(tile.x + 0.68, tile.y + 0.54)
+      .lineTo(tile.x + 0.5, tile.y + 0.74)
+      .lineTo(tile.x + 0.32, tile.y + 0.54)
+      .closePath()
+      .stroke({ color, width: 0.075, alpha: 1 });
   }
 }
 
@@ -151,6 +164,17 @@ export const drawWorld = (
     .clear()
     .rect(-0.15, -0.15, view.width + 0.3, view.height + 0.3)
     .stroke({ color: PALETTE.frame, width: 0.22, alpha: 0.7 });
+
+  layers.traffic.clear();
+  if (overlays.traffic) {
+    for (const trail of deriveTrafficTrails(view)) {
+      const style = trafficTrailStyle(trail, view.tick);
+      layers.traffic
+        .moveTo(trail.from.x, trail.from.y)
+        .lineTo(trail.to.x, trail.to.y)
+        .stroke({ color: PALETTE.traffic, width: style.width, alpha: style.alpha });
+    }
+  }
 
   layers.groupInfluence.clear();
   if (overlays.groups) {

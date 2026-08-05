@@ -30,8 +30,25 @@ const creatures: CreatureView[] = names.map((name, index) => ({
   health: 90,
   hunger: index === 1 ? 82 : 35,
   fatigue: 20,
+  thirst: index === 2 ? 81 : 35,
+  waterAccess: {
+    sourceId: 91,
+    sourceStock: 18,
+    sourceCapacity: 30,
+    weightedCost: 120 + index * 10,
+    reachableSources: 1,
+    totalSources: 1,
+    interactionCapacity: 3,
+    claimedInteractionSlots: 1,
+  },
   traits: [],
-  inventory: index === 0 ? [{ kind: "FOOD", quantity: 2 }] : [],
+  inventory:
+    index === 0
+      ? [
+          { kind: "FOOD", quantity: 2 },
+          { kind: "WATER", quantity: 3 },
+        ]
+      : [],
   candidates: [],
   memories: [],
   relationships: [],
@@ -66,8 +83,11 @@ describe("CreatureRoster", () => {
 
     expect(screen.getAllByRole("listitem")).toHaveLength(8);
     expect(screen.getAllByText("Fernhollow")).toHaveLength(4);
-    expect(screen.getByText("2 food")).toBeTruthy();
+    expect(screen.getByText("2 food, 3 water")).toBeTruthy();
+    expect(screen.getByText(/Thirst 35%.*3 water/)).toBeTruthy();
+    expect(screen.getAllByText(/Source 91: 18\/30, cost \d+, slots 1\/3/)).toHaveLength(8);
     expect(screen.getByText("Very hungry")).toBeTruthy();
+    expect(screen.getByText("Very thirsty")).toBeTruthy();
     expect(screen.getByRole("button", { name: /^Aro,/ }).getAttribute("aria-pressed")).toBe(
       "true",
     );

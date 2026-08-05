@@ -351,6 +351,7 @@ describe("versioned experiment contracts", () => {
       scenario: {
         schemaVersion: number;
         behaviorVersion: number;
+        scenarioVersion: number;
         mapGenerationVersion?: number;
       };
       branches: Array<{
@@ -369,6 +370,7 @@ describe("versioned experiment contracts", () => {
     legacy.stateSchemaVersion = 1;
     legacy.scenario.schemaVersion = 1;
     legacy.scenario.behaviorVersion = 1;
+    legacy.scenario.scenarioVersion = 1;
     delete legacy.scenario.mapGenerationVersion;
     for (const branch of legacy.branches) {
       for (const entry of branch.commandLog) delete entry.responseTrace;
@@ -384,7 +386,7 @@ describe("versioned experiment contracts", () => {
     expect(migrated.bookmarks).toEqual(current.bookmarks);
     expect(migrated.checkpoints).toEqual([]);
     expect(migrated.branches[0]).toMatchObject({
-      targetTick: null,
+      targetTick: 40,
       expectedHash: null,
       commandLog: [{ outcome: { status: "PENDING" } }],
     });
@@ -394,9 +396,12 @@ describe("versioned experiment contracts", () => {
     const current = buildExperiment();
     const legacy = JSON.parse(JSON.stringify(current)) as {
       schemaVersion: number;
+      behaviorVersion: number;
       stateSchemaVersion: number;
       scenario: {
         schemaVersion: number;
+        behaviorVersion: number;
+        scenarioVersion: number;
         mapGenerationVersion?: number;
       };
       branches: Array<{
@@ -406,8 +411,11 @@ describe("versioned experiment contracts", () => {
       }>;
     };
     legacy.schemaVersion = 1;
+    legacy.behaviorVersion = 3;
     legacy.stateSchemaVersion = 2;
     legacy.scenario.schemaVersion = 1;
+    legacy.scenario.behaviorVersion = 3;
+    legacy.scenario.scenarioVersion = 1;
     delete legacy.scenario.mapGenerationVersion;
     for (const branch of legacy.branches) {
       for (const entry of branch.commandLog) delete entry.responseTrace;
@@ -416,13 +424,93 @@ describe("versioned experiment contracts", () => {
     const migrated = migrateExperiment(legacy);
 
     expect(migrated.schemaVersion).toBe(EXPERIMENT_SCHEMA_VERSION);
-    expect(migrated.branches[0]?.targetTick).toBeNull();
+    expect(migrated.branches[0]?.targetTick).toBe(40);
     expect(migrated.branches[0]?.expectedHash).toBeNull();
-    expect(migrated.branches[0]?.commandLog[0]?.outcome).toEqual(
-      current.branches[0]?.commandLog[0]?.outcome,
-    );
+    expect(migrated.branches[0]?.commandLog[0]?.outcome).toEqual({
+      status: "PENDING",
+    });
     expect(migrated.branches[0]?.commandLog[0]?.responseTrace).toBeNull();
     expect(migrated.checkpoints).toEqual([]);
+  });
+
+  it("migrates Phase 3 experiments without retaining outcomes, traces, or hashes", () => {
+    const current = buildExperiment();
+    const legacy = JSON.parse(JSON.stringify(current)) as {
+      schemaVersion: number;
+      behaviorVersion: number;
+      stateSchemaVersion: number;
+      scenario: {
+        behaviorVersion: number;
+        scenarioVersion: number;
+      };
+      branches: Array<{
+        targetTick: number | null;
+        expectedHash: string | null;
+        commandLog: Array<{
+          outcome: { status: string };
+          responseTrace: unknown;
+        }>;
+      }>;
+      checkpoints: unknown[];
+    };
+    legacy.schemaVersion = 3;
+    legacy.behaviorVersion = 3;
+    legacy.stateSchemaVersion = 3;
+    legacy.scenario.behaviorVersion = 3;
+    legacy.scenario.scenarioVersion = 1;
+    for (const branch of legacy.branches) {
+      for (const entry of branch.commandLog) {
+        entry.responseTrace = { schemaVersion: 1, phase: "CLOSED" };
+      }
+    }
+    const original = JSON.stringify(legacy);
+
+    const migrated = migrateExperiment(legacy);
+
+    expect(JSON.stringify(legacy)).toBe(original);
+    expect(migrated.schemaVersion).toBe(EXPERIMENT_SCHEMA_VERSION);
+    expect(migrated.behaviorVersion).toBe(SIMULATION_BEHAVIOR_VERSION);
+    expect(migrated.stateSchemaVersion).toBe(SIMULATION_STATE_VERSION);
+    expect(migrated.bookmarks).toEqual(current.bookmarks);
+    expect(migrated.checkpoints).toEqual([]);
+    expect(migrated.branches[0]).toMatchObject({
+      targetTick: 40,
+      expectedHash: null,
+      commandLog: [{ outcome: { status: "PENDING" }, responseTrace: null }],
+    });
+    expect(createBranchReplay(migrated, "baseline")).toMatchObject({
+      finalTick: 40,
+    });
+    expect(createBranchReplay(migrated, "baseline").finalHash).toBeUndefined();
+  });
+
+  it("upgrades standalone Phase 3 scenario references without changing identity", () => {
+    const legacy = {
+      ...createScenarioReference("scattered-plenty", 812),
+      behaviorVersion: 3,
+      scenarioVersion: 1,
+    };
+    expect(deserializeScenarioReference(JSON.stringify(legacy))).toEqual(
+      createScenarioReference("scattered-plenty", 812),
+    );
+  });
+
+  it("allows an unverified experiment horizon but rejects a hash without one", () => {
+    const verified = buildExperiment();
+    const unverified = JSON.parse(JSON.stringify(verified)) as ExperimentV1;
+    const branch = unverified.branches[0] as {
+      targetTick: number | null;
+      expectedHash: string | null;
+    };
+    branch.expectedHash = null;
+
+    expect(migrateExperiment(unverified).branches[0]).toMatchObject({
+      targetTick: 40,
+      expectedHash: null,
+    });
+    branch.targetTick = null;
+    branch.expectedHash = "0000000000000000";
+    expect(() => migrateExperiment(unverified)).toThrow("expectedHash requires targetTick");
   });
 
   it("fails early on invalid JSON and oversized serialized contracts", () => {
@@ -505,9 +593,17 @@ describe("replay parsing and execution", () => {
         ],
       }),
     ).toThrow("command IDs must be contiguous");
-    expect(() => migrateSimulationReplay({ ...replay, finalTick: 2 })).toThrow(
-      "finalTick and finalHash",
-    );
+    const unverified = migrateSimulationReplay({ ...replay, finalTick: 2 });
+    expect(unverified.finalTick).toBe(2);
+    expect(unverified.finalHash).toBeUndefined();
+    expect(executeSimulationReplay(unverified)).toMatchObject({
+      finalTick: 2,
+      expectedFinalHash: null,
+      hashStatus: "UNVERIFIED",
+    });
+    expect(() =>
+      migrateSimulationReplay({ ...replay, finalHash: "0000000000000000" }),
+    ).toThrow("finalHash requires finalTick");
     const command = {
       commandId: 1,
       applyAtTick: 4,

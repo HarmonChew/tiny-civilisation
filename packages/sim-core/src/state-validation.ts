@@ -20,9 +20,12 @@ const ACTION_KINDS = [
   "EXPLORE",
   "GATHER_FOOD",
   "GATHER_MATERIAL",
+  "GATHER_WATER",
   "EAT",
+  "DRINK",
   "REST",
   "SHARE",
+  "SHARE_WATER",
   "KEEP",
   "STEAL",
   "DEPOSIT",
@@ -183,11 +186,12 @@ function assertReferences(
 }
 
 function validateInventory(value: unknown, path: string): void {
-  const record = object(value, path, ["capacity", "food", "material"]);
+  const record = object(value, path, ["capacity", "food", "material", "water"]);
   const capacity = integer(record.capacity, `${path}.capacity`);
   const food = integer(record.food, `${path}.food`);
   const material = integer(record.material, `${path}.material`);
-  if (food + material > capacity) fail(path, "exceeds its capacity");
+  const water = integer(record.water, `${path}.water`);
+  if (food + material + water > capacity) fail(path, "exceeds its capacity");
 }
 
 function validateReasonFact(value: unknown, path: string): void {
@@ -215,7 +219,14 @@ function validateReasonFact(value: unknown, path: string): void {
   if (typeof fact.value === "number") finite(fact.value, `${path}.value`);
   if (typeof fact.value === "string") string(fact.value, `${path}.value`, true);
   if (fact.unit !== null) {
-    literal(fact.unit, `${path}.unit`, ["UNIT", "COUNT", "TILES", "TICKS", "LABEL"]);
+    literal(fact.unit, `${path}.unit`, [
+      "UNIT",
+      "COUNT",
+      "TILES",
+      "TICKS",
+      "MOVE_COST",
+      "LABEL",
+    ]);
   }
   nullableInteger(fact.sourceEntityId, `${path}.sourceEntityId`, 1);
   numberArray(fact.sourceEventIds, `${path}.sourceEventIds`, 1);
@@ -513,9 +524,10 @@ function validateCreatures(
     finite(creature.x, `${path}.x`, 0, width * TILE_FIXED_UNITS);
     finite(creature.y, `${path}.y`, 0, height * TILE_FIXED_UNITS);
     integer(creature.health, `${path}.health`, 0, 10_000);
-    const needs = object(creature.needs, `${path}.needs`, ["hunger", "fatigue"]);
+    const needs = object(creature.needs, `${path}.needs`, ["hunger", "fatigue", "thirst"]);
     integer(needs.hunger, `${path}.needs.hunger`, 0, 10_000);
     integer(needs.fatigue, `${path}.needs.fatigue`, 0, 10_000);
+    integer(needs.thirst, `${path}.needs.thirst`, 0, 10_000);
     const traits = object(creature.traits, `${path}.traits`, [
       "generosity",
       "aggression",
@@ -610,13 +622,13 @@ function validateResourceNodes(value: unknown, tileCount: number): number[] {
       "regenerationAmount",
     ]);
     ids.push(integer(node.id, `${path}.id`, 1));
-    literal(node.kind, `${path}.kind`, ["FOOD", "MATERIAL"]);
+    literal(node.kind, `${path}.kind`, ["FOOD", "MATERIAL", "WATER"]);
     integer(node.tileIndex, `${path}.tileIndex`, 0, tileCount - 1);
     const currentStock = integer(node.currentStock, `${path}.currentStock`);
-    const maximumStock = integer(node.maximumStock, `${path}.maximumStock`);
+    const maximumStock = integer(node.maximumStock, `${path}.maximumStock`, 1);
     if (currentStock > maximumStock) fail(`${path}.currentStock`, "exceeds maximumStock");
     integer(node.regenerationEveryTicks, `${path}.regenerationEveryTicks`, 1);
-    integer(node.regenerationAmount, `${path}.regenerationAmount`);
+    integer(node.regenerationAmount, `${path}.regenerationAmount`, 1);
   }
   assertUnique(ids, "resourceNodes");
   return ids;
@@ -648,6 +660,9 @@ function validateStructures(value: unknown, tileCount: number): number[] {
     integer(structure.progress, `${path}.progress`);
     integer(structure.workRequired, `${path}.workRequired`);
     validateInventory(structure.inventory, `${path}.inventory`);
+    if ((structure.inventory as UnknownRecord).water !== 0) {
+      fail(`${path}.inventory.water`, "must be zero before communal water storage exists");
+    }
     numberArray(structure.guardIds, `${path}.guardIds`, 1);
     nullableInteger(structure.completedTick, `${path}.completedTick`);
   }
@@ -782,6 +797,8 @@ function validateCommands(value: unknown, tileCount: number, stateTick: number):
       "ADD_FOOD",
       "REMOVE_FOOD",
       "TOGGLE_OBSTACLE",
+      "REPLENISH_WATER",
+      "DRAIN_WATER",
     ]);
     integer(command.tileIndex, `${path}.tileIndex`, 0, tileCount - 1);
     const amount = integer(command.amount, `${path}.amount`);
@@ -789,11 +806,14 @@ function validateCommands(value: unknown, tileCount: number, stateTick: number):
     if (type === "TOGGLE_OBSTACLE") {
       if (amount !== 0) fail(`${path}.amount`, "must be zero for an obstacle");
     } else {
-      if (amount < 1) fail(`${path}.amount`, "must be positive for food");
+      if (amount < 1)
+        fail(`${path}.amount`, "must be positive for a resource intervention");
       if (amount > MAX_PLAYER_COMMAND_AMOUNT) {
         fail(`${path}.amount`, `must not exceed ${MAX_PLAYER_COMMAND_AMOUNT.toString()}`);
       }
-      if (command.blocked !== null) fail(`${path}.blocked`, "must be null for food");
+      if (command.blocked !== null) {
+        fail(`${path}.blocked`, "must be null for a resource intervention");
+      }
     }
     if (
       applyAtTick < previousTick ||
@@ -836,8 +856,11 @@ function validateDomainEvents(value: unknown, tileCount: number): number[] {
     integer(event.tick, `${path}.tick`);
     literal(event.type, `${path}.type`, [
       "SIMULATION_STARTED",
+      "HYDRATION_RULES_ENABLED",
       "PLAYER_ADDED_FOOD",
       "PLAYER_REMOVED_FOOD",
+      "PLAYER_REPLENISHED_WATER",
+      "PLAYER_DRAINED_WATER",
       "PLAYER_TOGGLED_OBSTACLE",
       "DESIRE_CHANGED",
       "PLAN_CHANGED",
@@ -845,8 +868,14 @@ function validateDomainEvents(value: unknown, tileCount: number): number[] {
       "ACTION_STARTED",
       "FOOD_GATHERED",
       "MATERIAL_GATHERED",
+      "WATER_GATHERED",
       "FOOD_EATEN",
+      "WATER_DRUNK",
       "FOOD_SHARED",
+      "WATER_SHARED",
+      "WATER_SOURCE_DEPLETED",
+      "SEVERE_THIRST_STARTED",
+      "SEVERE_THIRST_RESOLVED",
       "THEFT_COMMITTED",
       "THEFT_WITNESSED",
       "FOOD_DEPOSITED",
@@ -873,7 +902,7 @@ function validateDomainEvents(value: unknown, tileCount: number): number[] {
       fail(`${path}.locationTileIndex`, "is outside the world");
     }
     if (event.resourceKind !== null) {
-      literal(event.resourceKind, `${path}.resourceKind`, ["FOOD", "MATERIAL"]);
+      literal(event.resourceKind, `${path}.resourceKind`, ["FOOD", "MATERIAL", "WATER"]);
     }
     integer(event.quantity, `${path}.quantity`);
     numberArray(event.causedByEventIds, `${path}.causedByEventIds`, 1);
@@ -893,6 +922,9 @@ function validateDomainEvents(value: unknown, tileCount: number): number[] {
     if (event.commandRejectionReason !== null) {
       literal(event.commandRejectionReason, `${path}.commandRejectionReason`, [
         "OCCUPIED_TILE",
+        "NO_WATER_SOURCE",
+        "SOURCE_FULL",
+        "SOURCE_EMPTY",
       ]);
     }
     string(event.summary, `${path}.summary`, true);
@@ -993,6 +1025,11 @@ function validateMetrics(value: unknown): void {
   const keys = [
     "foodGathered",
     "foodShared",
+    "waterGathered",
+    "waterDrunk",
+    "waterShared",
+    "severeThirstCreatureTicks",
+    "waterGatherContentions",
     "thefts",
     "witnessedThefts",
     "attacks",
@@ -1101,6 +1138,24 @@ export function assertCompatibleSimulationState(
   const { width, height, tileCount } = validateWorld(state.world);
   const creatureIds = validateCreatures(state.creatures, tileCount, width, height);
   const resourceIds = validateResourceNodes(state.resourceNodes, tileCount);
+  const resourceNodes = array(state.resourceNodes, "resourceNodes");
+  const worldTiles = array((state.world as UnknownRecord).tiles, "world.tiles");
+  let waterSourceCount = 0;
+  for (const [index, nodeValue] of resourceNodes.entries()) {
+    const node = nodeValue as UnknownRecord;
+    if (node.kind !== "WATER") continue;
+    waterSourceCount += 1;
+    const tile = worldTiles[node.tileIndex as number] as UnknownRecord | undefined;
+    if (tile?.terrain !== "SHALLOW_WATER") {
+      fail(
+        `resourceNodes[${index.toString()}].tileIndex`,
+        "must reference shallow-water terrain for a water source",
+      );
+    }
+  }
+  if (waterSourceCount === 0) {
+    fail("resourceNodes", "must contain at least one water source");
+  }
   const structureIds = validateStructures(state.structures, tileCount);
   const entityIds = [...creatureIds, ...resourceIds, ...structureIds];
   assertUnique(entityIds, ENTITY_KEYS.join(", "));

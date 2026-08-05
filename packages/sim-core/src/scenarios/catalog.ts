@@ -29,11 +29,13 @@ export const SCENARIO_CATALOG: readonly ScenarioMetadata[] = Object.freeze([
       "Seven creatures begin close together west of the central passage; Taro begins on their edge.",
       "The nearest food patch is small, while a richer patch lies across the passage.",
       "Building material begins between the starting cluster and the passage.",
+      "One finite potable-water source lies in the eastern shallows.",
     ],
     observableTensions: [
       "Sharing and private reserves compete under early food pressure.",
       "A common store can attract contribution, guarding, theft, and conflict.",
       "The central passage controls access to the richer eastern food patch.",
+      "Water trips expose the cost of reaching the eastern bank.",
     ],
   }),
   metadata({
@@ -46,11 +48,13 @@ export const SCENARIO_CATALOG: readonly ScenarioMetadata[] = Object.freeze([
       "Two clusters of four begin on opposite banks of a narrow central passage.",
       "Each bank has moderate food with the same combined starting stock as the reference world.",
       "The only material patch sits inside the passage between the two clusters.",
+      "A slowly renewing potable-water source sits in the passage itself.",
     ],
     observableTensions: [
       "Passage crossings make first contact and route concentration visible.",
       "Separate groups and stores can emerge before cross-bank familiarity grows.",
       "Shared access to material can pull otherwise independent clusters together.",
+      "Water access can turn the passage into a visible bottleneck.",
     ],
   }),
   metadata({
@@ -63,11 +67,13 @@ export const SCENARIO_CATALOG: readonly ScenarioMetadata[] = Object.freeze([
       "Four separated pairs begin around an open world rather than in one cluster.",
       "Abundant food is distributed near every pair.",
       "Building material is central, away from every starting pair.",
+      "Four renewable potable-water sources are distributed through the central shallows.",
     ],
     observableTensions: [
       "Foraging and private-reserve routines can persist without immediate cooperation.",
       "Contact, sharing, group formation, and storage may arrive late or remain absent.",
       "The central material patch creates a later reason for routes to converge.",
+      "Distributed water can keep hydration routes from collapsing onto one corridor.",
     ],
   }),
   metadata({
@@ -79,12 +85,14 @@ export const SCENARIO_CATALOG: readonly ScenarioMetadata[] = Object.freeze([
     startingFacts: [
       "Five comparatively cooperative creatures begin west of the passage.",
       "Taro and two more aggressive creatures begin together on the eastern bank.",
-      "Terrain and resources match the reference world, so social placement carries the contrast.",
+      "Food, material, and terrain match the reference world while water access carries an added contrast.",
+      "The thirstier western starters begin across the passage from two eastern water sources.",
     ],
     observableTensions: [
       "The hungriest and least-social creature begins far from the cooperative cluster.",
       "Cross-bank sharing and join attempts can compete with private reserves and theft.",
       "Witnessing, fear, rivalry, guarding, confrontation, and flight remain attributable to actual events.",
+      "Unequal starting need and access make water assistance and route pressure observable.",
     ],
   }),
 ]);

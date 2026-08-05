@@ -50,6 +50,11 @@ export function createSimulation(
     metrics: {
       foodGathered: 0,
       foodShared: 0,
+      waterGathered: 0,
+      waterDrunk: 0,
+      waterShared: 0,
+      severeThirstCreatureTicks: 0,
+      waterGatherContentions: 0,
       thefts: 0,
       witnessedThefts: 0,
       attacks: 0,

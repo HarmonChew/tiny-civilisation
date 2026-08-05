@@ -1,14 +1,120 @@
 import { describe, expect, it } from "vitest";
 import {
   advanceSimulation,
+  createScenarioReference,
   createSimulation,
+  estimateInteractionTravelIgnoringOccupancy,
   findPath,
+  findWeightedPath,
+  manhattanDistance,
   queuePlayerCommand,
+  TILE_FIXED_UNITS,
   tileCoordinates,
   tileIndexAt,
 } from "../src/index.js";
 
 describe("pathfinding", () => {
+  it("prefers a longer geometric route when its weighted travel cost is lower", () => {
+    const width = 5;
+    const height = 3;
+    const world = {
+      width,
+      height,
+      navigationRevision: 0,
+      tiles: Array.from({ length: width * height }, (_, index) => ({
+        index,
+        x: index % width,
+        y: Math.floor(index / width),
+        terrain: "GROUND" as const,
+        walkCost: index > width && index < width * 2 - 1 ? 30 : 10,
+        blocked: false,
+        navigationRevision: 0,
+      })),
+    };
+
+    const result = findWeightedPath(world, width, width * 2 - 1);
+
+    expect(result?.cost).toBe(60);
+    expect(result?.path).not.toContain(width + 2);
+  });
+
+  it("selects the cheapest weighted water target instead of the Manhattan-nearest source", () => {
+    const state = createSimulation(createScenarioReference("unequal-table", 1));
+    const creature = state.creatures[0];
+    if (!creature) throw new Error("Missing weighted target-selection fixture creature.");
+
+    const originX = 1;
+    const originY = 21;
+    creature.tileIndex = tileIndexAt(state.world, originX, originY);
+    creature.x = originX * TILE_FIXED_UNITS + TILE_FIXED_UNITS / 2;
+    creature.y = originY * TILE_FIXED_UNITS + TILE_FIXED_UNITS / 2;
+    creature.needs.hunger = 0;
+    creature.needs.fatigue = 0;
+    creature.needs.thirst = 9_500;
+    creature.inventory.food = 0;
+    creature.inventory.material = 0;
+    creature.inventory.water = 0;
+    creature.activeDesire = null;
+    creature.activePlan = null;
+    creature.activeGoal = null;
+    creature.activeAction = null;
+    creature.nextDecisionTick = state.tick;
+    for (const other of state.creatures) {
+      if (other.id !== creature.id) other.nextDecisionTick = state.tick + 1_000;
+    }
+
+    const sources = state.resourceNodes.filter((node) => node.kind === "WATER");
+    const byManhattan = [...sources].sort(
+      (left, right) =>
+        manhattanDistance(state.world, creature.tileIndex, left.tileIndex) -
+          manhattanDistance(state.world, creature.tileIndex, right.tileIndex) ||
+        left.id - right.id,
+    );
+    const byWeighted = sources
+      .map((source) => ({
+        source,
+        estimate: estimateInteractionTravelIgnoringOccupancy(
+          state,
+          creature,
+          "GATHER_WATER",
+          source.id,
+          source.tileIndex,
+        ),
+      }))
+      .filter(
+        (
+          candidate,
+        ): candidate is {
+          source: (typeof sources)[number];
+          estimate: NonNullable<typeof candidate.estimate>;
+        } => candidate.estimate !== null,
+      )
+      .sort(
+        (left, right) =>
+          left.estimate.cost - right.estimate.cost || left.source.id - right.source.id,
+      );
+
+    expect(byManhattan[0]?.id).not.toBe(byWeighted[0]?.source.id);
+    expect(byWeighted[0]?.estimate.cost).toBeLessThan(
+      byWeighted[1]?.estimate.cost ?? Number.POSITIVE_INFINITY,
+    );
+
+    advanceSimulation(state, 1);
+
+    const decision = [...state.decisionRecords]
+      .reverse()
+      .find((record) => record.actorId === creature.id);
+    expect(decision).toMatchObject({
+      selectedAction: "GATHER_WATER",
+      selectedTargetId: byWeighted[0]?.source.id,
+    });
+    expect(
+      decision?.candidates
+        .find((candidate) => candidate.targetEntityId === byWeighted[0]?.source.id)
+        ?.factors.find((factor) => factor.key === "weighted travel cost")?.fact,
+    ).toMatchObject({ unit: "MOVE_COST", value: byWeighted[0]?.estimate.cost });
+  });
+
   it("returns a deterministic adjacent walkable route through the chokepoint", () => {
     const state = createSimulation(4_182);
     const start = tileIndexAt(state.world, 10, 7);
@@ -74,6 +180,49 @@ describe("pathfinding", () => {
 });
 
 describe("player command queue", () => {
+  it("replenishes and drains only existing potable sources with actual quantities", () => {
+    const state = createSimulation(42);
+    const source = state.resourceNodes.find((node) => node.kind === "WATER")!;
+    const missingTile = tileIndexAt(state.world, 6, 6);
+    const initialGap = source.maximumStock - source.currentStock;
+    queuePlayerCommand(state, {
+      type: "REPLENISH_WATER",
+      tileIndex: source.tileIndex,
+      amount: 999,
+    });
+    queuePlayerCommand(state, {
+      type: "DRAIN_WATER",
+      tileIndex: missingTile,
+      amount: 4,
+    });
+
+    advanceSimulation(state, 1);
+
+    expect(source.currentStock).toBe(source.maximumStock);
+    const replenish = state.domainEvents.find(
+      (event) => event.type === "PLAYER_REPLENISHED_WATER",
+    );
+    const rejectedDrain = state.domainEvents.find(
+      (event) =>
+        event.type === "PLAYER_DRAINED_WATER" && event.locationTileIndex === missingTile,
+    );
+    expect(replenish).toMatchObject({
+      quantity: initialGap,
+      commandOutcome: "APPLIED",
+      commandRejectionReason: null,
+    });
+    expect(rejectedDrain).toMatchObject({
+      quantity: 0,
+      commandOutcome: "REJECTED",
+      commandRejectionReason: "NO_WATER_SOURCE",
+    });
+    expect(
+      state.resourceNodes.some(
+        (node) => node.kind === "WATER" && node.tileIndex === missingTile,
+      ),
+    ).toBe(false);
+  });
+
   it("applies a command on its exact scheduled tick", () => {
     const state = createSimulation(42);
     const target = tileIndexAt(state.world, 6, 6);

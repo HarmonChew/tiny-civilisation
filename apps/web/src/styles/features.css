@@ -315,12 +315,22 @@ button.timeline-entry__body:hover strong {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
 .tool-group,
 .overlay-group {
   gap: 5px;
+}
+
+.tool-group {
+  flex: 1 1 480px;
+  flex-wrap: wrap;
+}
+
+.overlay-group {
+  flex: 0 0 auto;
 }
 
 .dish-toolbar .icon-button {
@@ -419,6 +429,14 @@ button.timeline-entry__body:hover strong {
   cursor: cell;
 }
 
+.pixi-world--replenish-water {
+  cursor: crosshair;
+}
+
+.pixi-world--drain-water {
+  cursor: cell;
+}
+
 .pixi-world--obstacle {
   cursor: copy;
 }
@@ -506,9 +524,26 @@ button.timeline-entry__body:hover strong {
   background: #c1ad85;
 }
 
+.legend-dot--water {
+  border-radius: 50% 50% 50% 0;
+  background: var(--status-water);
+  transform: rotate(-45deg);
+}
+
 .legend-dot--storage {
   border-radius: 1px;
   background: #e5c77f;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 14px;
+  height: 0;
+  border-top: 2px solid currentColor;
+}
+
+.legend-line--traffic {
+  color: #e3c68b;
 }
 
 .dish-caption {
@@ -649,7 +684,7 @@ button.timeline-entry__body:hover strong {
 
 .vitals-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px;
 }
 

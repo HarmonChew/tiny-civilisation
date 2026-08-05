@@ -19,7 +19,7 @@ export function clampUnit(value: number): number {
 }
 
 export function inventoryTotal(inventory: Inventory): number {
-  return inventory.food + inventory.material;
+  return inventory.food + inventory.material + inventory.water;
 }
 
 export function inventorySpace(inventory: Inventory): number {

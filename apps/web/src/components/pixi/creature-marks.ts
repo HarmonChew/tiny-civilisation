@@ -132,6 +132,17 @@ const drawActionCue = (mark: Graphics, family: CreatureActionFamily): void => {
         .circle(x + 0.11, y, 0.025)
         .fill({ color });
       break;
+    case "drink":
+      mark
+        .moveTo(x, y - 0.14)
+        .lineTo(x + 0.11, y + 0.02)
+        .lineTo(x, y + 0.14)
+        .lineTo(x - 0.11, y + 0.02)
+        .closePath()
+        .stroke(stroke)
+        .circle(x, y + 0.035, 0.025)
+        .fill({ color });
+      break;
     case "build":
       mark
         .rect(x - 0.13, y - 0.1, 0.12, 0.08)
@@ -230,6 +241,16 @@ const drawCarryingCues = (mark: Graphics, creature: CreatureView): void => {
       .lineTo(0.41, -0.1)
       .closePath()
       .fill({ color: PALETTE.material })
+      .stroke({ color: PALETTE.ink, width: 0.04 });
+  }
+  if (carried.water > 0) {
+    mark
+      .moveTo(0.5, 0.03)
+      .lineTo(0.6, 0.18)
+      .lineTo(0.5, 0.3)
+      .lineTo(0.4, 0.18)
+      .closePath()
+      .fill({ color: PALETTE.water })
       .stroke({ color: PALETTE.ink, width: 0.04 });
   }
 };

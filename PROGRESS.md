@@ -1,14 +1,16 @@
 # Tiny Civilisation — Progress and Expansion Plan
 
-Last updated: 4 August 2026
+Last updated: 5 August 2026
 
 ## Current position
 
-Phase 0 (baseline protection), Phase 1 (behavior-preserving architecture), Phase 2 (the repeatable experiment loop), and the Phase 2.5 feature architecture are implemented. The deterministic simulation is divided into focused systems behind typed, versioned contracts; the browser delegates authoritative work to a Web Worker; and players can preserve, reconstruct, compare, and explain controlled interventions.
+Phase 0 (baseline protection), Phase 1 (behavior-preserving architecture), Phase 2 (the repeatable experiment loop), and Phase 2.5 (readability and spatial behavior) are implemented. The deterministic simulation is divided into focused systems behind typed, versioned contracts; the browser delegates authoritative work to a Web Worker; and players can preserve, reconstruct, compare, and explain controlled interventions.
 
 Phase 3 feature implementation is now present. Four structurally distinct scenarios compile from an immutable core catalog; their complete identity survives state, Worker operations, saves, replays, experiments, imports, moment replay, and headless analysis. The browser separates scenario choice from seed choice and exposes factual starting conditions, while the headless matrix measures structural, social, spatial, desire, action, milestone, concentration, outcome-label, and convergence differences across locked seed corpora.
 
-Release evidence is not complete. Full 64-seed calibration and untouched 64-seed holdout artifacts must replace provisional outcome-band status; NVDA or VoiceOver, Firefox, WebKit, and the planned formative/confirmatory usability sessions also remain manual gates. Phase 4 systems remain deferred until those results are reviewed.
+Phase 3 release evidence is not complete. Its historical 64-seed calibration and untouched 64-seed holdout from immutable commit `4ff604e` now pass the automated hard, frozen-label, and macro-difference gates without behavior tuning; deterministic compressed artifacts and checksums are attached to the [Phase 3 release-evidence ledger](docs/baselines/phase-3-release-status-v1.md). The aggregate release suite passes all 12 stories across Chromium, Firefox, and WebKit. The NVDA pass and planned formative/confirmatory usability sessions remain open release gates.
+
+Phase 4.1 water and mobility engineering and automated simulation evidence are complete. The eight-creature, 48×32 scenario set now includes finite renewable potable-water sources, thirst and nonlethal dehydration, shared carrying capacity, gathering/drinking/sharing behavior, weighted travel decisions, observational traffic trails, water interventions, factual response traces, migration, headless hydration evidence, and accessible browser projections. The discovery [review](docs/baselines/phase-4.1-calibration-review-v1.md) froze classifier v2 and the selected bands; the unchanged [frozen calibration](docs/baselines/phase-4.1-calibration-v2.md) and [untouched holdout](docs/baselines/phase-4.1-holdout-v2.md) each pass their automated hard, contract, outcome-incidence, dominance-rationale, and paired macro-difference gates. The aggregate release suite passes all 12 stories across Chromium, Firefox, and WebKit. Manual NVDA and fresh usability evidence remain open in the [Phase 4.1 release ledger](docs/baselines/phase-4.1-release-status-v1.md), so the slice is not release-complete.
 
 ### Verification coverage
 
@@ -25,19 +27,16 @@ Release evidence is not complete. Full 64-seed calibration and untouched 64-seed
 - Desire, plan, action, interaction-slot, and event-focus changes will intentionally affect authoritative behavior. They require explicit behavior-version decisions, reviewed golden-corpus updates, migrations where state shapes change, and deterministic replay coverage.
 - Worker execution keeps authoritative work off the UI thread, but projection size, message volume, replay time, population, world size, and rendering budgets still need representative targets.
 - Pixi rendering has real browser coverage, but its camera and layer modules remain costly to unit-test in jsdom; screenshot and real-browser interaction gates remain necessary.
-- A live browser review emitted repeated React maximum-update-depth errors. Isolate and fix the loop before adding more reactive world and inspector state.
+- Continue checking the richer reactive world and inspector state for render-loop regressions; the previously observed maximum-update-depth failure is covered by the current browser workflow and has not recurred in the Phase 4.1 implementation review.
 - Browser persistence currently centers on one active local save. A named experiment library, cross-device sync, and long-term archival policy remain later product decisions.
 
 ### Main product risks
 
-- The dish does not currently communicate the simulation at a glance. Characters are small marks, overlapping creatures collapse into one visual position, and important motives are legible mainly after selection.
-- The current goal projection repeats an action kind such as `KEEP` or `GUARD`. It does not distinguish a longer-lived desire, the plan chosen to pursue it, the action being performed, and the reason that action matters now.
-- A focused audit of seeds 4182, 921, and 23 at 2,000 ticks found all eight creatures on one tile by tick 50 and only one or two occupied creature tiles at tick 2,000. `KEEP` accounted for approximately 76% of completed actions across those runs.
-- Seed 4182 is tuned to demonstrate the complete social-storage-theft-conflict story. In the reference run, the first group forms around five simulated seconds, storage completes around sixteen seconds, and theft appears around forty-seven seconds. At higher playback speeds, the complete arc can pass before the player recognises its participants or stakes.
-- In an audit of seeds 1–20 at 10,000 ticks, every run formed exactly one group and completed one storage. Conflict varied, but the macro outcome did not.
-- The current scenario choices are seed-led presets over the same world contract. Structural scenario variation remains necessary, but different maps alone will not solve character, intention, overlap, or pacing problems.
-- The chronicle records important outcomes, while routine intention changes and developing tensions are easy to miss. The causal explorer is powerful after an event but too detailed to serve as the first explanation of a live moment.
-- The canvas supports keyboard panning and zooming, but it lacks an equivalent keyboard-accessible way to browse creatures and world objects.
+- The frozen calibration and untouched holdout both pass the selected scenario and macro bands. They also confirm that source pressure and dehydration exposure differ materially by scenario; these are descriptive corpus observations, not scripted outcomes or causal claims.
+- Several version-2 labels were absent throughout discovery, including concentrated water routes and fragmented social structure. The product must not imply that the available label vocabulary guarantees every kind of outcome.
+- Hydration information is available through source marks, stock/depletion treatments, route trails, roster and inspector facts, the semantic navigator, moments, and response traces. Whether unfamiliar players can combine those cues into an accurate explanation remains a human usability question.
+- Automated keyboard, forced-color, zoom, touch, and accessibility checks do not establish screen-reader usability. Focus restoration, announcements, world-object navigation, and evidence traversal still require the recorded NVDA pass.
+- The deterministic, golden, coverage, visual, payload, bundle, uncontended four-scenario throughput, and aggregate 12/12 Chromium/Firefox/WebKit release gates pass.
 
 ## Product principles
 
@@ -158,7 +157,7 @@ The delivered browser workflow opens paused at tick 0, records accepted and reje
 
 ### Phase 2.5 — Make the civilisation readable and dramatic
 
-Status: **Next milestone.**
+Status: **Feature implementation complete.** Its comprehension evidence is carried forward into the Phase 3 and Phase 4 release ledgers.
 
 Goal: make the existing eight-creature world understandable and compelling to watch before adding scenario breadth or new systemic nouns.
 
@@ -272,7 +271,7 @@ Phase 2.5 is complete when:
 
 ### Phase 3 — Increase variation with readable mechanics
 
-Status: **Feature implementation present; release evidence pending.**
+Status: **Feature implementation and historical automated corpus gates complete; release evidence pending.**
 
 Goal: broaden emergence while preserving the comprehension, pacing, and spatial-legibility standards established in Phase 2.5.
 
@@ -286,9 +285,9 @@ The dependency order, authoritative scenario contract, initial four-scenario mat
 - Identify actions, desires, locations, traits, and relationships that are unreachable, dominant, repetitive, irrelevant, or convergent across seed batches.
 - Verify that different outcomes are visible through behavior and world state, not only distinguishable in end-of-run metrics.
 
-Implemented automated evidence includes canonical and repeated long-run determinism for all four scenarios, structural and reachability validation, identity-strict save/replay/experiment/runtime paths, legacy migration and atomic rejection, a versioned activity schema, locked matrix commands, multi-label factual classifiers, Wilson intervals, paired descriptive effects, convergence diagnostics, browser identity flows, and payload/save/throughput budgets. The [portable 32-run smoke](docs/baselines/phase-3-smoke-v1.md) repeats every case exactly and passes all inherited hard invariants and contract safety bands.
+Implemented automated evidence includes canonical and repeated long-run determinism for all four scenarios, structural and reachability validation, identity-strict save/replay/experiment/runtime paths, legacy migration and atomic rejection, a versioned activity schema, locked matrix commands, multi-label factual classifiers, Wilson intervals, paired descriptive effects, convergence diagnostics, browser identity flows, and payload/save/throughput budgets. The [portable 32-run smoke](docs/baselines/phase-3-smoke-v1.md) repeats every case exactly and passes all inherited hard invariants and contract safety bands. The historical [calibration](docs/baselines/phase-3-calibration-v1.md) and untouched [holdout](docs/baselines/phase-3-holdout-v1.md) each cover four scenarios × 64 seeds × 10,000 ticks and pass the frozen hard, label, and macro gates; the [pre-holdout review](docs/baselines/phase-3-calibration-review-v1.md) records the classifier and expectations.
 
-Still pending are reviewed scenario-specific outcome bands from the full calibration corpus, verification against the untouched holdout corpus, Firefox/WebKit release runs, manual assistive-technology evidence, and the two usability rounds. Until those artifacts exist, Phase 3 does not claim its statistical or comprehension completion gates.
+Still pending are the manual NVDA evidence and the formative and confirmatory usability rounds. The automated historical statistical corpus and current aggregate three-browser gates pass, but Phase 3 does not claim release completion or human comprehension success until those remaining artifacts exist.
 
 The variation phase is complete when:
 
@@ -300,11 +299,14 @@ The variation phase is complete when:
 
 ### Phase 4 — Add systemic depth vertically
 
+Status: **Phase 4.1 engineering and automated simulation evidence complete; human release evidence pending.**
+
 Goal: add one complete causal and visible system at a time.
 
-Recommended order:
+Phase 4.1 implements water and mobility: authoritative thirst, finite renewable sources, gathering, drinking, sharing, weighted deterministic A* target selection, factual movement-cost reasons, observational recent-route trails, water interventions and response traces, accessible source/access projections, migration, and hydration evidence. Its normative contract is recorded in [`docs/phase-4.1-contract.md`](docs/phase-4.1-contract.md). The [frozen calibration](docs/baselines/phase-4.1-calibration-v2.md), [untouched holdout](docs/baselines/phase-4.1-holdout-v2.md), and aggregate 12/12 Chromium/Firefox/WebKit release suite pass; the [release ledger](docs/baselines/phase-4.1-release-status-v1.md) keeps those automated results separate from pending human validation.
 
-- **Water and mobility:** thirst, gathering, carrying, sharing, spatial competition, route formation, and wet or dry scenarios. Water is first because it can create visible movement and settlement pressure using the Phase 2.5 spatial and intention grammar.
+Remaining order:
+
 - **Shelter and settlement:** fatigue recovery, communal construction, maintenance, occupancy, and settlement choice.
 - **Lifecycle:** ageing, death, birth, lineage, mourning, inheritance, and population stability.
 - **Collective difference:** group norms, culture, territory, migration, trade, and diplomacy.
@@ -354,16 +356,9 @@ The project is ready for broad feature expansion when:
 
 ## Recommended next work
 
-Phase 2 is complete. Implement Phase 2.5 in this dependency order:
+Finish the existing release gates before expanding the model further:
 
-1. Fix the observed maximum-update-depth error and add the action, spatial, overlap, movement, interaction, event-cadence, and comprehension baselines.
-2. Define and version the desire → plan → action → reason contract, including serialization, projection, causal facts, migration, and deterministic tests.
-3. Implement deterministic interaction positions, crowding-aware targeting, and distinct spatial footprints for resources, storage, construction, guarding, sharing, rest, and conflict.
-4. Tune `KEEP`, `GUARD`, and other stationary behavior from the new activity measures so the reference world produces visible movement and differentiated routines.
-5. Build the shared creature focus model, eight-character roster, scalable character marks, world-object treatments, selected-character route, and concise desire/action/reason presentation.
-6. Add speed-aware moment cues, optional slow-down or pause, intermediate construction and conflict beats, event clustering, and deterministic moment replay.
-7. Rework the inspector and causal explorer around progressive factual summaries, with complete numeric evidence available on demand and retention gaps handled explicitly.
-8. Add intervention previews, visible response tracing, keyboard and textual world navigation, reduced-motion behavior, and responsive input parity.
-9. Run short usability sessions, address observed comprehension failures, lock Phase 2.5 product gates, and only then begin the structural scenario matrix in Phase 3.
-
-Phase 2.5 should finish with one eight-creature civilisation that is worth watching before it is worth scaling. Its characters should be recognisable, their intentions understandable, their movement and work spatially readable, and every concise explanation grounded in deterministic evidence.
+1. Preserve the passing frozen Phase 3 and Phase 4.1 calibration and untouched-holdout artifacts and checksums.
+2. Complete the manual NVDA workflow and the specified unfamiliar-participant usability rounds; fix blocking and high-severity findings and repeat affected automated evidence.
+3. Publish the final release ledgers while keeping automated evidence separate from human comprehension claims.
+4. Begin Phase 4.2 shelter and settlement only after Phase 4.1 independently satisfies its accessibility and usability gates and is marked release-complete.

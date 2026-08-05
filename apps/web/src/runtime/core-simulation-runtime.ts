@@ -158,6 +158,8 @@ function playerCommandFromScheduled(command: ScheduledPlayerCommand): PlayerComm
         amount: command.amount,
       };
     case "REMOVE_FOOD":
+    case "REPLENISH_WATER":
+    case "DRAIN_WATER":
       return {
         type: command.type,
         applyAtTick: command.applyAtTick,
@@ -521,6 +523,7 @@ export class CoreSimulationRuntime implements SimulationRuntime {
     };
 
     let cancelled = false;
+    let executionRevisionAdvanced = false;
     try {
       if (captureTicks?.[captureIndex] === state.tick) {
         capturedFrames.push(this.makeFrame());
@@ -539,8 +542,13 @@ export class CoreSimulationRuntime implements SimulationRuntime {
           nextCaptureTick - state.tick,
         );
         this.verifiedCanonicalHash = null;
+        if (!executionRevisionAdvanced) {
+          // A run-to-tick/replay is one logical mutation. Internal yield chunks
+          // must not make protocol revisions depend on chunk size.
+          this.revision += 1;
+          executionRevisionAdvanced = true;
+        }
         advanceSimulation(state, count);
-        this.revision += 1;
         if (captureTicks?.[captureIndex] === state.tick) {
           capturedFrames.push(this.makeFrame());
           captureIndex += 1;

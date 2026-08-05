@@ -9,7 +9,7 @@ export type FixedPosition = number;
 export const TILE_FIXED_UNITS = 256;
 
 export type TerrainKind = "GROUND" | "SHALLOW_WATER" | "ROCK";
-export type ResourceKind = "FOOD" | "MATERIAL";
+export type ResourceKind = "FOOD" | "MATERIAL" | "WATER";
 export type InventoryKind = ResourceKind;
 
 export interface TileState {
@@ -33,11 +33,13 @@ export interface Inventory {
   capacity: number;
   food: number;
   material: number;
+  water: number;
 }
 
 export interface CreatureNeeds {
   hunger: Unit;
   fatigue: Unit;
+  thirst: Unit;
 }
 
 export interface CreatureTraits {
@@ -56,9 +58,12 @@ export type ActionKind =
   | "EXPLORE"
   | "GATHER_FOOD"
   | "GATHER_MATERIAL"
+  | "GATHER_WATER"
   | "EAT"
+  | "DRINK"
   | "REST"
   | "SHARE"
+  | "SHARE_WATER"
   | "KEEP"
   | "STEAL"
   | "DEPOSIT"
@@ -73,6 +78,7 @@ export type ActionPhase = "MOVING" | "WORKING";
 
 export type DesireKind =
   | "RELIEVE_HUNGER"
+  | "RELIEVE_THIRST"
   | "RECOVER_ENERGY"
   | "SECURE_PROVISIONS"
   | "PRESERVE_PRIVATE_RESERVE"
@@ -84,11 +90,14 @@ export type DesireKind =
 
 export type PlanKind =
   | "EAT_CARRIED_FOOD"
+  | "DRINK_CARRIED_WATER"
   | "FORAGE_FOR_FOOD"
+  | "FETCH_WATER"
   | "WITHDRAW_SHARED_FOOD"
   | "REST_SAFELY"
   | "BUILD_PRIVATE_RESERVE"
   | "SHARE_WITH_OTHER"
+  | "SHARE_WATER_WITH_OTHER"
   | "CONTRIBUTE_TO_STORAGE"
   | "JOIN_COMMUNITY"
   | "GUARD_SHARED_ASSET"
@@ -119,7 +128,7 @@ export interface ReasonFact {
   key: string;
   label: string;
   value: number | string | null;
-  unit: "UNIT" | "COUNT" | "TILES" | "TICKS" | "LABEL" | null;
+  unit: "UNIT" | "COUNT" | "TILES" | "TICKS" | "MOVE_COST" | "LABEL" | null;
   sourceEntityId: EntityId | null;
   sourceEventIds: number[];
   capturedAtTick: Tick;
@@ -363,8 +372,11 @@ export interface RelationshipEdge {
 
 export type DomainEventType =
   | "SIMULATION_STARTED"
+  | "HYDRATION_RULES_ENABLED"
   | "PLAYER_ADDED_FOOD"
   | "PLAYER_REMOVED_FOOD"
+  | "PLAYER_REPLENISHED_WATER"
+  | "PLAYER_DRAINED_WATER"
   | "PLAYER_TOGGLED_OBSTACLE"
   | "DESIRE_CHANGED"
   | "PLAN_CHANGED"
@@ -372,8 +384,14 @@ export type DomainEventType =
   | "ACTION_STARTED"
   | "FOOD_GATHERED"
   | "MATERIAL_GATHERED"
+  | "WATER_GATHERED"
   | "FOOD_EATEN"
+  | "WATER_DRUNK"
   | "FOOD_SHARED"
+  | "WATER_SHARED"
+  | "WATER_SOURCE_DEPLETED"
+  | "SEVERE_THIRST_STARTED"
+  | "SEVERE_THIRST_RESOLVED"
   | "THEFT_COMMITTED"
   | "THEFT_WITNESSED"
   | "FOOD_DEPOSITED"
@@ -396,7 +414,8 @@ export type AttentionTier = "ROUTINE" | "NOTABLE" | "SIGNIFICANT" | "CRITICAL";
 
 export type CommandOutcomeCode = "APPLIED" | "REJECTED";
 
-export type CommandRejectionReason = "OCCUPIED_TILE" | null;
+export type CommandRejectionReason =
+  "OCCUPIED_TILE" | "NO_WATER_SOURCE" | "SOURCE_FULL" | "SOURCE_EMPTY" | null;
 
 export interface DomainEvent {
   id: number;
@@ -443,6 +462,11 @@ export interface HistoricalEvent {
 export interface SimulationMetrics {
   foodGathered: number;
   foodShared: number;
+  waterGathered: number;
+  waterDrunk: number;
+  waterShared: number;
+  severeThirstCreatureTicks: number;
+  waterGatherContentions: number;
   thefts: number;
   witnessedThefts: number;
   attacks: number;
@@ -527,7 +551,30 @@ export interface ToggleObstacleCommand {
   blocked?: boolean;
 }
 
-export type PlayerCommand = AddFoodCommand | RemoveFoodCommand | ToggleObstacleCommand;
+export interface ReplenishWaterCommand {
+  type: "REPLENISH_WATER";
+  applyAtTick?: Tick;
+  tileIndex?: number;
+  x?: number;
+  y?: number;
+  amount?: number;
+}
+
+export interface DrainWaterCommand {
+  type: "DRAIN_WATER";
+  applyAtTick?: Tick;
+  tileIndex?: number;
+  x?: number;
+  y?: number;
+  amount?: number;
+}
+
+export type PlayerCommand =
+  | AddFoodCommand
+  | RemoveFoodCommand
+  | ToggleObstacleCommand
+  | ReplenishWaterCommand
+  | DrainWaterCommand;
 
 export const MAX_PLAYER_COMMAND_AMOUNT = 999;
 
@@ -559,6 +606,7 @@ export interface RenderCreature {
   health: Unit;
   hunger: Unit;
   fatigue: Unit;
+  thirst: Unit;
   groupId: GroupId | null;
   role: CreatureRole;
   traits: CreatureTraits;
@@ -571,11 +619,23 @@ export interface RenderCreature {
   targetTileIndex: number | null;
   destinationX: number | null;
   destinationY: number | null;
+  waterAccess: RenderCreatureWaterAccess | null;
   recentRoute: Array<{ tick: Tick; x: number; y: number }>;
   summary: CreatureObservationSummary;
   latestDecision: DecisionRecord | null;
   memories: EpisodicMemory[];
   relationships: RelationshipEdge[];
+}
+
+export interface RenderCreatureWaterAccess {
+  sourceId: EntityId;
+  sourceStock: number;
+  sourceCapacity: number;
+  weightedCost: number;
+  reachableSources: number;
+  totalSources: number;
+  interactionCapacity: number;
+  claimedInteractionSlots: number;
 }
 
 export interface RenderResourceNode {
@@ -584,6 +644,16 @@ export interface RenderResourceNode {
   tileIndex: number;
   currentStock: number;
   maximumStock: number;
+  waterAccess: RenderWaterSourceAccess | null;
+}
+
+export interface RenderWaterSourceAccess {
+  interactionCapacity: number;
+  claimedInteractionSlots: number;
+  reachableCreatures: number;
+  livingCreatures: number;
+  nearestWeightedCost: number | null;
+  meanWeightedCost: number | null;
 }
 
 export interface RenderStructure {
@@ -594,6 +664,7 @@ export interface RenderStructure {
   progress: Unit;
   food: number;
   material: number;
+  water: number;
   guardIds: EntityId[];
 }
 

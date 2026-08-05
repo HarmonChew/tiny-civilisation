@@ -34,6 +34,43 @@ export function manhattanDistance(
   return Math.abs(pointA.x - pointB.x) + Math.abs(pointA.y - pointB.y);
 }
 
+/**
+ * Returns the authoritative weighted cost of a path. The starting tile is not
+ * charged; every entered tile contributes its walk cost. Invalid, empty, or
+ * discontinuous paths return null so callers cannot accidentally score an
+ * unreachable route as free.
+ */
+export function pathTravelCost(world: WorldState, path: readonly number[]): number | null {
+  if (path.length === 0) return null;
+  let cost = 0;
+  for (let index = 0; index < path.length; index += 1) {
+    const tileIndex = path[index]!;
+    const tile = world.tiles[tileIndex];
+    if (!tile || tile.blocked) return null;
+    if (index === 0) continue;
+    const previous = path[index - 1]!;
+    if (manhattanDistance(world, previous, tileIndex) !== 1) return null;
+    cost += tile.walkCost;
+  }
+  return cost;
+}
+
+export interface WeightedPath {
+  readonly path: number[];
+  readonly cost: number;
+}
+
+/** Finds a deterministic path together with the same weighted cost A* used. */
+export function findWeightedPath(
+  world: WorldState,
+  startTileIndex: number,
+  goalTileIndex: number,
+): WeightedPath | null {
+  const path = findPath(world, startTileIndex, goalTileIndex);
+  const cost = pathTravelCost(world, path);
+  return cost === null ? null : { path, cost };
+}
+
 function neighbours(world: WorldState, index: number): number[] {
   const { x, y } = tileCoordinates(world, index);
   const result: number[] = [];
@@ -55,6 +92,98 @@ function neighbours(world: WorldState, index: number): number[] {
     }
   }
   return result;
+}
+
+export const UNREACHABLE_TRAVEL_COST = 0x3fffffff;
+
+interface CostHeapEntry {
+  readonly tileIndex: number;
+  readonly cost: number;
+}
+
+function pushCostHeap(heap: CostHeapEntry[], entry: CostHeapEntry): void {
+  heap.push(entry);
+  let index = heap.length - 1;
+  while (index > 0) {
+    const parent = Math.floor((index - 1) / 2);
+    const parentEntry = heap[parent]!;
+    if (
+      parentEntry.cost < entry.cost ||
+      (parentEntry.cost === entry.cost && parentEntry.tileIndex <= entry.tileIndex)
+    ) {
+      break;
+    }
+    heap[index] = parentEntry;
+    index = parent;
+  }
+  heap[index] = entry;
+}
+
+function popCostHeap(heap: CostHeapEntry[]): CostHeapEntry | null {
+  const first = heap[0];
+  const last = heap.pop();
+  if (!first || !last || heap.length === 0) return first ?? null;
+  let index = 0;
+  while (true) {
+    const left = index * 2 + 1;
+    const right = left + 1;
+    if (left >= heap.length) break;
+    let child = left;
+    const leftEntry = heap[left]!;
+    const rightEntry = heap[right];
+    if (
+      rightEntry &&
+      (rightEntry.cost < leftEntry.cost ||
+        (rightEntry.cost === leftEntry.cost && rightEntry.tileIndex < leftEntry.tileIndex))
+    ) {
+      child = right;
+    }
+    const childEntry = heap[child]!;
+    if (
+      last.cost < childEntry.cost ||
+      (last.cost === childEntry.cost && last.tileIndex <= childEntry.tileIndex)
+    ) {
+      break;
+    }
+    heap[index] = childEntry;
+    index = child;
+  }
+  heap[index] = last;
+  return first;
+}
+
+/**
+ * Computes deterministic weighted costs from one tile to the whole world.
+ * Unreachable destinations contain `null`; the start tile costs zero.
+ */
+export function weightedTravelCostsFrom(
+  world: WorldState,
+  startTileIndex: number,
+): Int32Array {
+  const tileCount = world.width * world.height;
+  const costs = new Int32Array(tileCount);
+  costs.fill(UNREACHABLE_TRAVEL_COST);
+  if (
+    startTileIndex < 0 ||
+    startTileIndex >= tileCount ||
+    world.tiles[startTileIndex]?.blocked
+  ) {
+    return costs;
+  }
+  costs[startTileIndex] = 0;
+  const heap: CostHeapEntry[] = [];
+  pushCostHeap(heap, { tileIndex: startTileIndex, cost: 0 });
+  while (heap.length > 0) {
+    const current = popCostHeap(heap)!;
+    if (current.cost !== costs[current.tileIndex]) continue;
+    for (const neighbour of neighbours(world, current.tileIndex)) {
+      const nextCost = current.cost + (world.tiles[neighbour]?.walkCost ?? 10);
+      if (nextCost >= costs[neighbour]!) continue;
+      costs[neighbour] = nextCost;
+      pushCostHeap(heap, { tileIndex: neighbour, cost: nextCost });
+    }
+  }
+  return costs;
 }
 
 /**

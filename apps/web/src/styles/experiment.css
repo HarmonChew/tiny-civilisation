@@ -1112,6 +1112,13 @@
   font-size: 8.5px;
 }
 
+.comparison-interpretation {
+  margin: -5px 0 12px;
+  color: var(--text-muted);
+  font-size: 8.5px;
+  line-height: 1.45;
+}
+
 .comparison-table-wrap {
   max-width: 100%;
   overflow-x: auto;
@@ -1172,21 +1179,16 @@
   font-weight: 400;
 }
 
-.comparison-delta span {
+.comparison-delta {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.comparison-delta__sign {
+  display: inline-block;
+  min-width: 0.8em;
   margin-right: 3px;
   font-weight: 900;
-}
-
-.comparison-delta--positive {
-  color: #3f5538;
-}
-
-.comparison-delta--negative {
-  color: #884638;
-}
-
-.comparison-delta--neutral {
-  color: var(--text-secondary);
 }
 
 .causal-breadcrumbs {
