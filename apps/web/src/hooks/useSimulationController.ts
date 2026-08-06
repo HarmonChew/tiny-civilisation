@@ -21,7 +21,6 @@ import {
 import type { InterventionTool, TileView, WorldView } from "../model";
 import { DEFAULT_SCENARIO_VIEW } from "../experiment/scenario-presets";
 import {
-  createSimulationEngine,
   type InterventionAcknowledgement,
   type LongRunningOperationOptions,
   type ReplayResult,
@@ -36,6 +35,7 @@ import {
   type SimulationFrame,
   type SimulationCreation,
 } from "../runtime";
+import { createBrowserSimulationEngine } from "../runtime/browser-simulation-engine";
 import { makeWorldViewFromSnapshot, ticksPerSecond } from "../sim-adapter";
 
 export type SimulationSpeed = 1 | 2 | 4;
@@ -120,7 +120,7 @@ export function useSimulationController(
   initialScenario: SimulationCreation = 4_182,
 ): SimulationController {
   const engineRef = useRef<SimulationEngine | null>(null);
-  if (!engineRef.current) engineRef.current = createSimulationEngine();
+  if (!engineRef.current) engineRef.current = createBrowserSimulationEngine();
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const retainedTilesRef = useRef<readonly TileView[]>([]);
@@ -194,7 +194,7 @@ export function useSimulationController(
 
   useEffect(() => {
     mountedRef.current = true;
-    const engine = engineRef.current ?? createSimulationEngine();
+    const engine = engineRef.current ?? createBrowserSimulationEngine();
     engineRef.current = engine;
     subscribeToEngine(engine);
     void engine
@@ -292,7 +292,7 @@ export function useSimulationController(
         unsubscribeRef.current?.();
         unsubscribeRef.current = null;
         engine?.dispose();
-        engine = createSimulationEngine();
+        engine = createBrowserSimulationEngine();
         engineRef.current = engine;
         advanceInFlightRef.current = false;
         subscribeToEngine(engine);
@@ -332,6 +332,12 @@ export function useSimulationController(
           break;
         case "remove-food":
           command = { ...common, type: "REMOVE_FOOD", amount };
+          break;
+        case "add-material":
+          command = { ...common, type: "ADD_MATERIAL", amount };
+          break;
+        case "remove-material":
+          command = { ...common, type: "REMOVE_MATERIAL", amount };
           break;
         case "replenish-water":
           command = { ...common, type: "REPLENISH_WATER", amount };
@@ -376,9 +382,13 @@ export function useSimulationController(
               ? "Food addition"
               : tool === "remove-food"
                 ? "Food removal"
-                : tool === "replenish-water"
-                  ? "Water replenishment"
-                  : "Water drainage";
+                : tool === "add-material"
+                  ? "Material addition"
+                  : tool === "remove-material"
+                    ? "Material removal"
+                    : tool === "replenish-water"
+                      ? "Water replenishment"
+                      : "Water drainage";
           setFeedback(
             `${changeLabel} of ${scheduled.amount} units scheduled at ${x}, ${y} for tick ${scheduled.applyAtTick}.`,
           );

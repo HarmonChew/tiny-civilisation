@@ -1,7 +1,25 @@
 import { addHistory, emitDomainEvent } from "../events.js";
+import { isCanonicalShelteredRestClaim } from "../interaction-slots.js";
 import { findPath, manhattanDistance } from "../pathfinding.js";
 import { planCompletedAfterAction, recordPlanTransition } from "../plans.js";
 import { keyedRandomU32, keyedRandomUnit } from "../rng.js";
+import {
+  OUTDOOR_REST_RECOVERY,
+  SHELTER_BASE_CAPACITY,
+  SHELTER_MATERIAL_REQUIRED,
+  SHELTER_MINIMUM_COMMITMENT_TICKS,
+  SHELTER_RELOCATION_MINIMUM_IMPROVEMENT,
+  SHELTER_RELOCATION_REQUIRED_EVALUATIONS,
+  SHELTER_WORK_REQUIRED,
+  assessShelterSite,
+  isLegalShelterSite,
+  isShelterStructure,
+  nearestLegalStructurePlacementTile,
+  rankShelterSites,
+  shelterConditionBand,
+  shelterEligibility,
+  shelteredRestRecovery,
+} from "../shelters.js";
 import {
   addMemory,
   changeRelationship,
@@ -24,6 +42,7 @@ import type {
   ResourceKind,
   SimulationState,
   StructureState,
+  ShelterStructureState,
 } from "../types.js";
 import { getActionDuration } from "./registry.js";
 import {
@@ -180,6 +199,20 @@ export function executeActiveActions(state: SimulationState): void {
   for (const creature of ordered) {
     const action = creature.activeAction;
     if (!creature.alive || !action) {
+      continue;
+    }
+    if (
+      action.kind === "REST_SHELTERED" &&
+      !isCanonicalShelteredRestClaim(state, creature, action)
+    ) {
+      state.metrics.shelterDeniedClaims += 1;
+      creature.activeAction = null;
+      creature.activeGoal = null;
+      if (creature.activePlan) {
+        creature.activePlan.interactionClaim = null;
+        recordPlanTransition(state, creature, "BLOCKED");
+      }
+      creature.nextDecisionTick = Math.min(creature.nextDecisionTick, state.tick + 1);
       continue;
     }
     if (!refreshMovingTarget(state, creature, action)) {
@@ -555,15 +588,21 @@ function stealFood(
   witnessTheft(state, creature, event, targetGroupId);
 }
 
-function ensureStorageSite(state: SimulationState, group: GroupState): StructureState {
+function ensureStorageSite(
+  state: SimulationState,
+  group: GroupState,
+): StructureState | null {
   const existing = groupStorage(state, group.id);
   if (existing) {
     return existing;
   }
+  const tileIndex = nearestLegalStructurePlacementTile(state, group.homeTileIndex);
+  if (tileIndex === null) return null;
+  group.homeTileIndex = tileIndex;
   const site: StructureState = {
     id: state.nextEntityId++,
     kind: "STORAGE_SITE",
-    tileIndex: group.homeTileIndex,
+    tileIndex,
     groupId: group.id,
     material: 0,
     materialRequired: 12,
@@ -592,13 +631,328 @@ function ensureStorageSite(state: SimulationState, group: GroupState): Structure
   return site;
 }
 
+function shelterAnchorTile(action: ActiveAction): number | null {
+  const anchorId = action.interactionClaim?.anchorId;
+  return typeof anchorId === "number" && anchorId < 0 ? -anchorId - 1 : null;
+}
+
+function establishShelterSite(
+  state: SimulationState,
+  creature: CreatureState,
+  action: ActiveAction,
+): void {
+  const group = creature.groupId === null ? null : getGroup(state, creature.groupId);
+  const tileIndex = shelterAnchorTile(action);
+  if (
+    !group ||
+    group.stage !== "PERSISTENT" ||
+    group.leaderId !== creature.id ||
+    group.pendingShelterId !== null ||
+    (group.activeShelterId !== null && group.shelterRelocations >= 1) ||
+    tileIndex === null ||
+    !isLegalShelterSite(state, tileIndex)
+  ) {
+    return;
+  }
+  const completedStore =
+    group.storageStructureId === null
+      ? null
+      : getStructure(state, group.storageStructureId);
+  if (!completedStore || completedStore.kind !== "STORAGE") return;
+  const existing =
+    group.activeShelterId === null ? null : getStructure(state, group.activeShelterId);
+  let selectedAssessment = assessShelterSite(state, group, tileIndex, false);
+  if (isShelterStructure(existing) && existing.kind === "SHELTER") {
+    const candidate = group.shelterRelocationCandidate;
+    const rankedCandidate = rankShelterSites(state, group, true).find(
+      (ranked) => ranked.tileIndex === tileIndex,
+    );
+    const currentAssessment = assessShelterSite(state, group, existing.tileIndex, false);
+    const currentImprovement =
+      rankedCandidate === undefined
+        ? Number.NEGATIVE_INFINITY
+        : currentAssessment.totalScore - rankedCandidate.assessment.totalScore;
+    if (
+      state.tick < group.shelterCommitUntilTick ||
+      candidate?.tileIndex !== tileIndex ||
+      candidate.firstSeenTick > candidate.lastEvaluatedTick ||
+      candidate.lastEvaluatedTick > state.tick ||
+      state.tick - candidate.lastEvaluatedTick > 50 ||
+      candidate.consecutiveEvaluations < SHELTER_RELOCATION_REQUIRED_EVALUATIONS ||
+      candidate.scoreImprovement < SHELTER_RELOCATION_MINIMUM_IMPROVEMENT ||
+      currentImprovement < SHELTER_RELOCATION_MINIMUM_IMPROVEMENT ||
+      rankedCandidate === undefined
+    ) {
+      return;
+    }
+    selectedAssessment = rankedCandidate.assessment;
+  }
+  const site: ShelterStructureState = {
+    id: state.nextEntityId++,
+    kind: "SHELTER_SITE",
+    tileIndex,
+    groupId: group.id,
+    material: 0,
+    materialRequired: SHELTER_MATERIAL_REQUIRED,
+    progress: 0,
+    workRequired: SHELTER_WORK_REQUIRED,
+    inventory: { capacity: 0, food: 0, material: 0, water: 0 },
+    guardIds: [],
+    completedTick: null,
+    condition: 10_000,
+    baseCapacity: SHELTER_BASE_CAPACITY,
+    siteAssessment: selectedAssessment,
+    builtFromShelterId: isShelterStructure(existing) ? existing.id : null,
+    maintenanceMaterialSpent: 0,
+    lastMaintainedTick: null,
+    lastUsedTick: null,
+    conditionBand: "GOOD",
+  };
+  state.structures.push(site);
+  group.pendingShelterId = site.id;
+  group.shelterRelocationCandidate = null;
+  const selected = emitDomainEvent(state, {
+    type: "SHELTER_SITE_SELECTED",
+    actorIds: [creature.id],
+    targetIds: [site.id],
+    groupIds: [group.id],
+    locationTileIndex: tileIndex,
+    quantity: site.siteAssessment.totalScore,
+    decisionRecordIds: currentDecisionIds(creature),
+    importance: 58,
+    summary: `${creature.name} selected a communal shelter site for ${group.name} after comparing member, store, food, material, and water access.`,
+  });
+  emitDomainEvent(state, {
+    type: "SHELTER_CONSTRUCTION_STARTED",
+    actorIds: [creature.id],
+    targetIds: [site.id],
+    groupIds: [group.id],
+    locationTileIndex: tileIndex,
+    causedByEventIds: [selected.id],
+    decisionRecordIds: currentDecisionIds(creature),
+    importance: 38,
+    summary: `${group.name} marked the selected site for communal shelter construction.`,
+  });
+  group.majorEventIds.push(selected.id);
+}
+
+/**
+ * Shelter work changes the relationship facts from which periodic group
+ * cohesion is derived. Keeping the immediate scalar response as well makes
+ * the effect visible at once, while these reciprocal edges preserve it across
+ * the next group recomputation boundary.
+ */
+function reinforceShelterCohesion(
+  state: SimulationState,
+  group: GroupState,
+  contributor: CreatureState,
+  strength: number,
+  eventId: number,
+): void {
+  const trust = Math.max(1, Math.round(strength));
+  const familiarity = Math.max(1, Math.round(strength / 2));
+  for (const memberId of group.memberIds) {
+    if (memberId === contributor.id || !getCreature(state, memberId)?.alive) continue;
+    changeRelationship(state, contributor.id, memberId, { trust, familiarity }, eventId);
+    changeRelationship(state, memberId, contributor.id, { trust, familiarity }, eventId);
+  }
+}
+
+function buildShelter(
+  state: SimulationState,
+  creature: CreatureState,
+  targetId: number | null,
+): void {
+  const group = creature.groupId === null ? null : getGroup(state, creature.groupId);
+  const site = targetId === null ? null : getStructure(state, targetId);
+  if (!group || !isShelterStructure(site) || site.kind !== "SHELTER_SITE") return;
+  if (site.groupId !== group.id || group.pendingShelterId !== site.id) return;
+
+  const materialNeeded = Math.max(0, site.materialRequired - site.material);
+  const deposited = Math.min(creature.inventory.material, materialNeeded);
+  if (deposited > 0) {
+    creature.inventory.material -= deposited;
+    site.material += deposited;
+    emitDomainEvent(state, {
+      type: "MATERIAL_DEPOSITED",
+      actorIds: [creature.id],
+      targetIds: [site.id],
+      groupIds: [group.id],
+      locationTileIndex: site.tileIndex,
+      resourceKind: "MATERIAL",
+      quantity: deposited,
+      decisionRecordIds: currentDecisionIds(creature),
+      summary: `${creature.name} added ${deposited} material to the communal shelter.`,
+    });
+  }
+  const previousProgress = site.progress;
+  site.progress = clampUnit(
+    site.progress + 1_100 + Math.floor(creature.traits.loyalty / 15),
+  );
+  const crossedMilestone = [7_500, 5_000, 2_500].find(
+    (threshold) => previousProgress < threshold && site.progress >= threshold,
+  );
+  const advanced = emitDomainEvent(state, {
+    type: "SHELTER_WORK_ADVANCED",
+    actorIds: [creature.id],
+    targetIds: [site.id],
+    groupIds: [group.id],
+    locationTileIndex: site.tileIndex,
+    quantity: site.progress - previousProgress,
+    decisionRecordIds: currentDecisionIds(creature),
+    importance: crossedMilestone === 7_500 ? 45 : crossedMilestone ? 22 : 8,
+    summary: `${creature.name} advanced ${group.name}'s communal shelter by ${site.progress - previousProgress} work units to ${Math.floor(site.progress / 100)}% completion.`,
+  });
+  group.cohesion = clampUnit(group.cohesion + 35);
+  reinforceShelterCohesion(state, group, creature, 35, advanced.id);
+  if (site.material < site.materialRequired || site.progress < site.workRequired) return;
+
+  const oldShelter =
+    group.activeShelterId === null ? null : getStructure(state, group.activeShelterId);
+  const relocationImprovement =
+    isShelterStructure(oldShelter) && oldShelter.kind === "SHELTER"
+      ? Math.max(
+          0,
+          assessShelterSite(state, group, oldShelter.tileIndex, false).totalScore -
+            assessShelterSite(state, group, site.tileIndex, true).totalScore,
+        )
+      : 0;
+  site.kind = "SHELTER";
+  site.completedTick = state.tick;
+  site.condition = 10_000;
+  site.conditionBand = "GOOD";
+  group.activeShelterId = site.id;
+  group.pendingShelterId = null;
+  group.homeTileIndex = site.tileIndex;
+  group.shelterCommitUntilTick = state.tick + SHELTER_MINIMUM_COMMITMENT_TICKS;
+  group.shelterRelocationCandidate = null;
+  group.cohesion = clampUnit(group.cohesion + 500);
+  state.metrics.sheltersCompleted += 1;
+  const completed = emitDomainEvent(state, {
+    type: "SHELTER_COMPLETED",
+    actorIds: [creature.id],
+    targetIds: [site.id],
+    groupIds: [group.id],
+    locationTileIndex: site.tileIndex,
+    quantity: site.baseCapacity,
+    decisionRecordIds: currentDecisionIds(creature),
+    importance: 85,
+    summary: `${group.name} completed a six-place communal shelter.`,
+  });
+  reinforceShelterCohesion(state, group, creature, 240, completed.id);
+  group.majorEventIds.push(completed.id);
+  if (isShelterStructure(oldShelter) && oldShelter.kind === "SHELTER") {
+    oldShelter.kind = "ABANDONED_SHELTER";
+    const abandoned = emitDomainEvent(state, {
+      type: "SHELTER_ABANDONED",
+      targetIds: [oldShelter.id],
+      groupIds: [group.id],
+      locationTileIndex: oldShelter.tileIndex,
+      causedByEventIds: [completed.id],
+      importance: 56,
+      summary: `${group.name} left its former shelter standing but abandoned.`,
+    });
+    const relocated = emitDomainEvent(state, {
+      type: "SHELTER_RELOCATED",
+      actorIds: [creature.id],
+      targetIds: [oldShelter.id, site.id],
+      groupIds: [group.id],
+      locationTileIndex: site.tileIndex,
+      causedByEventIds: [completed.id, abandoned.id],
+      quantity: relocationImprovement,
+      decisionRecordIds: currentDecisionIds(creature),
+      importance: 88,
+      summary: `${group.name} moved its home atomically to the completed replacement shelter, improving its same-tick site score by ${relocationImprovement}.`,
+    });
+    group.shelterRelocations = 1;
+    state.metrics.shelterRelocations += 1;
+    group.majorEventIds.push(relocated.id);
+    addHistory(
+      state,
+      "SETTLEMENT_RELOCATED",
+      `${group.name} relocated its shelter`,
+      relocated.summary,
+      [completed.id, abandoned.id, relocated.id],
+      group.memberIds,
+      [group.id],
+      88,
+    );
+  } else {
+    addHistory(
+      state,
+      "SHELTER_BUILT",
+      `${group.name}'s communal shelter was completed`,
+      completed.summary,
+      [completed.id],
+      group.memberIds,
+      [group.id],
+      85,
+    );
+  }
+}
+
+function maintainShelter(
+  state: SimulationState,
+  creature: CreatureState,
+  targetId: number | null,
+): void {
+  const shelter = targetId === null ? null : getStructure(state, targetId);
+  if (
+    !isShelterStructure(shelter) ||
+    shelter.kind !== "SHELTER" ||
+    creature.groupId !== shelter.groupId ||
+    creature.inventory.material <= 0 ||
+    shelter.condition >= 10_000
+  ) {
+    return;
+  }
+  const previousBand = shelter.conditionBand;
+  const material = Math.min(2, creature.inventory.material);
+  creature.inventory.material -= material;
+  shelter.condition = clampUnit(shelter.condition + material * 2_200);
+  shelter.maintenanceMaterialSpent += material;
+  shelter.lastMaintainedTick = state.tick;
+  shelter.conditionBand = shelterConditionBand(shelter.condition);
+  state.metrics.shelterMaintenanceMaterial += material;
+  const group = getGroup(state, shelter.groupId);
+  if (group) group.cohesion = clampUnit(group.cohesion + material * 90);
+  const maintained = emitDomainEvent(state, {
+    type: "SHELTER_MAINTAINED",
+    actorIds: [creature.id],
+    targetIds: [shelter.id],
+    groupIds: [shelter.groupId],
+    locationTileIndex: shelter.tileIndex,
+    resourceKind: "MATERIAL",
+    quantity: material,
+    decisionRecordIds: currentDecisionIds(creature),
+    importance: previousBand === "LOW" ? 52 : 16,
+    summary: `${creature.name} used ${material} material to restore the communal shelter to ${Math.floor(shelter.condition / 100)}% condition.`,
+  });
+  if (group) {
+    reinforceShelterCohesion(state, group, creature, material * 90, maintained.id);
+  }
+  if (previousBand === "LOW" && shelter.conditionBand !== "LOW") {
+    emitDomainEvent(state, {
+      type: "SHELTER_CONDITION_RECOVERED",
+      actorIds: [creature.id],
+      targetIds: [shelter.id],
+      groupIds: [shelter.groupId],
+      locationTileIndex: shelter.tileIndex,
+      quantity: shelter.condition,
+      causedByEventIds: [maintained.id],
+      importance: 38,
+      summary: `${creature.name}'s maintenance lifted the shelter out of low condition.`,
+    });
+  }
+}
+
 function buildStorage(state: SimulationState, creature: CreatureState): void {
   const group = creature.groupId === null ? null : getGroup(state, creature.groupId);
   if (!group) {
     return;
   }
   const site = ensureStorageSite(state, group);
-  if (site.kind !== "STORAGE_SITE") {
+  if (!site || site.kind !== "STORAGE_SITE") {
     return;
   }
   const materialNeeded = Math.max(0, site.materialRequired - site.material);
@@ -960,9 +1314,71 @@ const resolveDrink: ActionResolver = (state, creature) => {
   }
 };
 
-const resolveRest: ActionResolver = (_state, creature) => {
-  creature.needs.fatigue = clampUnit(creature.needs.fatigue - 5_200);
+const resolveRest: ActionResolver = (state, creature) => {
+  creature.needs.fatigue = clampUnit(creature.needs.fatigue - OUTDOOR_REST_RECOVERY);
   creature.health = clampUnit(creature.health + 120);
+  state.metrics.outdoorRests += 1;
+};
+
+const resolveShelteredRest: ActionResolver = (state, creature, action) => {
+  if (!isCanonicalShelteredRestClaim(state, creature, action)) return;
+  const shelter =
+    action.targetEntityId === null ? null : getStructure(state, action.targetEntityId);
+  if (
+    !isShelterStructure(shelter) ||
+    shelter.kind !== "SHELTER" ||
+    shelterEligibility(state, creature, shelter) === "INELIGIBLE"
+  ) {
+    return;
+  }
+  const recovery = shelteredRestRecovery(shelter.condition);
+  const previousBand = shelter.conditionBand;
+  creature.needs.fatigue = clampUnit(creature.needs.fatigue - recovery);
+  creature.health = clampUnit(creature.health + 180);
+  shelter.condition = clampUnit(shelter.condition - 90);
+  shelter.conditionBand = shelterConditionBand(shelter.condition);
+  shelter.lastUsedTick = state.tick;
+  state.metrics.shelteredRests += 1;
+  const eligibility = shelterEligibility(state, creature, shelter);
+  const rested = emitDomainEvent(state, {
+    type: "SHELTER_RESTED",
+    actorIds: [creature.id],
+    targetIds: [shelter.id],
+    groupIds: [shelter.groupId],
+    locationTileIndex: shelter.tileIndex,
+    quantity: recovery,
+    decisionRecordIds: currentDecisionIds(creature),
+    importance: 8,
+    summary: `${creature.name} recovered ${recovery} fatigue units in the communal shelter.`,
+  });
+  if (previousBand !== "LOW" && shelter.conditionBand === "LOW") {
+    emitDomainEvent(state, {
+      type: "SHELTER_CONDITION_LOW",
+      actorIds: [creature.id],
+      targetIds: [shelter.id],
+      groupIds: [shelter.groupId],
+      locationTileIndex: shelter.tileIndex,
+      quantity: shelter.condition,
+      causedByEventIds: [rested.id],
+      importance: 52,
+      summary: `${creature.name}'s use brought the communal shelter into low condition, reducing recovery and usable places.`,
+    });
+  }
+  if (eligibility === "TRUSTED_GUEST") {
+    state.metrics.shelterGuestUses += 1;
+    emitDomainEvent(state, {
+      type: "SHELTER_GUEST_USED",
+      actorIds: [creature.id],
+      targetIds: [shelter.id],
+      groupIds: [shelter.groupId],
+      locationTileIndex: shelter.tileIndex,
+      quantity: 1,
+      causedByEventIds: [rested.id],
+      decisionRecordIds: currentDecisionIds(creature),
+      importance: 28,
+      summary: `${creature.name} rested as a trusted guest in another group's shelter.`,
+    });
+  }
 };
 
 const resolveGuard: ActionResolver = (state, creature, action) => {
@@ -1004,6 +1420,12 @@ const ACTION_RESOLVERS: Record<ActionKind, ActionResolver> = {
   EAT: resolveEat,
   DRINK: resolveDrink,
   REST: resolveRest,
+  ESTABLISH_SHELTER_SITE: establishShelterSite,
+  BUILD_SHELTER: (state, creature, action) =>
+    buildShelter(state, creature, action.targetEntityId),
+  REST_SHELTERED: resolveShelteredRest,
+  MAINTAIN_SHELTER: (state, creature, action) =>
+    maintainShelter(state, creature, action.targetEntityId),
   SHARE: (state, creature, action) => shareFood(state, creature, action.targetEntityId),
   SHARE_WATER: (state, creature, action) =>
     shareWater(state, creature, action.targetEntityId),

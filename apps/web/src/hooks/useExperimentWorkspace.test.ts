@@ -27,6 +27,7 @@ import {
 } from "@tiny-civ/sim-core";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DirectSimulationEngine } from "../runtime";
 import type {
   LongRunningOperationOptions,
   ReplayResult,
@@ -49,6 +50,14 @@ import {
   timelineReplayWindow,
   useExperimentWorkspace,
 } from "./useExperimentWorkspace";
+
+const { createBrowserEngineMock } = vi.hoisted(() => ({
+  createBrowserEngineMock: vi.fn(),
+}));
+
+vi.mock("../runtime/browser-simulation-engine", () => ({
+  createBrowserSimulationEngine: createBrowserEngineMock,
+}));
 
 function deferred<Value>() {
   let resolve!: (value: Value) => void;
@@ -267,6 +276,7 @@ function outcomes(experiment: ExperimentV1, branchId: string) {
 
 beforeEach(() => {
   localStorage.clear();
+  createBrowserEngineMock.mockImplementation(() => new DirectSimulationEngine());
 });
 
 describe("equal-horizon comparison metrics", () => {
@@ -296,6 +306,15 @@ describe("equal-horizon comparison metrics", () => {
       thefts: 1,
       attacks: 0,
       storagesCompleted: 1,
+      sheltersCompleted: 1,
+      activeShelters: 1,
+      shelteredRests: 7,
+      outdoorRests: 3,
+      meanShelterCondition: 7_500,
+      shelterMaintenanceMaterial: 2,
+      shelterDeniedClaims: 1,
+      shelterGuestUses: 1,
+      shelterRelocations: 0,
     };
     const branch: ExperimentOutcomeMetrics = {
       ...baseline,
@@ -305,6 +324,10 @@ describe("equal-horizon comparison metrics", () => {
       interactionContentions: 20,
       waterGatherContentions: 7,
       routeConcentration: 0.1,
+      shelteredRests: 10,
+      outdoorRests: 4,
+      meanShelterCondition: 6_400,
+      shelterMaintenanceMaterial: 5,
     };
     const delta = Object.fromEntries(
       (Object.keys(baseline) as (keyof ExperimentOutcomeMetrics)[]).map((key) => [
@@ -342,6 +365,20 @@ describe("equal-horizon comparison metrics", () => {
       baseline: "25.0%",
       branch: "10.0%",
       delta: "15.0%",
+      deltaDirection: "decrease",
+    });
+    expect(byId.get("shelteredRests")).toMatchObject({
+      label: "Sheltered rests completed",
+      baseline: 7,
+      branch: 10,
+      delta: 3,
+      deltaDirection: "increase",
+    });
+    expect(byId.get("meanShelterCondition")).toMatchObject({
+      label: "Mean active-shelter condition",
+      baseline: "75.0%",
+      branch: "64.0%",
+      delta: "11.0%",
       deltaDirection: "decrease",
     });
     expect(byId.has("interactionContentions")).toBe(false);
@@ -537,7 +574,7 @@ describe("phase 3 scenario identity", () => {
     await createExperimentStorage().save(
       JSON.stringify({
         kind: "tiny-civilisation/workspace",
-        schemaVersion: 3,
+        schemaVersion: 4,
         activeBranchId: experiment.rootBranchId,
         experiment,
         simulationSave: serializeSimulationSave(savedState),
@@ -582,6 +619,89 @@ describe("phase 3 scenario identity", () => {
     expect(result.current.props.actions.status?.message).toContain(
       "Restored tick 9 without changing its hash.",
     );
+  });
+
+  it("loads a Phase 4.1 workspace with commands retained and derived verification cleared", async () => {
+    const reference = createScenarioReference("split-banks", 7_779);
+    const { state: upgradedState } = scenarioFrame(reference, 9);
+    let legacyExperiment = createExperiment(reference);
+    legacyExperiment = appendExperimentIntervention(
+      legacyExperiment,
+      legacyExperiment.rootBranchId,
+      createPendingIntervention(
+        scheduledCommand(1, {
+          type: "ADD_FOOD",
+          applyAtTick: 6,
+          tileIndex: 10,
+          amount: 7,
+        }),
+      ),
+    );
+    legacyExperiment = setExperimentBranchResult(
+      legacyExperiment,
+      legacyExperiment.rootBranchId,
+      80,
+      "0123456789abcdef",
+    );
+    const legacyRecord = JSON.parse(serializeExperiment(legacyExperiment)) as {
+      schemaVersion: number;
+      behaviorVersion: number;
+      stateSchemaVersion: number;
+      scenario: { behaviorVersion: number };
+    };
+    legacyRecord.schemaVersion = 4;
+    legacyRecord.behaviorVersion = 4;
+    legacyRecord.stateSchemaVersion = 4;
+    legacyRecord.scenario.behaviorVersion = 4;
+    await createExperimentStorage().save(
+      JSON.stringify({
+        kind: "tiny-civilisation/workspace",
+        schemaVersion: 3,
+        activeBranchId: legacyExperiment.rootBranchId,
+        experiment: legacyRecord,
+        simulationSave: JSON.stringify({
+          kind: "tiny-civilisation/save",
+          schemaVersion: 3,
+          behaviorVersion: 4,
+          stateSchemaVersion: 4,
+          state: {},
+        }),
+      }),
+    );
+
+    const initialState = createSimulation(4_182);
+    const load = vi.fn(async () => makeWorldView(upgradedState));
+    const simulation = simulationController({
+      view: makeWorldView(initialState),
+      scenario: initialState.scenario,
+      seed: initialState.seed,
+      getState: vi.fn(async () => upgradedState),
+      load,
+      save: vi.fn(async () => serializeSimulationSave(initialState)),
+      getCheckpoint: vi.fn(async () => ({
+        tick: upgradedState.tick,
+        hash: hashSimulationState(upgradedState),
+        state: upgradedState,
+      })),
+    });
+    const { result } = renderHook(() =>
+      useExperimentWorkspace({ simulation, onSelectCreature: vi.fn() }),
+    );
+
+    await waitFor(() => expect(result.current.props.actions.canLoad).toBe(true));
+    act(() => result.current.props.actions.onLoad());
+    await waitFor(() =>
+      expect(result.current.props.actions.status).toMatchObject({ phase: "success" }),
+    );
+
+    expect(load).toHaveBeenCalledOnce();
+    expect(result.current.props.interventions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: "Food added" })]),
+    );
+    expect(result.current.props.actions.status?.message).toContain(
+      "Upgraded; prior verification unavailable.",
+    );
+    expect(result.current.props.actions.status?.message).toContain("Phase 4.2 rules");
   });
 
   it("loads a Phase 3 workspace without preserving obsolete verification claims", async () => {
@@ -1559,7 +1679,7 @@ describe("experiment intervention navigation", () => {
       locationTileIndex: 7,
     };
     const trace: InterventionResponseTrace = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       command: { commandId: 1, applyAtTick: 10, type: "ADD_FOOD", tileIndex: 7 },
       participantIds: [1],
       windowTicks: 120,
@@ -1824,7 +1944,7 @@ describe("experiment intervention presentation", () => {
       locationTileIndex: 5,
     };
     const trace: InterventionResponseTrace = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       command: { commandId: 1, applyAtTick: 10, type: "ADD_FOOD", tileIndex: 5 },
       participantIds: [1],
       windowTicks: 120,
@@ -1903,6 +2023,36 @@ describe("experiment intervention presentation", () => {
     });
     expect(result.current.props.composer.preview?.mechanicalChange).toBe(
       "Close the target passage if the authoritative occupancy check permits it.",
+    );
+  });
+
+  it("previews material supply changes as observer interventions, not build orders", () => {
+    const simulation = simulationController();
+    const tile = simulation.view.tiles[0]!;
+    const { result } = renderHook(() =>
+      useExperimentWorkspace({ simulation, onSelectCreature: vi.fn() }),
+    );
+
+    const addMaterial = result.current.props.composer.tools.find(
+      (tool) => tool.id === "add-material",
+    );
+    expect(addMaterial?.description).toContain("without ordering construction or upkeep");
+
+    act(() => {
+      result.current.props.composer.onToolChange("add-material");
+      result.current.props.composer.onTargetXChange(String(tile.x));
+      result.current.props.composer.onTargetYChange(String(tile.y));
+      result.current.props.composer.onQuantityChange("17");
+    });
+    expect(result.current.props.composer.preview).toMatchObject({
+      target: `tile ${tile.x}, ${tile.y}`,
+      category: "Resource availability",
+      mechanicalChange: "Add 17 material units at the target tile.",
+    });
+
+    act(() => result.current.props.composer.onToolChange("remove-material"));
+    expect(result.current.props.composer.preview?.mechanicalChange).toBe(
+      "Remove up to 17 material units from the target tile.",
     );
   });
 });

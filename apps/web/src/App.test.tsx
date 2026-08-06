@@ -195,6 +195,13 @@ vi.mock("./sim-adapter", () => ({
   makeWorldViewFromSnapshot: vi.fn(() => view),
 }));
 
+vi.mock("./runtime/browser-simulation-engine", async () => {
+  const { DirectSimulationEngine } = await import("./runtime/direct-simulation-engine");
+  return {
+    createBrowserSimulationEngine: () => new DirectSimulationEngine(),
+  };
+});
+
 vi.mock("./components/PixiWorld", () => ({
   PixiWorld: ({
     onSelect,
@@ -235,7 +242,9 @@ describe("Tiny Civilisation workspace", () => {
 
   it("shows a factual, inspectable simulation workspace", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Not now" }, { timeout: 5_000 }),
+    );
 
     expect(screen.getByText("Tiny Civilisation")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Living dish" })).toBeTruthy();
@@ -275,7 +284,9 @@ describe("Tiny Civilisation workspace", () => {
 
   it("supports stepping, selecting, following, and a condition-only intervention", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Not now" }, { timeout: 5_000 }),
+    );
     await screen.findByText("Observation paused");
 
     const stepButton = screen.getByRole("button", { name: /Advance one tick/ });

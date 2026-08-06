@@ -76,28 +76,43 @@ vi.mock("./components/ExperimentWorkspace", () => ({
 vi.mock("./components/WorldStage", () => ({
   WorldStage: ({
     selectedId,
+    selectedRef,
     focusedId,
     followedId,
     replayCamera,
     onSelect,
+    onSelectSubject,
     onHover,
   }: {
     selectedId: number | null;
+    selectedRef?: { kind: string; id?: number } | null;
     focusedId: number | null;
     followedId: number | null;
     replayCamera?: { eventId: number } | null;
     onSelect: (id: number | null) => void;
+    onSelectSubject?: (ref: { kind: "structure"; id: number }) => void;
     onHover: (id: number | null) => void;
   }) => (
     <div
       data-testid="world-stage"
       data-selected={selectedId?.toString() ?? "none"}
+      data-selected-ref={
+        selectedRef === null || selectedRef === undefined
+          ? "none"
+          : `${selectedRef.kind}:${selectedRef.id?.toString() ?? "unknown"}`
+      }
       data-focused={focusedId?.toString() ?? "none"}
       data-followed={followedId?.toString() ?? "none"}
       data-replay-event={replayCamera?.eventId.toString() ?? "live"}
     >
       <button type="button" onClick={() => onSelect(2)}>
         Select Nalo
+      </button>
+      <button
+        type="button"
+        onClick={() => onSelectSubject?.({ kind: "structure", id: 901 })}
+      >
+        Select shelter
       </button>
       <button type="button" onClick={() => onHover(1)}>
         Hover Iri
@@ -109,11 +124,13 @@ vi.mock("./components/WorldStage", () => ({
 vi.mock("./components/InspectorPanel", () => ({
   InspectorPanel: ({
     creature,
+    subjectRef,
     evidenceEvent,
     followed,
     onFollow,
   }: {
     creature: { id: number; name: string } | null;
+    subjectRef?: { kind: string; id?: number } | null;
     evidenceEvent: { id: number } | null;
     followed: boolean;
     onFollow: () => void;
@@ -121,6 +138,11 @@ vi.mock("./components/InspectorPanel", () => ({
     <div
       data-testid="inspector"
       data-creature={creature?.id.toString() ?? "none"}
+      data-subject-ref={
+        subjectRef === null || subjectRef === undefined
+          ? "none"
+          : `${subjectRef.kind}:${subjectRef.id?.toString() ?? "unknown"}`
+      }
       data-evidence={evidenceEvent?.id.toString() ?? "none"}
     >
       {creature ? (
@@ -229,7 +251,7 @@ function expectStageState(expected: {
   expect(stage().getAttribute("data-replay-event")).toBe(expected.replayEvent);
 }
 
-import App from "./App";
+import App, { worldSubjectForTimelineEvent } from "./App";
 
 describe("App isolated replay session", () => {
   beforeEach(() => {
@@ -327,6 +349,102 @@ describe("App isolated replay session", () => {
     expect(screen.getByTestId("inspector").getAttribute("data-evidence")).toBe("6");
     expect(mocks.setPlaying.mock.calls.at(-1)?.[0]).toBe(true);
     expect(document.activeElement).toBe(document.getElementById("living-dish"));
+  });
+
+  it("restores a selected shelter after isolated replay", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Select shelter" }));
+    expect(screen.getByTestId("inspector").getAttribute("data-subject-ref")).toBe(
+      "structure:901",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Replay focal moment" }));
+    await screen.findByRole("button", { name: "Exit isolated replay" });
+    fireEvent.click(screen.getByRole("button", { name: "Exit isolated replay" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("inspector").getAttribute("data-subject-ref")).toBe(
+        "structure:901",
+      ),
+    );
+  });
+
+  it("resolves actorless settlement evidence to its structure or group subject", () => {
+    const settlementView: WorldView = {
+      ...testContext.view,
+      structures: [
+        {
+          id: 901,
+          kind: "SHELTER",
+          x: 4,
+          y: 5,
+          groupId: 77,
+          progress: 100,
+          stored: 0,
+          capacity: 6,
+        },
+      ],
+      groups: [
+        {
+          id: 77,
+          name: "Mossbank",
+          memberIds: [],
+          home: { x: 4.5, y: 5.5 },
+          cohesion: 60,
+          sharingNorm: 0,
+          conflictNorm: 0,
+          storageIds: [],
+        },
+      ],
+    };
+    const settlementEvent: TimelineEventView = {
+      ...event(71, [], [901]),
+      type: "SHELTER_CONDITION_LOW",
+      groupIds: [77],
+    };
+    expect(worldSubjectForTimelineEvent(settlementEvent, settlementView)).toEqual({
+      kind: "structure",
+      id: 901,
+    });
+    expect(
+      worldSubjectForTimelineEvent(
+        { ...settlementEvent, targetIds: [], type: "SETTLEMENT_RELOCATED" },
+        settlementView,
+      ),
+    ).toEqual({ kind: "group", id: 77 });
+  });
+
+  it("keeps an actorless shelter event typed as a structure during replay", async () => {
+    testContext.view = {
+      ...testContext.view,
+      structures: [
+        {
+          id: 901,
+          kind: "SHELTER",
+          x: 4,
+          y: 5,
+          groupId: 77,
+          progress: 100,
+          stored: 0,
+          capacity: 6,
+        },
+      ],
+    };
+    testContext.momentEvent = {
+      ...event(9, [], [901]),
+      type: "SHELTER_CONDITION_LOW",
+      groupIds: [77],
+    };
+    mocks.useSimulationController.mockReturnValue(simulationController());
+    mocks.useMomentQueue.mockReturnValue(momentQueueController());
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Replay focal moment" }));
+    await screen.findByRole("button", { name: "Exit isolated replay" });
+
+    expect(stage().getAttribute("data-selected")).toBe("none");
+    expect(stage().getAttribute("data-selected-ref")).toBe("structure:901");
+    expect(stage().getAttribute("data-replay-event")).toBe("9");
   });
 
   it("restores the untouched live session when isolated replay fails", async () => {

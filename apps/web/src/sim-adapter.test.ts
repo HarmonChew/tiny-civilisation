@@ -73,6 +73,118 @@ describe("simulation UI adapter", () => {
     expect(dynamic.tick).toBe(1);
   });
 
+  it("projects shelter access, site rationale, condition, occupancy, and group home state", () => {
+    const state = createSimulationState(4_182);
+    const snapshot = createRenderSnapshot(state);
+    const creature = snapshot.creatures[0]!;
+    const projected = makeWorldViewFromSnapshot(
+      {
+        ...snapshot,
+        creatures: [
+          {
+            ...creature,
+            groupId: 81,
+            shelterAccess: {
+              shelterId: 900,
+              weightedCost: 72,
+              eligibility: "MEMBER",
+              condition: 6_800,
+              effectiveCapacity: 4,
+              reservedSpaces: 3,
+              restingCreatures: 2,
+              destination: "SHELTERED",
+              reason: "A member space is reachable.",
+            },
+          },
+          ...snapshot.creatures.slice(1),
+        ],
+        structures: [
+          {
+            id: 900,
+            kind: "SHELTER",
+            tileIndex: creature.tileIndex,
+            groupId: 81,
+            progress: 10_000,
+            workRequired: 10_000,
+            food: 0,
+            material: 18,
+            materialRequired: 18,
+            storedMaterial: 0,
+            storageCapacity: 0,
+            water: 0,
+            guardIds: [],
+            condition: 6_800,
+            baseCapacity: 6,
+            effectiveCapacity: 4,
+            reservedSpaces: 3,
+            restingCreatures: 2,
+            memberOccupancy: 1,
+            guestOccupancy: 1,
+            upkeepNeeded: true,
+            siteAssessment: {
+              selectedAtTick: 12,
+              memberTravelCost: 11,
+              storageTravelCost: 9,
+              foodAccessCost: 14,
+              materialAccessCost: 8,
+              waterAccessCost: 17,
+              crowdingCost: 2,
+              constructionInvestmentCost: 4,
+              relocationChangeCost: 0,
+              totalScore: 65,
+            },
+            builtFromShelterId: null,
+          },
+        ],
+        groups: [
+          {
+            id: 81,
+            name: "Mossbank",
+            stage: "PERSISTENT",
+            foundedTick: 0,
+            memberIds: [creature.id],
+            leaderId: creature.id,
+            homeTileIndex: creature.tileIndex,
+            storageStructureId: null,
+            activeShelterId: 900,
+            pendingShelterId: null,
+            shelterRelocations: 0,
+            shelterCommitUntilTick: 200,
+            shelterRelocationCandidate: null,
+            cohesion: 7_200,
+            sharingNorm: 2_000,
+            majorEventIds: [],
+          },
+        ],
+      },
+      null,
+    );
+
+    expect(projected.creatures[0]?.shelterAccess).toMatchObject({
+      shelterId: 900,
+      condition: 68,
+      destination: "SHELTERED",
+    });
+    expect(projected.structures[0]).toMatchObject({
+      kind: "SHELTER",
+      condition: 68,
+      baseCapacity: 6,
+      effectiveCapacity: 4,
+      reservedSpaces: 3,
+      restingCreatures: 2,
+      memberOccupancy: 1,
+      guestOccupancy: 1,
+      upkeepNeeded: true,
+      siteAssessment: { totalScore: 65 },
+    });
+    expect(projected.groups[0]).toMatchObject({
+      stage: "PERSISTENT",
+      activeShelterId: 900,
+      shelterRelocations: 0,
+      shelterCommitUntilTick: 200,
+    });
+  });
+
   it("keeps the authoritative state intact when an intervention is queued", () => {
     const state = createSimulationState(4182);
     const initial = makeWorldView(state);
@@ -101,7 +213,7 @@ describe("simulation UI adapter", () => {
     expect(intervention?.causedByEventIds).toContain(intervention?.commandSourceEventId);
   });
 
-  it("maps the water intervention tools to their authoritative commands", () => {
+  it("maps water and material intervention tools to their authoritative commands", () => {
     const replenishState = createSimulationState(4_182);
     const tile = makeWorldView(replenishState).tiles.find(
       (candidate) => !candidate.blocked,
@@ -113,6 +225,14 @@ describe("simulation UI adapter", () => {
     const drainState = createSimulationState(4_182);
     queueIntervention(drainState, "drain-water", tile!);
     expect(drainState.commandQueue.at(-1)?.type).toBe("DRAIN_WATER");
+
+    const addMaterialState = createSimulationState(4_182);
+    queueIntervention(addMaterialState, "add-material", tile!);
+    expect(addMaterialState.commandQueue.at(-1)?.type).toBe("ADD_MATERIAL");
+
+    const removeMaterialState = createSimulationState(4_182);
+    queueIntervention(removeMaterialState, "remove-material", tile!);
+    expect(removeMaterialState.commandQueue.at(-1)?.type).toBe("REMOVE_MATERIAL");
   });
 
   it("clusters routine hydration facts while distinctly surfacing first sharing and alerts", () => {
@@ -277,6 +397,41 @@ describe("simulation UI adapter", () => {
     expect(state.domainEvents[3]?.attentionTier).toBe("NOTABLE");
   });
 
+  it("presents shelter completion and relocation as group observations", () => {
+    const state = createSimulationState(93);
+    const template = state.domainEvents[0]!;
+    state.domainEvents.push(
+      {
+        ...template,
+        id: 90,
+        tick: 4,
+        type: "SHELTER_COMPLETED",
+        attentionTier: "SIGNIFICANT",
+        importance: 58,
+        clusterKey: "shelter:group:8:completion",
+        summary: "The group completed its communal shelter.",
+      },
+      {
+        ...template,
+        id: 91,
+        tick: 8,
+        type: "SHELTER_RELOCATED",
+        attentionTier: "SIGNIFICANT",
+        importance: 62,
+        clusterKey: "shelter:group:8:relocation",
+        summary: "The group moved home after a stable site comparison.",
+      },
+    );
+
+    const events = makeWorldView(state).events.filter((event) => event.id >= 90);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "SHELTER_COMPLETED", category: "group" }),
+        expect.objectContaining({ type: "SHELTER_RELOCATED", category: "group" }),
+      ]),
+    );
+  });
+
   it("maps null social IDs, storage stock, and colliding event sequences truthfully", () => {
     const state = createSimulationState(17) as SimulationState;
     const owner = state.creatures[0]!;
@@ -305,6 +460,11 @@ describe("simulation UI adapter", () => {
       leaderId: null,
       homeTileIndex: owner.tileIndex,
       storageStructureId: 500,
+      activeShelterId: null,
+      pendingShelterId: null,
+      shelterRelocations: 0,
+      shelterCommitUntilTick: 0,
+      shelterRelocationCandidate: null,
       cohesion: 4_000,
       sharingNorm: 0,
       majorEventIds: [],

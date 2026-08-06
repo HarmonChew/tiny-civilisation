@@ -40,26 +40,58 @@ import {
   summarizeScenarioIdentity,
 } from "./scenario-reporting.js";
 import {
+  MAX_RETAINED_MATRIX_RUNS,
+  deriveMatrixEvidenceReport,
+  type DeterministicMatrixRun,
+  type MatrixDeterminismComparison,
+} from "./matrix-report-derivation.js";
+import {
+  assertMatrixEvidenceTargetsAbsent,
   matrixEvidenceStdoutChunks,
   writeMatrixEvidence,
   type MatrixEvidenceReport,
 } from "./matrix-evidence.js";
 import {
-  analyzeScenarioRuns,
-  convergenceDiagnostics,
-  evaluateFrozenPairedMacroBands,
-  pairedScenarioComparisons,
-  type RunHardInvariantReport,
-  type RunOutcomeSummary,
-} from "./scenario-analysis.js";
+  PHASE_4_2_BAND_FREEZE_STATUS,
+  PHASE_4_2_HOLDOUT_SEEDS,
+  PHASE_4_2_HOLDOUT_OUTPUT_PATH,
+  PHASE_4_2_HOLDOUT_POLICY,
+  PHASE_4_2_HOLDOUT_STATUS,
+  PHASE_4_2_MATRIX_TICKS,
+  acquirePhase42HoldoutAttempt,
+  assertNotReservedPhase42HoldoutCorpus,
+  assertPhase42PostFreezeCalibrationExecutionRequest,
+  assertPhase42HoldoutExecutionRequest,
+  phase42CalibrationOutputPath,
+  type Phase42HoldoutExecutionRequest,
+} from "./phase-4.2-corpora.js";
+import { authenticatePhase42CalibrationArtifact } from "./phase-4.2-calibration-auth.js";
+import {
+  acquirePhase42HoldoutAfterCalibrationAuthentication,
+  runAfterPhase42CalibrationAuthentication,
+} from "./phase-4.2-execution-order.js";
+import {
+  PHASE_4_2_DEFINITION_CONTRACT,
+  PHASE_4_2_DEFINITION_CONTRACT_SCHEMA_VERSION,
+  PHASE_4_2_DEFINITION_FINGERPRINT,
+  PHASE_4_2_DEFINITION_FINGERPRINT_ALGORITHM,
+} from "./phase-4.2-definition-contract.js";
+import { phase42BandsAreFrozen } from "./scenario-bands.js";
 
 const DEFAULT_SEED = 4_182;
 const DEFAULT_TICKS = 10_000;
 const MAX_SEED = 0xffff_ffff;
 const DEFAULT_PROFILE_SEEDS = [4_182, 921, 23] as const;
-const MATRIX_CORPUS_NAMES = ["smoke", "nightly", "calibration", "holdout"] as const;
-const MAX_RETAINED_MATRIX_RUNS =
-  SCENARIO_CATALOG.length * SCENARIO_CALIBRATION_SEEDS.length;
+const MATRIX_CORPUS_NAMES = [
+  "smoke",
+  "nightly",
+  "calibration",
+  "holdout",
+  "phase-4.2-calibration",
+  "phase-4.2-holdout",
+] as const;
+const PHASE_4_2_PROTECTED_EXECUTION = Symbol("phase-4.2-protected-execution");
+type ProtectedExecutionAuthorization = typeof PHASE_4_2_PROTECTED_EXECUTION;
 
 type MatrixCorpusName = (typeof MATRIX_CORPUS_NAMES)[number];
 
@@ -108,21 +140,6 @@ interface ProfileRunResult {
   performance: PerformanceMetrics;
 }
 
-type MatrixRunResult = Omit<ProfileRunResult, "performance">;
-
-interface ReportedMatrixRun extends MatrixRunResult {
-  readonly outcomeSummary: RunOutcomeSummary;
-  readonly hardInvariants: RunHardInvariantReport;
-}
-
-interface DeterminismComparison {
-  readonly scenario: ScenarioReferenceV2;
-  readonly compiledMapHash: string;
-  readonly firstFinalHash: string;
-  readonly repeatFinalHash: string;
-  readonly exactMatch: boolean;
-}
-
 export class CliError extends Error {}
 
 function usage(): string {
@@ -134,7 +151,9 @@ function usage(): string {
     "  npm run headless -- [run] [--scenario ID] [--seed N] [--ticks N]",
     "  npm run headless -- batch [--scenario ID] [--seeds 1..100|1,4,8] [--count N] [--ticks N]",
     "  npm run headless -- profile [--scenario ID] [--seed N|--seeds 4182,921,23|--count N] [--ticks N]",
-    "  npm run headless -- matrix [--corpus smoke|nightly|calibration|holdout] [--ticks N] [--output PATH.json.gz]",
+    "  npm run headless -- matrix [--corpus smoke|nightly|calibration|holdout|phase-4.2-calibration|phase-4.2-holdout] [--ticks N] [--output PATH.json.gz]",
+    "  npm run headless -- phase-4.2-definition-contract",
+    "  npm run headless -- definition-fingerprint",
     "",
     "Options:",
     `  --scenario ID  Scenario definition (default: ${DEFAULT_SCENARIO_ID}; ${scenarioIds})`,
@@ -143,6 +162,7 @@ function usage(): string {
     "  --seeds SPEC   Inclusive range, comma-separated list, or both",
     "  --count N      Run seeds 1 through N when --seeds is omitted",
     "  --corpus NAME   Locked matrix corpus (default: smoke)",
+    `                    Phase 4.2 holdout is ${PHASE_4_2_HOLDOUT_STATUS.toLowerCase()} while bands are ${PHASE_4_2_BAND_FREEZE_STATUS.toLowerCase().replace("_", " ")}`,
     "  --output PATH   Also write deterministic .json.gz, .sha256, and .md evidence files",
     "  --help, -h     Show this help",
   ].join("\n");
@@ -199,10 +219,17 @@ function matrixCorpusSeeds(corpus: MatrixCorpusName): readonly number[] {
       return SCENARIO_CALIBRATION_SEEDS;
     case "holdout":
       return SCENARIO_HOLDOUT_SEEDS;
+    case "phase-4.2-calibration":
+      return SCENARIO_CALIBRATION_SEEDS;
+    case "phase-4.2-holdout":
+      return PHASE_4_2_HOLDOUT_SEEDS;
   }
 }
 
 function matrixCorpusTicks(corpus: MatrixCorpusName): number {
+  if (corpus === "phase-4.2-calibration" || corpus === "phase-4.2-holdout") {
+    return PHASE_4_2_MATRIX_TICKS;
+  }
   return corpus === "smoke"
     ? SCENARIO_MEASUREMENT_HORIZONS.smokeTicks
     : SCENARIO_MEASUREMENT_HORIZONS.matrixTicks;
@@ -261,6 +288,7 @@ export function parseRunOptions(args: readonly string[]): RunOptions {
     }
   }
 
+  assertGenericCommandDoesNotUseReservedHoldout("run", [seed], ticks);
   return { scenarioId, seed, ticks };
 }
 
@@ -295,6 +323,8 @@ export function parseBatchOptions(args: readonly string[]): BatchOptions {
 
   const resolvedSeeds =
     seeds ?? Array.from({ length: count ?? 10 }, (_, index) => index + 1);
+
+  assertGenericCommandDoesNotUseReservedHoldout("batch", resolvedSeeds, ticks);
 
   return {
     scenarioId,
@@ -341,21 +371,37 @@ export function parseProfileOptions(args: readonly string[]): ProfileOptions {
     throw new CliError("Use only one of --seed, --seeds, or --count.");
   }
 
+  const resolvedSeeds =
+    seeds ??
+    (count === undefined
+      ? [...DEFAULT_PROFILE_SEEDS]
+      : Array.from({ length: count }, (_, index) => index + 1));
+  assertGenericCommandDoesNotUseReservedHoldout("profile", resolvedSeeds, ticks);
+
   return {
     scenarioId,
-    seeds:
-      seeds ??
-      (count === undefined
-        ? [...DEFAULT_PROFILE_SEEDS]
-        : Array.from({ length: count }, (_, index) => index + 1)),
+    seeds: resolvedSeeds,
     ticks,
   };
+}
+
+function assertGenericCommandDoesNotUseReservedHoldout(
+  command: "run" | "batch" | "profile" | "matrix",
+  seeds: readonly number[],
+  ticks: number,
+): void {
+  try {
+    assertNotReservedPhase42HoldoutCorpus(command, seeds, ticks);
+  } catch (error) {
+    throw new CliError(error instanceof Error ? error.message : String(error));
+  }
 }
 
 export function parseMatrixOptions(args: readonly string[]): MatrixOptions {
   let corpus: MatrixCorpusName = "smoke";
   let ticks: number | undefined;
   let outputPath: string | undefined;
+  let ticksSpecified = false;
 
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
@@ -364,6 +410,7 @@ export function parseMatrixOptions(args: readonly string[]): MatrixOptions {
       index++;
     } else if (argument === "--ticks") {
       ticks = parseInteger(optionValue(args, index, argument), argument, 0);
+      ticksSpecified = true;
       index++;
     } else if (argument === "--output") {
       outputPath = optionValue(args, index, argument);
@@ -376,11 +423,31 @@ export function parseMatrixOptions(args: readonly string[]): MatrixOptions {
     }
   }
 
+  const phase42Corpus =
+    corpus === "phase-4.2-calibration" || corpus === "phase-4.2-holdout";
+  if (phase42Corpus && ticksSpecified) {
+    throw new CliError(`${corpus} has a locked 10,000-tick horizon; --ticks is forbidden.`);
+  }
+  const canonicalOutputPath =
+    corpus === "phase-4.2-calibration"
+      ? phase42CalibrationOutputPath()
+      : corpus === "phase-4.2-holdout"
+        ? PHASE_4_2_HOLDOUT_OUTPUT_PATH
+        : undefined;
+  if (
+    canonicalOutputPath !== undefined &&
+    outputPath !== undefined &&
+    outputPath !== canonicalOutputPath
+  ) {
+    throw new CliError(`${corpus} output must use canonical path ${canonicalOutputPath}.`);
+  }
+  const resolvedOutputPath = canonicalOutputPath ?? outputPath;
+
   return {
     corpus,
     seeds: [...matrixCorpusSeeds(corpus)].sort((left, right) => left - right),
     ticks: ticks ?? matrixCorpusTicks(corpus),
-    ...(outputPath === undefined ? {} : { outputPath }),
+    ...(resolvedOutputPath === undefined ? {} : { outputPath: resolvedOutputPath }),
   };
 }
 
@@ -389,7 +456,24 @@ function round(value: number, decimalPlaces: number): number {
   return Math.round(value * scale) / scale;
 }
 
-export function simulate({ scenarioId, seed, ticks }: RunOptions): RunResult {
+function assertRawExecutionIsAuthorized(
+  seed: number,
+  ticks: number,
+  authorization?: ProtectedExecutionAuthorization,
+): void {
+  if (authorization === PHASE_4_2_PROTECTED_EXECUTION) return;
+  try {
+    assertNotReservedPhase42HoldoutCorpus("raw simulation", [seed], ticks);
+  } catch (error) {
+    throw new CliError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function simulateInternal(
+  { scenarioId, seed, ticks }: RunOptions,
+  authorization?: ProtectedExecutionAuthorization,
+): RunResult {
+  assertRawExecutionIsAuthorized(seed, ticks, authorization);
   const state = createSimulation(createScenarioReference(scenarioId, seed));
 
   const startedAt = performance.now();
@@ -421,7 +505,12 @@ export function simulate({ scenarioId, seed, ticks }: RunOptions): RunResult {
   };
 }
 
+export function simulate(options: RunOptions): RunResult {
+  return simulateInternal(options);
+}
+
 export function runSimulation(options: RunOptions): object {
+  assertGenericCommandDoesNotUseReservedHoldout("run", [options.seed], options.ticks);
   const result = simulate(options);
   return {
     command: "run",
@@ -443,6 +532,7 @@ function mean(values: readonly number[]): number {
 }
 
 export function runBatch(options: BatchOptions): object {
+  assertGenericCommandDoesNotUseReservedHoldout("batch", options.seeds, options.ticks);
   const startedAt = performance.now();
   const runs = options.seeds.map((seed) =>
     simulate({ scenarioId: options.scenarioId, seed, ticks: options.ticks }),
@@ -476,6 +566,22 @@ export function runBatch(options: BatchOptions): object {
       theftEvents: runs.reduce((sum, run) => sum + run.metrics.theftEvents, 0),
       conflictEvents: runs.reduce((sum, run) => sum + run.metrics.conflictEvents, 0),
       storageEvents: runs.reduce((sum, run) => sum + run.metrics.storageEvents, 0),
+      sheltersCompleted: runs.reduce((sum, run) => sum + run.metrics.sheltersCompleted, 0),
+      shelteredRests: runs.reduce((sum, run) => sum + run.metrics.shelteredRests, 0),
+      outdoorRests: runs.reduce((sum, run) => sum + run.metrics.outdoorRests, 0),
+      shelterMaintenanceMaterial: runs.reduce(
+        (sum, run) => sum + run.metrics.shelterMaintenanceMaterial,
+        0,
+      ),
+      shelterDeniedClaims: runs.reduce(
+        (sum, run) => sum + run.metrics.shelterDeniedClaims,
+        0,
+      ),
+      shelterGuestUses: runs.reduce((sum, run) => sum + run.metrics.shelterGuestUses, 0),
+      shelterRelocations: runs.reduce(
+        (sum, run) => sum + run.metrics.shelterRelocations,
+        0,
+      ),
       elapsedMs: round(elapsedMs, 3),
       ticksPerSecond:
         totalTicks === 0 ? 0 : round((totalTicks * 1_000) / Math.max(elapsedMs, 0.001), 1),
@@ -483,11 +589,11 @@ export function runBatch(options: BatchOptions): object {
   };
 }
 
-export function profileSimulation({
-  scenarioId,
-  seed,
-  ticks,
-}: RunOptions): ProfileRunResult {
+function profileSimulationInternal(
+  { scenarioId, seed, ticks }: RunOptions,
+  authorization?: ProtectedExecutionAuthorization,
+): ProfileRunResult {
+  assertRawExecutionIsAuthorized(seed, ticks, authorization);
   const state = createSimulation(createScenarioReference(scenarioId, seed));
   const collector = new StreamingActivityCollector(state);
   const startedAt = performance.now();
@@ -512,7 +618,12 @@ export function profileSimulation({
   };
 }
 
+export function profileSimulation(options: RunOptions): ProfileRunResult {
+  return profileSimulationInternal(options);
+}
+
 export function runProfile(options: ProfileOptions): object {
+  assertGenericCommandDoesNotUseReservedHoldout("profile", options.seeds, options.ticks);
   const runs = options.seeds.map((seed) =>
     profileSimulation({ scenarioId: options.scenarioId, seed, ticks: options.ticks }),
   );
@@ -547,147 +658,223 @@ export function matrixCases(options: MatrixOptions): RunOptions[] {
   );
 }
 
-export function runMatrix(options: MatrixOptions): object {
+function phase42HoldoutRequest(options: MatrixOptions): Phase42HoldoutExecutionRequest {
+  return {
+    scenarios: SCENARIO_CATALOG.map((scenario) => scenario.scenarioId),
+    seeds: options.seeds,
+    ticks: options.ticks,
+    outputPath: options.outputPath,
+    frozenDefinitionsReady: phase42BandsAreFrozen(PHASE_4_2_DEFINITION_FINGERPRINT),
+    definitionFingerprint: PHASE_4_2_DEFINITION_FINGERPRINT,
+  };
+}
+
+function assertProtectedHoldoutRequest(
+  options: MatrixOptions,
+  invocationDirectory: string,
+): Phase42HoldoutExecutionRequest {
+  const request = phase42HoldoutRequest(options);
+  try {
+    assertPhase42HoldoutExecutionRequest(request, invocationDirectory);
+  } catch (error) {
+    throw new CliError(error instanceof Error ? error.message : String(error));
+  }
+  return request;
+}
+
+function executeMatrix(
+  options: MatrixOptions,
+  invocationDirectory = process.cwd(),
+  authorization?: ProtectedExecutionAuthorization,
+): object {
+  let authenticateDiscoveryBeforeExecution = false;
+  if (options.corpus === "phase-4.2-holdout") {
+    if (authorization !== PHASE_4_2_PROTECTED_EXECUTION) {
+      throw new CliError(
+        "Phase 4.2 holdout execution must be bound to the protected evidence writer.",
+      );
+    }
+  } else if (options.corpus === "phase-4.2-calibration") {
+    const expectedOutputPath = phase42CalibrationOutputPath();
+    if (
+      PHASE_4_2_BAND_FREEZE_STATUS === "FROZEN" &&
+      !phase42BandsAreFrozen(PHASE_4_2_DEFINITION_FINGERPRINT)
+    ) {
+      throw new CliError(
+        "Phase 4.2 post-freeze calibration is forbidden because the runtime definition fingerprint does not match the reviewed frozen policy.",
+      );
+    }
+    if (PHASE_4_2_BAND_FREEZE_STATUS === "FROZEN") {
+      try {
+        assertPhase42PostFreezeCalibrationExecutionRequest(
+          PHASE_4_2_DEFINITION_FINGERPRINT,
+          invocationDirectory,
+        );
+      } catch (error) {
+        throw new CliError(error instanceof Error ? error.message : String(error));
+      }
+      authenticateDiscoveryBeforeExecution = true;
+    }
+    const seedsMatch =
+      options.seeds.length === SCENARIO_CALIBRATION_SEEDS.length &&
+      options.seeds.every((seed, index) => seed === SCENARIO_CALIBRATION_SEEDS[index]);
+    if (
+      options.ticks !== PHASE_4_2_MATRIX_TICKS ||
+      !seedsMatch ||
+      options.outputPath !== expectedOutputPath
+    ) {
+      throw new CliError(
+        `phase-4.2-calibration requires exactly four catalog scenarios, seeds 1..64, 10,000 ticks, and canonical output ${expectedOutputPath}.`,
+      );
+    }
+    try {
+      assertMatrixEvidenceTargetsAbsent(expectedOutputPath, invocationDirectory);
+    } catch (error) {
+      throw new CliError(error instanceof Error ? error.message : String(error));
+    }
+  } else {
+    assertGenericCommandDoesNotUseReservedHoldout("matrix", options.seeds, options.ticks);
+  }
   const cases = matrixCases(options);
   if (cases.length > MAX_RETAINED_MATRIX_RUNS) {
     throw new CliError(
       `Matrix output retains every primary profile and is bounded to ${MAX_RETAINED_MATRIX_RUNS.toString()} runs.`,
     );
   }
-  const runs: MatrixRunResult[] = [];
-  const determinismComparisons: DeterminismComparison[] = [];
   const repeatCount = options.corpus === "smoke" ? 1 : 0;
+  const collectMatrixRuns = (): {
+    readonly runs: DeterministicMatrixRun[];
+    readonly determinismComparisons: MatrixDeterminismComparison[];
+  } => {
+    const runs: DeterministicMatrixRun[] = [];
+    const determinismComparisons: MatrixDeterminismComparison[] = [];
+    // Keep only one authoritative simulation and streaming collector alive at a time.
+    for (const matrixCase of cases) {
+      const { performance: _performance, ...deterministicRun } = profileSimulationInternal(
+        matrixCase,
+        authorization,
+      );
+      runs.push(deterministicRun);
 
-  // Keep only one authoritative simulation and streaming collector alive at a time.
-  for (const matrixCase of cases) {
-    const { performance: _performance, ...deterministicRun } =
-      profileSimulation(matrixCase);
-    runs.push(deterministicRun);
-
-    for (let repeat = 0; repeat < repeatCount; repeat += 1) {
-      const { performance: _repeatPerformance, ...repeatedRun } =
-        profileSimulation(matrixCase);
-      determinismComparisons.push({
-        scenario: { ...deterministicRun.scenario },
-        compiledMapHash: deterministicRun.compiledMapHash,
-        firstFinalHash: deterministicRun.finalHash,
-        repeatFinalHash: repeatedRun.finalHash,
-        exactMatch: JSON.stringify(deterministicRun) === JSON.stringify(repeatedRun),
-      });
+      for (let repeat = 0; repeat < repeatCount; repeat += 1) {
+        const { performance: _repeatPerformance, ...repeatedRun } =
+          profileSimulationInternal(matrixCase, authorization);
+        determinismComparisons.push({
+          scenario: { ...deterministicRun.scenario },
+          compiledMapHash: deterministicRun.compiledMapHash,
+          firstFinalHash: deterministicRun.finalHash,
+          repeatFinalHash: repeatedRun.finalHash,
+          exactMatch: JSON.stringify(deterministicRun) === JSON.stringify(repeatedRun),
+        });
+      }
     }
+    return { runs, determinismComparisons };
+  };
+  const authenticateDiscovery = (): void => {
+    const discoverySha256 = PHASE_4_2_HOLDOUT_POLICY.provenance.discoveryArtifactSha256;
+    if (discoverySha256 === null) {
+      throw new Error(
+        "Phase 4.2 post-freeze calibration requires a reviewed discovery SHA-256.",
+      );
+    }
+    authenticatePhase42CalibrationArtifact(
+      resolve(invocationDirectory, PHASE_4_2_HOLDOUT_POLICY.provenance.discoveryArtifact),
+      discoverySha256,
+      "CANDIDATE",
+    );
+  };
+  let collected;
+  try {
+    collected = authenticateDiscoveryBeforeExecution
+      ? runAfterPhase42CalibrationAuthentication(authenticateDiscovery, collectMatrixRuns)
+      : collectMatrixRuns();
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    throw new CliError(error instanceof Error ? error.message : String(error));
   }
+  const { runs, determinismComparisons } = collected;
 
-  const analysisContext = {
-    corpus: options.corpus,
-    seeds: [...new Set(options.seeds)].sort((left, right) => left - right),
-    requestedTicks: options.ticks,
-  } as const;
-  const byScenario = SCENARIO_CATALOG.map((scenario) => {
-    const scenarioRuns = runs.filter(
-      (run) => run.scenario.scenarioId === scenario.scenarioId,
-    );
-    return {
-      ...summarizeScenarioIdentity(scenarioRuns),
-      activity: summarizeActivityProfiles(scenarioRuns.map((run) => run.profile)),
-      analysis: analyzeScenarioRuns(scenarioRuns, analysisContext),
-    };
-  });
-  const scenarioDefinitions = byScenario.map((aggregate) => aggregate.scenario);
-  const compiledMapHashes = [
-    ...new Set(byScenario.flatMap((aggregate) => aggregate.compiledMapHashes)),
-  ].sort();
-  const perRunAnalysis = new Map(
-    byScenario.flatMap((aggregate) =>
-      aggregate.analysis.outcomes.perRun.map((outcomeSummary, index) => {
-        const hardInvariants = aggregate.analysis.hardInvariants.perRun[index];
-        if (hardInvariants === undefined) {
-          throw new Error("Scenario hard-invariant analysis lost run alignment.");
+  const phase42Definition =
+    options.corpus === "phase-4.2-calibration" || options.corpus === "phase-4.2-holdout"
+      ? {
+          contractSchemaVersion: PHASE_4_2_DEFINITION_CONTRACT_SCHEMA_VERSION,
+          fingerprintAlgorithm: PHASE_4_2_DEFINITION_FINGERPRINT_ALGORITHM,
+          status: phase42BandsAreFrozen(PHASE_4_2_DEFINITION_FINGERPRINT)
+            ? ("FROZEN" as const)
+            : ("CANDIDATE" as const),
+          fingerprint: PHASE_4_2_DEFINITION_FINGERPRINT,
+          contract: PHASE_4_2_DEFINITION_CONTRACT,
         }
-        return [
-          `${aggregate.scenario.scenarioId}:${outcomeSummary.seed.toString()}`,
-          { outcomeSummary, hardInvariants },
-        ] as const;
-      }),
-    ),
-  );
-  const reportedRuns: ReportedMatrixRun[] = runs.map((run) => {
-    const analysis = perRunAnalysis.get(
-      `${run.scenario.scenarioId}:${run.scenario.seed.toString()}`,
-    );
-    if (analysis === undefined) throw new Error("Scenario analysis lost a matrix run.");
-    return { ...run, ...analysis };
-  });
-  const pairedComparisons = pairedScenarioComparisons(runs);
-  const frozenPairedMacroBands = evaluateFrozenPairedMacroBands(
+      : undefined;
+  return deriveMatrixEvidenceReport({
+    corpus: options.corpus,
+    seeds: options.seeds,
+    ticks: options.ticks,
+    repeatCount,
     runs,
-    pairedComparisons,
-    analysisContext,
-  );
-  const convergence = convergenceDiagnostics(pairedComparisons);
-  const allRepeatComparisonsMatch = determinismComparisons.every(
-    (comparison) => comparison.exactMatch,
-  );
+    determinismComparisons,
+    ...(phase42Definition === undefined ? {} : { phase42Definition }),
+  });
+}
 
-  return {
-    schemaVersion: ACTIVITY_PROFILE_SCHEMA_VERSION,
-    command: "matrix",
-    configuration: {
-      corpus: options.corpus,
-      scenarios: SCENARIO_CATALOG.map((scenario) => scenario.scenarioId),
-      scenarioDefinitions,
-      compiledMapHashes,
-      seeds: [...new Set(options.seeds)].sort((left, right) => left - right),
-      ticksPerRun: options.ticks,
-      sampleEveryTicks: ACTIVITY_SAMPLE_EVERY_TICKS,
-      significantEventTiers: SIGNIFICANT_EVENT_TIERS,
-      ordering: "catalog-then-seed",
-      repeatCount,
-      executionsPerCase: repeatCount + 1,
-      maximumRetainedPrimaryRuns: MAX_RETAINED_MATRIX_RUNS,
-    },
-    runs: reportedRuns,
-    aggregate: {
-      scenarioDefinitions,
-      compiledMapHashes,
-      byScenario,
-    },
-    analysis: {
-      interpretation: "DESCRIPTIVE_CROSS_SCENARIO_NON_CAUSAL",
-      determinism: {
-        repeatCount,
-        executionsPerCase: repeatCount + 1,
-        comparisonCount: determinismComparisons.length,
-        allExactMatches: repeatCount === 0 ? null : allRepeatComparisonsMatch,
-        hardInvariant: {
-          id: "EXACT_REPEAT_DETERMINISM",
-          classification: "HARD_INVARIANT",
-          status:
-            repeatCount === 0
-              ? "NOT_EVALUATED"
-              : allRepeatComparisonsMatch
-                ? "PASS"
-                : "FAIL",
-          reason:
-            repeatCount === 0
-              ? "Only the locked smoke corpus repeats each run internally."
-              : null,
-        },
-        comparisons: determinismComparisons,
-      },
-      pairedComparisons,
-      frozenPairedMacroBands,
-      convergence,
-      rawProfileRetention: {
-        policy: "RETAIN_ALL_PRIMARY_PROFILES",
-        retainedRunCount: reportedRuns.length,
-        maximumRetainedRunCount: MAX_RETAINED_MATRIX_RUNS,
-        repeatProfilesRetained: false,
-        repeatProfilesComparedExactlyThenDiscarded: repeatCount > 0,
-        bound:
-          "Four catalog scenarios times at most 64 locked seeds equals 256 retained primary profiles.",
-      },
-    },
-  } satisfies MatrixEvidenceReport;
+export function runMatrix(
+  options: MatrixOptions,
+  invocationDirectory = process.cwd(),
+): object {
+  if (options.corpus === "phase-4.2-holdout") {
+    assertProtectedHoldoutRequest(options, invocationDirectory);
+    throw new CliError(
+      "Imported runMatrix cannot execute the Phase 4.2 holdout without its protected evidence writer.",
+    );
+  }
+  return executeMatrix(options, invocationDirectory);
+}
+
+function runProtectedHoldoutAndWrite(
+  options: MatrixOptions,
+  invocationDirectory: string,
+): MatrixEvidenceReport {
+  const request = assertProtectedHoldoutRequest(options, invocationDirectory);
+  try {
+    const discoverySha256 = PHASE_4_2_HOLDOUT_POLICY.provenance.discoveryArtifactSha256;
+    const verificationSha256 =
+      PHASE_4_2_HOLDOUT_POLICY.provenance.verificationArtifactSha256;
+    if (discoverySha256 === null || verificationSha256 === null) {
+      throw new Error(
+        "Phase 4.2 holdout authentication requires reviewed discovery and verification SHA-256 values.",
+      );
+    }
+    acquirePhase42HoldoutAfterCalibrationAuthentication(
+      () =>
+        authenticatePhase42CalibrationArtifact(
+          resolve(
+            invocationDirectory,
+            PHASE_4_2_HOLDOUT_POLICY.provenance.discoveryArtifact,
+          ),
+          discoverySha256,
+          "CANDIDATE",
+        ),
+      () =>
+        authenticatePhase42CalibrationArtifact(
+          resolve(
+            invocationDirectory,
+            PHASE_4_2_HOLDOUT_POLICY.provenance.verificationArtifact,
+          ),
+          verificationSha256,
+          "FROZEN",
+        ),
+      () => acquirePhase42HoldoutAttempt(request, invocationDirectory),
+    );
+  } catch (error) {
+    throw new CliError(error instanceof Error ? error.message : String(error));
+  }
+  const report = executeMatrix(
+    options,
+    invocationDirectory,
+    PHASE_4_2_PROTECTED_EXECUTION,
+  ) as MatrixEvidenceReport;
+  writeMatrixEvidence(report, PHASE_4_2_HOLDOUT_OUTPUT_PATH, invocationDirectory);
+  return report;
 }
 
 export function main(args: readonly string[]): void {
@@ -697,6 +884,27 @@ export function main(args: readonly string[]): void {
   }
 
   const [first, ...rest] = args;
+  if (first === "phase-4.2-definition-contract") {
+    if (rest.length > 0) {
+      throw new CliError("phase-4.2-definition-contract accepts no options.");
+    }
+    process.stdout.write(
+      `${JSON.stringify({
+        schemaVersion: PHASE_4_2_DEFINITION_CONTRACT_SCHEMA_VERSION,
+        fingerprintAlgorithm: PHASE_4_2_DEFINITION_FINGERPRINT_ALGORITHM,
+        fingerprint: PHASE_4_2_DEFINITION_FINGERPRINT,
+        contract: PHASE_4_2_DEFINITION_CONTRACT,
+      })}\n`,
+    );
+    return;
+  }
+  if (first === "definition-fingerprint") {
+    if (rest.length > 0) {
+      throw new CliError("definition-fingerprint accepts no options.");
+    }
+    process.stdout.write(`${PHASE_4_2_DEFINITION_FINGERPRINT}\n`);
+    return;
+  }
   if (first === "batch") {
     process.stdout.write(`${JSON.stringify(runBatch(parseBatchOptions(rest)), null, 2)}\n`);
     return;
@@ -709,13 +917,13 @@ export function main(args: readonly string[]): void {
   }
   if (first === "matrix") {
     const options = parseMatrixOptions(rest);
-    const report = runMatrix(options) as MatrixEvidenceReport;
-    if (options.outputPath !== undefined) {
-      writeMatrixEvidence(
-        report,
-        options.outputPath,
-        process.env.INIT_CWD ?? process.cwd(),
-      );
+    const invocationDirectory = process.env.INIT_CWD ?? process.cwd();
+    const report =
+      options.corpus === "phase-4.2-holdout"
+        ? runProtectedHoldoutAndWrite(options, invocationDirectory)
+        : (runMatrix(options, invocationDirectory) as MatrixEvidenceReport);
+    if (options.corpus !== "phase-4.2-holdout" && options.outputPath !== undefined) {
+      writeMatrixEvidence(report, options.outputPath, invocationDirectory);
     }
     for (const chunk of matrixEvidenceStdoutChunks(report)) process.stdout.write(chunk);
     return;

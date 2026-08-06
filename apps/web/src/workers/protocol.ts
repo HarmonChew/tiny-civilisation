@@ -24,7 +24,7 @@ import type {
 } from "../runtime/types";
 
 /** Changes whenever the Worker transport envelope changes incompatibly. */
-export const RUNTIME_PROTOCOL_VERSION = 3 as const;
+export const RUNTIME_PROTOCOL_VERSION = 4 as const;
 
 export type RuntimeOperation =
   | {

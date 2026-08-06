@@ -3,6 +3,7 @@ import { executeActiveActions, runScheduledDecisions } from "./actions/runtime.j
 import { beginEventRetentionContext, endEventRetentionContext } from "./events.js";
 import { updateGroups } from "./groups.js";
 import { updateProximityRelationships } from "./social.js";
+import { updateShelters } from "./shelters.js";
 import {
   maintainBoundedSocialState,
   validateAuthoritativeInvariants,
@@ -17,6 +18,7 @@ export const AUTHORITATIVE_TICK_PIPELINE = [
   "regenerateResources",
   "updateProximityRelationships",
   "executeActiveActions",
+  "updateShelters",
   "updateGroups",
   "runScheduledDecisions",
   "maintainBoundedSocialState",
@@ -36,6 +38,7 @@ export function advanceSimulation(state: SimulationState, ticks = 1): Simulation
       regenerateResources(state);
       updateProximityRelationships(state);
       executeActiveActions(state);
+      updateShelters(state);
       updateGroups(state);
       runScheduledDecisions(state);
       maintainBoundedSocialState(state);

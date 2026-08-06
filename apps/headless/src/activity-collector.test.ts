@@ -358,7 +358,7 @@ describe("streaming activity collector", () => {
 
     state.tick = 5;
     appendEvent(state, "STORAGE_COMPLETED", "SIGNIFICANT", { tick: 4 });
-    appendEvent(state, "PLAYER_ADDED_FOOD", "SIGNIFICANT", {
+    appendEvent(state, "PLAYER_ADDED_MATERIAL", "SIGNIFICANT", {
       tick: 4,
       commandId: 1,
       commandOutcome: "APPLIED",
@@ -916,6 +916,7 @@ describe("streaming activity collector", () => {
     const groupId = state.nextGroupId++;
     const storageId = state.nextEntityId++;
     const storageSiteId = state.nextEntityId++;
+    const shelterSiteId = state.nextEntityId++;
     first.groupId = groupId;
     second.groupId = groupId;
     state.groups.push({
@@ -927,6 +928,11 @@ describe("streaming activity collector", () => {
       leaderId: first.id,
       homeTileIndex: firstTile,
       storageStructureId: storageId,
+      activeShelterId: null,
+      pendingShelterId: shelterSiteId,
+      shelterRelocations: 0,
+      shelterCommitUntilTick: 0,
+      shelterRelocationCandidate: null,
       cohesion: 5_000,
       sharingNorm: 1_000,
       majorEventIds: [],
@@ -956,6 +962,38 @@ describe("streaming activity collector", () => {
       inventory: { capacity: 200, food: 99, material: 99, water: 0 },
       guardIds: [],
       completedTick: null,
+    });
+    state.structures.push({
+      id: shelterSiteId,
+      kind: "SHELTER_SITE",
+      tileIndex: thirdTile,
+      groupId,
+      material: 2,
+      materialRequired: 18,
+      progress: 2_000,
+      workRequired: 10_000,
+      inventory: { capacity: 0, food: 0, material: 0, water: 0 },
+      guardIds: [],
+      completedTick: null,
+      condition: 10_000,
+      baseCapacity: 6,
+      siteAssessment: {
+        selectedAtTick: 0,
+        memberTravelCost: 100,
+        storageTravelCost: 100,
+        foodAccessCost: 100,
+        materialAccessCost: 100,
+        waterAccessCost: 100,
+        crowdingCost: 0,
+        constructionInvestmentCost: 0,
+        relocationChangeCost: 0,
+        totalScore: 900,
+      },
+      builtFromShelterId: null,
+      maintenanceMaterialSpent: 0,
+      lastMaintainedTick: null,
+      lastUsedTick: null,
+      conditionBand: "GOOD",
     });
     const addRelationship = (
       fromId: number,
@@ -1060,7 +1098,7 @@ describe("streaming activity collector", () => {
       resources: {
         nodeCount: state.resourceNodes.length,
         unreachableCreatureResourceKinds: 0,
-        constructionCommittedMaterial: 3,
+        constructionCommittedMaterial: 5,
       },
       storage: {
         structureCount: 2,
@@ -1473,6 +1511,11 @@ describe("streaming activity collector", () => {
       leaderId: changingActor.id,
       homeTileIndex: farthestTile.index,
       storageStructureId: null,
+      activeShelterId: null,
+      pendingShelterId: null,
+      shelterRelocations: 0,
+      shelterCommitUntilTick: 0,
+      shelterRelocationCandidate: null,
       cohesion: 5_000,
       sharingNorm: 0,
       majorEventIds: [],

@@ -1,6 +1,6 @@
 import { desireForAction, desireStrength, planForAction } from "./desires.js";
 import { classifyAttentionTier, createEventClusterKey } from "./event-attention.js";
-import { claimInteractionSlot } from "./interaction-slots.js";
+import { claimInteractionSlot, requiresInteractionClaim } from "./interaction-slots.js";
 import { findPath } from "./pathfinding.js";
 import { selectStrongestReason } from "./reason-facts.js";
 import type {
@@ -204,6 +204,114 @@ function upgradeHydrationState(state: UnknownRecord, scenarioId: ScenarioId): vo
   state.nextEventId = nextEventId + 1;
   state.scenario = { ...scenario };
   state.compiledMapHash = compiled.compiledMapHash;
+  // Hydration was the authoritative v4 boundary. Shelter migration is kept
+  // separate so v4 saves receive one truthful Phase 4.2 enable event.
+  state.schemaVersion = 4;
+}
+
+function phaseFourScenarioId(state: UnknownRecord): ScenarioId {
+  const scenario = state.scenario;
+  if (!isRecord(scenario) || !isScenarioId(scenario.scenarioId)) {
+    throw new Error("Phase 4 simulation state scenario must be a known scenario.");
+  }
+  if (
+    scenario.kind !== "tiny-civilisation/scenario" ||
+    scenario.schemaVersion !== 2 ||
+    scenario.behaviorVersion !== 4 ||
+    scenario.scenarioVersion !== 2 ||
+    scenario.mapGenerationVersion !== 1 ||
+    scenario.seed !== legacySeed(state)
+  ) {
+    throw new Error(
+      "Phase 4 simulation state must use the scenario 2 / map-generation 1 compatibility tuple.",
+    );
+  }
+  return scenario.scenarioId;
+}
+
+function upgradeShelterState(state: UnknownRecord, scenarioId: ScenarioId): void {
+  const structures = requireArray(state, "structures");
+  if (
+    structures.some(
+      (structure) =>
+        isRecord(structure) &&
+        (structure.kind === "SHELTER_SITE" ||
+          structure.kind === "SHELTER" ||
+          structure.kind === "ABANDONED_SHELTER"),
+    )
+  ) {
+    throw new Error("Legacy simulation state unexpectedly contains shelters.");
+  }
+  let retainedOutdoorRests = 0;
+  for (const creatureValue of requireArray(state, "creatures")) {
+    if (!isRecord(creatureValue) || !isRecord(creatureValue.actionCounts)) {
+      throw new Error("Legacy creature shelter fields must be objects.");
+    }
+    const retainedRestCount = creatureValue.actionCounts.REST;
+    if (typeof retainedRestCount === "number" && Number.isSafeInteger(retainedRestCount)) {
+      retainedOutdoorRests += Math.max(0, retainedRestCount);
+    }
+    creatureValue.actionCounts.ESTABLISH_SHELTER_SITE = 0;
+    creatureValue.actionCounts.BUILD_SHELTER = 0;
+    creatureValue.actionCounts.REST_SHELTERED = 0;
+    creatureValue.actionCounts.MAINTAIN_SHELTER = 0;
+  }
+  for (const groupValue of requireArray(state, "groups")) {
+    if (!isRecord(groupValue)) throw new Error("Legacy group must be an object.");
+    groupValue.activeShelterId = null;
+    groupValue.pendingShelterId = null;
+    groupValue.shelterRelocations = 0;
+    groupValue.shelterCommitUntilTick = 0;
+    groupValue.shelterRelocationCandidate = null;
+  }
+  const metrics = state.metrics;
+  if (!isRecord(metrics))
+    throw new Error("Legacy simulation state metrics must be an object.");
+  metrics.sheltersCompleted = 0;
+  metrics.shelteredRests = 0;
+  metrics.outdoorRests = retainedOutdoorRests;
+  metrics.shelterMaintenanceMaterial = 0;
+  metrics.shelterDeniedClaims = 0;
+  metrics.shelterGuestUses = 0;
+  metrics.shelterRelocations = 0;
+
+  const nextEventId = state.nextEventId;
+  const tick = state.tick;
+  if (
+    typeof nextEventId !== "number" ||
+    !Number.isSafeInteger(nextEventId) ||
+    nextEventId < 1 ||
+    typeof tick !== "number" ||
+    !Number.isSafeInteger(tick) ||
+    tick < 0
+  ) {
+    throw new Error("Legacy simulation state event counters must be valid integers.");
+  }
+  requireArray(state, "domainEvents").push({
+    id: nextEventId,
+    tick,
+    type: "SHELTER_RULES_ENABLED",
+    actorIds: [],
+    targetIds: [],
+    groupIds: [],
+    locationTileIndex: null,
+    resourceKind: null,
+    quantity: 0,
+    causedByEventIds: [],
+    decisionRecordIds: [],
+    importance: 45,
+    attentionTier: "NOTABLE",
+    clusterKey: "world:shelter-rules-enabled",
+    commandId: null,
+    commandOutcome: null,
+    commandRejectionReason: null,
+    summary:
+      "Shelter and settlement rules began when this save was upgraded; no shelter history exists before this tick.",
+  });
+  state.nextEventId = nextEventId + 1;
+  const scenario = createScenarioReference(scenarioId, legacySeed(state));
+  state.scenario = { ...scenario };
+  state.compiledMapHash = compileScenario(scenario).compiledMapHash;
   state.schemaVersion = SIMULATION_STATE_VERSION;
 }
 
@@ -293,22 +401,30 @@ export function migrateSimulationState(value: unknown): SimulationState {
   if (value.schemaVersion === SIMULATION_STATE_VERSION) {
     return value as unknown as SimulationState;
   }
+  if (value.schemaVersion === 4) {
+    const migrated = cloneJson(value);
+    if (!isRecord(migrated)) throw new Error("Legacy simulation state is invalid.");
+    upgradeShelterState(migrated, phaseFourScenarioId(migrated));
+    return migrated as unknown as SimulationState;
+  }
   if (value.schemaVersion === 3) {
     const migrated = cloneJson(value);
     if (!isRecord(migrated)) throw new Error("Legacy simulation state is invalid.");
     const scenarioId = legacyScenarioId(migrated);
     upgradeHydrationState(migrated, scenarioId);
+    upgradeShelterState(migrated, scenarioId);
     return migrated as unknown as SimulationState;
   }
   if (value.schemaVersion === 2) {
     const migrated = cloneJson(value);
     if (!isRecord(migrated)) throw new Error("Legacy simulation state is invalid.");
     upgradeHydrationState(migrated, "petri-world");
+    upgradeShelterState(migrated, "petri-world");
     return migrated as unknown as SimulationState;
   }
   if (value.schemaVersion !== 1) {
     throw new Error(
-      `Unsupported simulation state version ${String(value.schemaVersion)}; expected 1, 2, 3, or ${SIMULATION_STATE_VERSION}.`,
+      `Unsupported simulation state version ${String(value.schemaVersion)}; expected 1, 2, 3, 4, or ${SIMULATION_STATE_VERSION}.`,
     );
   }
   const migrated = cloneJson(value);
@@ -380,6 +496,7 @@ export function migrateSimulationState(value: unknown): SimulationState {
       action.targetEntityId,
       anchorTile,
     );
+    let claimRebuilt = !requiresInteractionClaim(action.kind);
     if (claim) {
       const path = findPath(state.world, creature.tileIndex, claim.tileIndex);
       if (path.length > 0) {
@@ -388,7 +505,16 @@ export function migrateSimulationState(value: unknown): SimulationState {
         action.path = path;
         action.pathIndex = path.length <= 1 ? path.length : 1;
         goal.targetTileIndex = claim.tileIndex;
+        claimRebuilt = true;
       }
+    }
+    if (!claimRebuilt) {
+      creature.activeDesire = null;
+      creature.activePlan = null;
+      creature.activeGoal = null;
+      creature.activeAction = null;
+      creature.nextDecisionTick = Math.min(creature.nextDecisionTick, state.tick);
+      continue;
     }
     creature.activePlan = {
       kind: plan,
@@ -413,5 +539,6 @@ export function migrateSimulationState(value: unknown): SimulationState {
     ];
   }
   upgradeHydrationState(migrated, "petri-world");
+  upgradeShelterState(migrated, "petri-world");
   return migrated as unknown as SimulationState;
 }

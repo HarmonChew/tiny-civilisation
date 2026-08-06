@@ -163,6 +163,43 @@ function migratePhaseThreeScenarioReference(
   return createScenarioReference(value.scenarioId, value.seed);
 }
 
+function migratePhaseFourScenarioReference(
+  value: unknown,
+  expectedSeed: number,
+): ScenarioReferenceV2 {
+  if (!isRecord(value)) throw new Error("Phase 4 scenario must be an object.");
+  assertExactKeys(
+    value,
+    [
+      "kind",
+      "schemaVersion",
+      "behaviorVersion",
+      "scenarioId",
+      "scenarioVersion",
+      "mapGenerationVersion",
+      "seed",
+    ],
+    "Phase 4 scenario",
+  );
+  if (
+    value.kind !== "tiny-civilisation/scenario" ||
+    value.schemaVersion !== 2 ||
+    value.behaviorVersion !== 4 ||
+    value.scenarioVersion !== 2 ||
+    value.mapGenerationVersion !== 1 ||
+    !isScenarioId(value.scenarioId)
+  ) {
+    throw new Error(
+      "Phase 4 scenario must use the behavior 4 / scenario 2 / map-generation 1 compatibility tuple.",
+    );
+  }
+  assertNonnegativeInteger(value.seed, "Phase 4 scenario seed");
+  if (value.seed !== expectedSeed) {
+    throw new Error("Phase 4 scenario seed must match its envelope seed.");
+  }
+  return createScenarioReference(value.scenarioId, value.seed);
+}
+
 export function assertScheduledPlayerCommand(
   value: unknown,
   label = "Scheduled command",
@@ -180,6 +217,8 @@ export function assertScheduledPlayerCommand(
   if (
     value.type !== "ADD_FOOD" &&
     value.type !== "REMOVE_FOOD" &&
+    value.type !== "ADD_MATERIAL" &&
+    value.type !== "REMOVE_MATERIAL" &&
     value.type !== "REPLENISH_WATER" &&
     value.type !== "DRAIN_WATER" &&
     value.type !== "TOGGLE_OBSTACLE"
@@ -436,6 +475,69 @@ export function migrateSimulationReplay(value: unknown): SimulationReplayV1 {
     assertSimulationReplay(migrated);
     return migrated;
   }
+  if (schemaVersion === 3) {
+    assertExactKeys(
+      value,
+      [
+        "kind",
+        "schemaVersion",
+        "behaviorVersion",
+        "stateSchemaVersion",
+        "scenario",
+        "seed",
+        "commands",
+        "finalTick",
+        "finalHash",
+      ],
+      "Replay",
+    );
+    if (
+      readVersion(value, "behaviorVersion") !== 4 ||
+      readVersion(value, "stateSchemaVersion") !== 4
+    ) {
+      throw new Error(
+        `Replay schema version 3 has incompatible behavior/state versions ${String(value.behaviorVersion)}/${String(value.stateSchemaVersion)}.`,
+      );
+    }
+    assertNonnegativeInteger(value.seed, "Replay seed");
+    if (value.seed > 0xffffffff) {
+      throw new Error("Replay seed must be an unsigned 32-bit integer.");
+    }
+    if (!Array.isArray(value.commands))
+      throw new Error("Replay commands must be an array.");
+    for (const [index, command] of value.commands.entries()) {
+      if (
+        !isRecord(command) ||
+        (command.type !== "ADD_FOOD" &&
+          command.type !== "REMOVE_FOOD" &&
+          command.type !== "REPLENISH_WATER" &&
+          command.type !== "DRAIN_WATER" &&
+          command.type !== "TOGGLE_OBSTACLE")
+      ) {
+        throw new Error(`Replay commands[${index.toString()}] is not a Phase 4 command.`);
+      }
+    }
+    const scenario = migratePhaseFourScenarioReference(value.scenario, value.seed);
+    const migrated: SimulationReplayV1 = {
+      kind: "tiny-civilisation/replay",
+      schemaVersion: REPLAY_SCHEMA_VERSION,
+      behaviorVersion: SIMULATION_BEHAVIOR_VERSION,
+      stateSchemaVersion: SIMULATION_STATE_VERSION,
+      scenario,
+      seed: value.seed,
+      commands: Array.isArray(value.commands)
+        ? value.commands.map((command) =>
+            isRecord(command)
+              ? ({ ...command } as unknown as ScheduledPlayerCommand)
+              : command,
+          )
+        : (value.commands as readonly ScheduledPlayerCommand[]),
+      ...(value.finalTick === undefined ? {} : { finalTick: value.finalTick as number }),
+      // Behavior changed; a v4 hash cannot verify a v5 rerun.
+    };
+    assertSimulationReplay(migrated);
+    return migrated;
+  }
   assertSimulationReplay(value);
   return {
     ...value,
@@ -538,7 +640,8 @@ export function migrateSimulationSave(value: unknown): SimulationSaveV1 {
     (schemaVersion === 1 &&
       ((behaviorVersion === 1 && stateSchemaVersion === 1) ||
         (behaviorVersion === 3 && stateSchemaVersion === 2))) ||
-    (schemaVersion === 2 && behaviorVersion === 3 && stateSchemaVersion === 3);
+    (schemaVersion === 2 && behaviorVersion === 3 && stateSchemaVersion === 3) ||
+    (schemaVersion === 3 && behaviorVersion === 4 && stateSchemaVersion === 4);
   if (supportedLegacyEnvelope) {
     const state = migrateSimulationState(value.state);
     assertCompatibleSimulationState(state);
@@ -550,7 +653,7 @@ export function migrateSimulationSave(value: unknown): SimulationSaveV1 {
       state,
     };
   }
-  if (schemaVersion === 1 || schemaVersion === 2) {
+  if (schemaVersion === 1 || schemaVersion === 2 || schemaVersion === 3) {
     throw new Error(
       `Save schema version ${String(schemaVersion)} has incompatible behavior/state versions ${String(behaviorVersion)}/${String(stateSchemaVersion)}.`,
     );

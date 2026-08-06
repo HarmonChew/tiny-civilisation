@@ -1,6 +1,6 @@
 # Tiny Civilisation — Progress and Expansion Plan
 
-Last updated: 5 August 2026
+Last updated: 6 August 2026
 
 ## Current position
 
@@ -8,9 +8,11 @@ Phase 0 (baseline protection), Phase 1 (behavior-preserving architecture), Phase
 
 Phase 3 feature implementation is now present. Four structurally distinct scenarios compile from an immutable core catalog; their complete identity survives state, Worker operations, saves, replays, experiments, imports, moment replay, and headless analysis. The browser separates scenario choice from seed choice and exposes factual starting conditions, while the headless matrix measures structural, social, spatial, desire, action, milestone, concentration, outcome-label, and convergence differences across locked seed corpora.
 
-Phase 3 release evidence is not complete. Its historical 64-seed calibration and untouched 64-seed holdout from immutable commit `4ff604e` now pass the automated hard, frozen-label, and macro-difference gates without behavior tuning; deterministic compressed artifacts and checksums are attached to the [Phase 3 release-evidence ledger](docs/baselines/phase-3-release-status-v1.md). The aggregate release suite passes all 12 stories across Chromium, Firefox, and WebKit. The NVDA pass and planned formative/confirmatory usability sessions remain open release gates.
+Phase 3 release evidence is not complete. Its historical 64-seed calibration and untouched 64-seed holdout from immutable commit `4ff604e` pass the automated hard, frozen-label, and macro-difference gates without behavior tuning; deterministic compressed artifacts and checksums are attached to the [Phase 3 release-evidence ledger](docs/baselines/phase-3-release-status-v1.md). The aggregate release suite recorded at immutable Phase 4.1 base commit `7df0b22` passed all 12 stories across Chromium, Firefox, and WebKit. The NVDA pass and planned formative/confirmatory usability sessions remain open release gates.
 
-Phase 4.1 water and mobility engineering and automated simulation evidence are complete. The eight-creature, 48×32 scenario set now includes finite renewable potable-water sources, thirst and nonlethal dehydration, shared carrying capacity, gathering/drinking/sharing behavior, weighted travel decisions, observational traffic trails, water interventions, factual response traces, migration, headless hydration evidence, and accessible browser projections. The discovery [review](docs/baselines/phase-4.1-calibration-review-v1.md) froze classifier v2 and the selected bands; the unchanged [frozen calibration](docs/baselines/phase-4.1-calibration-v2.md) and [untouched holdout](docs/baselines/phase-4.1-holdout-v2.md) each pass their automated hard, contract, outcome-incidence, dominance-rationale, and paired macro-difference gates. The aggregate release suite passes all 12 stories across Chromium, Firefox, and WebKit. Manual NVDA and fresh usability evidence remain open in the [Phase 4.1 release ledger](docs/baselines/phase-4.1-release-status-v1.md), so the slice is not release-complete.
+Phase 4.1 water and mobility engineering and automated simulation evidence are complete. The eight-creature, 48×32 scenario set now includes finite renewable potable-water sources, thirst and nonlethal dehydration, shared carrying capacity, gathering/drinking/sharing behavior, weighted travel decisions, observational traffic trails, water interventions, factual response traces, migration, headless hydration evidence, and accessible browser projections. The discovery [review](docs/baselines/phase-4.1-calibration-review-v1.md) froze classifier v2 and the selected bands; the unchanged [frozen calibration](docs/baselines/phase-4.1-calibration-v2.md) and [untouched holdout](docs/baselines/phase-4.1-holdout-v2.md) each pass their automated hard, contract, outcome-incidence, dominance-rationale, and paired macro-difference gates. The aggregate release suite recorded at immutable commit `7df0b22` passed all 12 stories across Chromium, Firefox, and WebKit. Manual NVDA and the unified five-person formative and five-new-person confirmatory rounds remain open in the [Phase 4.1 release ledger](docs/baselines/phase-4.1-release-status-v1.md), so the slice is not release-complete.
+
+Phase 4.2 shelter and settlement engineering and automated release-candidate evidence are complete in the current workspace. Persistent groups can autonomously select, build, occupy, maintain, and once relocate a communal shelter; condition changes capacity and recovery without collapse, member claims outrank trusted guests, and outdoor rest remains available. Material interventions, versioned migration, factual events, dish-first shelter projections, a focused settlement collector, frozen classifier-v3 labels, and the descriptive `SETTLEMENT` macro dimension are implemented. Discovery and same-seed frozen verification passed, and the separately reserved `2001..2064` holdout completed once, passed every declared automated gate, and was resealed as `RECORDED` with execution disabled. Source-only tests, golden replay, payload/bundle/performance checks, 46/46 Chromium journeys/visuals, and the 24/24 three-browser matrix pass. The inherited and separate Phase 4.2 NVDA, formative, and confirmatory records remain open in the [Phase 4.2 release ledger](docs/baselines/phase-4.2-release-status-v1.md), so no release completion is claimed.
 
 ### Verification coverage
 
@@ -18,6 +20,7 @@ Phase 4.1 water and mobility engineering and automated simulation evidence are c
 - The checked-in golden replay corpus remains protected from accidental snapshot updates during ordinary verification.
 - Runtime tests exercise the direct and Worker engines, all four scenario identities, queued operations, replay progress and cancellation, stale responses, and crash recovery.
 - Contract and persistence tests cover experiment round trips, branching, deep validation, browser-storage fallback behavior, size limits, and malformed data.
+- The headless workspace enforces explicit statement, branch, function, and line coverage floors; settlement activity and classifier behavior have focused unit coverage.
 - Browser journeys cover paused setup, the real Pixi renderer, interventions, local save/load, replay hash verification, outcome comparison, import/export, causal navigation, malformed-file recovery, and narrow, medium, and wide screenshot baselines.
 - Commands, snapshots, replays, saves, scenarios, experiments, outcomes, causal evidence, runtime protocol, workspace, behavior, and authoritative state have explicit version contracts.
 
@@ -29,6 +32,7 @@ Phase 4.1 water and mobility engineering and automated simulation evidence are c
 - Pixi rendering has real browser coverage, but its camera and layer modules remain costly to unit-test in jsdom; screenshot and real-browser interaction gates remain necessary.
 - Continue checking the richer reactive world and inspector state for render-loop regressions; the previously observed maximum-update-depth failure is covered by the current browser workflow and has not recurred in the Phase 4.1 implementation review.
 - Browser persistence currently centers on one active local save. A named experiment library, cross-device sync, and long-term archival policy remain later product decisions.
+- Shelter tuning, outcome incidence, dominance rationales, and settlement macro materiality are frozen after reviewed calibration and a passing untouched holdout. Any semantic change now invalidates that holdout evidence and requires an explicit replacement protocol.
 
 ### Main product risks
 
@@ -36,7 +40,7 @@ Phase 4.1 water and mobility engineering and automated simulation evidence are c
 - Several version-2 labels were absent throughout discovery, including concentrated water routes and fragmented social structure. The product must not imply that the available label vocabulary guarantees every kind of outcome.
 - Hydration information is available through source marks, stock/depletion treatments, route trails, roster and inspector facts, the semantic navigator, moments, and response traces. Whether unfamiliar players can combine those cues into an accurate explanation remains a human usability question.
 - Automated keyboard, forced-color, zoom, touch, and accessibility checks do not establish screen-reader usability. Focus restoration, announcements, world-object navigation, and evidence traversal still require the recorded NVDA pass.
-- The deterministic, golden, coverage, visual, payload, bundle, uncontended four-scenario throughput, and aggregate 12/12 Chromium/Firefox/WebKit release gates pass.
+- Equivalent Phase 4.2 deterministic, golden, source-only coverage, visual, payload, bundle, isolated-throughput, and browser evidence is now recorded from the 6 August 2026 workspace execution. Chromium passed 46/46 and the serial release matrix passed 24/24 across Chromium, Firefox, and WebKit. Firefox on the managed Windows runner required `MOZ_DISABLE_CONTENT_SANDBOX=1` to work around rejected content-process launch; that is not equivalent sandbox or security coverage.
 
 ## Product principles
 
@@ -287,7 +291,7 @@ The dependency order, authoritative scenario contract, initial four-scenario mat
 
 Implemented automated evidence includes canonical and repeated long-run determinism for all four scenarios, structural and reachability validation, identity-strict save/replay/experiment/runtime paths, legacy migration and atomic rejection, a versioned activity schema, locked matrix commands, multi-label factual classifiers, Wilson intervals, paired descriptive effects, convergence diagnostics, browser identity flows, and payload/save/throughput budgets. The [portable 32-run smoke](docs/baselines/phase-3-smoke-v1.md) repeats every case exactly and passes all inherited hard invariants and contract safety bands. The historical [calibration](docs/baselines/phase-3-calibration-v1.md) and untouched [holdout](docs/baselines/phase-3-holdout-v1.md) each cover four scenarios × 64 seeds × 10,000 ticks and pass the frozen hard, label, and macro gates; the [pre-holdout review](docs/baselines/phase-3-calibration-review-v1.md) records the classifier and expectations.
 
-Still pending are the manual NVDA evidence and the formative and confirmatory usability rounds. The automated historical statistical corpus and current aggregate three-browser gates pass, but Phase 3 does not claim release completion or human comprehension success until those remaining artifacts exist.
+Still pending are the manual NVDA evidence and the formative and confirmatory usability rounds. The automated historical statistical corpus passed, as did the aggregate three-browser gates recorded at immutable Phase 4.1 base commit `7df0b22`, but Phase 3 does not claim release completion or human comprehension success until those remaining artifacts exist.
 
 The variation phase is complete when:
 
@@ -299,15 +303,16 @@ The variation phase is complete when:
 
 ### Phase 4 — Add systemic depth vertically
 
-Status: **Phase 4.1 engineering and automated simulation evidence complete; human release evidence pending.**
+Status: **Phase 4.2 engineering and automated release-candidate evidence complete; human release evidence pending.**
 
 Goal: add one complete causal and visible system at a time.
 
-Phase 4.1 implements water and mobility: authoritative thirst, finite renewable sources, gathering, drinking, sharing, weighted deterministic A* target selection, factual movement-cost reasons, observational recent-route trails, water interventions and response traces, accessible source/access projections, migration, and hydration evidence. Its normative contract is recorded in [`docs/phase-4.1-contract.md`](docs/phase-4.1-contract.md). The [frozen calibration](docs/baselines/phase-4.1-calibration-v2.md), [untouched holdout](docs/baselines/phase-4.1-holdout-v2.md), and aggregate 12/12 Chromium/Firefox/WebKit release suite pass; the [release ledger](docs/baselines/phase-4.1-release-status-v1.md) keeps those automated results separate from pending human validation.
+Phase 4.1 implements water and mobility: authoritative thirst, finite renewable sources, gathering, drinking, sharing, weighted deterministic A* target selection, factual movement-cost reasons, observational recent-route trails, water interventions and response traces, accessible source/access projections, migration, and hydration evidence. Its normative contract is recorded in [`docs/phase-4.1-contract.md`](docs/phase-4.1-contract.md). The [frozen calibration](docs/baselines/phase-4.1-calibration-v2.md) and [untouched holdout](docs/baselines/phase-4.1-holdout-v2.md) pass, and the aggregate 12/12 Chromium/Firefox/WebKit release suite recorded at immutable commit `7df0b22` passed; the [release ledger](docs/baselines/phase-4.1-release-status-v1.md) keeps those historical automated results separate from pending human validation.
 
-Remaining order:
+Phase 4.2 implements shelter and settlement: persistent groups select a deterministic legal site near member, store, and resource anchors; contribute material and work; derive occupancy from interaction claims; maintain condition; choose sheltered or outdoor recovery; admit trusted guests behind members; and may relocate once after a stable improvement. Players can alter environmental material supply but cannot issue build, repair, rest, or relocation orders. Its normative mechanics, versions, measurement definitions, frozen classifier/bands, and recorded one-shot corpus protocol are in [`docs/phase-4.2-contract.md`](docs/phase-4.2-contract.md); the automated evidence and remaining human gates are tracked in [`docs/phase-4.2-execution-plan.md`](docs/phase-4.2-execution-plan.md).
 
-- **Shelter and settlement:** fatigue recovery, communal construction, maintenance, occupancy, and settlement choice.
+Remaining order after Phase 4.2 release gates:
+
 - **Lifecycle:** ageing, death, birth, lineage, mourning, inheritance, and population stability.
 - **Collective difference:** group norms, culture, territory, migration, trade, and diplomacy.
 - **External pressure:** seasons, disease, predators, and environmental shocks.
@@ -358,7 +363,6 @@ The project is ready for broad feature expansion when:
 
 Finish the existing release gates before expanding the model further:
 
-1. Preserve the passing frozen Phase 3 and Phase 4.1 calibration and untouched-holdout artifacts and checksums.
-2. Complete the manual NVDA workflow and the specified unfamiliar-participant usability rounds; fix blocking and high-severity findings and repeat affected automated evidence.
-3. Publish the final release ledgers while keeping automated evidence separate from human comprehension claims.
-4. Begin Phase 4.2 shelter and settlement only after Phase 4.1 independently satisfies its accessibility and usability gates and is marked release-complete.
+1. Preserve the passing Phase 3, Phase 4.1, and Phase 4.2 calibration and untouched-holdout artifacts, checksums, consumed-attempt marker, and disabled process lock.
+2. Complete the inherited unified manual NVDA workflow and unfamiliar-participant formative and confirmatory rounds; fix blocking and high-severity findings and repeat affected automated evidence.
+3. Complete the separate Phase 4.2 NVDA, five-person formative, and five-new-person confirmatory evidence before making a release-complete claim or beginning lifecycle work.

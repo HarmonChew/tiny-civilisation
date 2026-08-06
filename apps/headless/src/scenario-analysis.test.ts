@@ -1,27 +1,52 @@
 import { describe, expect, it } from "vitest";
 
-import { createScenarioReference, type ScenarioId } from "@tiny-civ/sim-core";
+import { SCENARIO_IDS, createScenarioReference, type ScenarioId } from "@tiny-civ/sim-core";
 
 import type { ActivityProfile } from "./activity-collector.js";
 import { profileSimulation } from "./index.js";
+import { PHASE_4_2_HOLDOUT_POLICY } from "./phase-4.2-corpora.js";
 import {
   analyzeScenarioRuns,
   convergenceDiagnostics,
   evaluateFrozenPairedMacroBands,
+  evaluatePairedSeedEligibility,
   evaluateScenarioExpectedBands,
   evaluateScenarioOutcomeBands,
   pairedScenarioComparisons,
   summarizeRunOutcome,
+  PHASE_4_2_CLASSIFIER_RULES,
+  type Phase42AnalysisDefinitionOverride,
   type ScenarioAnalysisRun,
 } from "./scenario-analysis.js";
 import {
   PAIRED_MACRO_BANDS,
+  PAIRED_MACRO_BAND_TABLE_VERSION,
   PHASE_4_1_CALIBRATION_SHA256,
+  PHASE_4_2_CALIBRATION_PROVENANCE,
+  PHASE_4_2_PAIRED_MACRO_BANDS,
+  PHASE_4_2_POST_FREEZE_VERIFICATION_PROVENANCE,
+  PHASE_4_2_SCENARIO_OUTCOME_DOMINANCE_RATIONALES,
+  PHASE_4_2_SCENARIO_OUTCOME_INCIDENCE_BANDS,
+  SCENARIO_OUTCOME_BAND_TABLE_VERSION,
+  SCENARIO_OUTCOME_MINIMUM_OCCURRENCES,
   SCENARIO_EXPECTED_BANDS,
   SCENARIO_EXPECTED_BAND_TABLE_VERSION,
   SCENARIO_OUTCOME_DOMINANCE_RATIONALES,
   SCENARIO_OUTCOME_INCIDENCE_BANDS,
+  phase42DefinitionsAreFrozen,
+  type PairedMacroBandDefinition,
+  type Phase42CalibrationProvenance,
+  type ScenarioOutcomeDominanceRationaleDefinition,
+  type ScenarioOutcomeIncidenceBandDefinition,
 } from "./scenario-bands.js";
+
+const CANDIDATE_PHASE_4_2_DEFINITIONS = {
+  status: "CANDIDATE",
+  classifierRules: PHASE_4_2_CLASSIFIER_RULES,
+  incidenceBands: [],
+  dominanceRationales: [],
+  pairedMacroBands: [],
+} as const satisfies Phase42AnalysisDefinitionOverride;
 
 function baseProfile(scenarioId: ScenarioId, seed: number): ActivityProfile {
   return structuredClone(profileSimulation({ scenarioId, seed, ticks: 0 }).profile);
@@ -76,7 +101,7 @@ function fullMatrixRuns(options?: {
   return (
     ["petri-world", "split-banks", "scattered-plenty", "unequal-table"] as const
   ).flatMap((scenarioId) => {
-    const template = fullMatrixProfile(scenarioId, seedOffset + 1);
+    const template = fullMatrixProfile(scenarioId, 1);
     return Array.from({ length: 64 }, (_, index) => {
       const seed = seedOffset + index + 1;
       const profile = structuredClone(template);
@@ -238,6 +263,250 @@ describe("scenario outcome analysis", () => {
       "SOURCE_BOTTLENECK",
     );
   });
+
+  it("emits nonexclusive factual settlement labels at the frozen boundaries", () => {
+    const profile = observedProfile("petri-world", 5);
+    profile.relationships.componentCount = 1;
+    profile.settlement.horizon.activeShelterCount = 1;
+    profile.settlement.condition.activeShelterTicks = 1_000;
+    profile.settlement.condition.lowConditionExposureRate = 0.5;
+    profile.settlement.occupancy.deniedClaims = 1;
+    profile.settlement.occupancy.crowdingEvents = 1;
+    profile.settlement.rest.guestUseEvents = 1;
+    profile.settlement.relocation.relocations = 1;
+
+    const summary = summarizeRunOutcome(profile);
+
+    expect(summary.labels.map((label) => label.id)).toEqual([
+      "ESTABLISHED_SETTLEMENT",
+      "CHRONIC_SHELTER_NEGLECT",
+      "SHELTER_CROWDING",
+      "GUEST_SHELTERING",
+      "SETTLEMENT_RELOCATION",
+    ]);
+    expect(summary.labels[1]?.evidence).toEqual([
+      {
+        metricPath: "profile.settlement.condition.activeShelterTicks",
+        value: 1_000,
+        comparison: "GTE",
+        threshold: 1_000,
+      },
+      {
+        metricPath: "profile.settlement.condition.lowConditionExposureRate",
+        value: 0.5,
+        comparison: "GTE",
+        threshold: 0.5,
+      },
+    ]);
+  });
+
+  it("does not classify an ineligible outsider denial as shelter crowding", () => {
+    const profile = observedProfile("petri-world", 6);
+    profile.settlement.occupancy.deniedClaims = 1;
+    profile.settlement.occupancy.crowdingEvents = 0;
+
+    const summary = summarizeRunOutcome(profile);
+
+    expect(summary.labels.map((label) => label.id)).not.toContain("SHELTER_CROWDING");
+  });
+
+  it("keeps an explicit Phase 4.2 candidate definition set ineligible for holdout", () => {
+    const template = fullMatrixProfile("petri-world", 1);
+    const profiles = Array.from({ length: 64 }, (_, index) => {
+      const seed = index + 2_001;
+      const profile = structuredClone(template);
+      profile.seed = seed;
+      profile.scenario = createScenarioReference("petri-world", seed);
+      return profile;
+    });
+
+    const report = evaluateScenarioOutcomeBands("petri-world", profiles, {
+      corpus: "phase-4.2-holdout",
+      seeds: profiles.map((profile) => profile.seed),
+      requestedTicks: 10_000,
+      phase42Definitions: CANDIDATE_PHASE_4_2_DEFINITIONS,
+    });
+
+    expect(report.eligibility).toMatchObject({
+      status: "PHASE_4_2_NOT_FROZEN",
+      reason: expect.stringContaining("reserved holdout remains sealed"),
+    });
+    expect(
+      report.evaluations.every((evaluation) => evaluation.status === "NOT_EVALUATED"),
+    ).toBe(true);
+  });
+
+  it("reports Phase 4.2 discovery calibration as candidate classifier-3 evidence", () => {
+    const profiles = fullScenarioProfiles("petri-world");
+    const report = evaluateScenarioExpectedBands("petri-world", profiles, {
+      corpus: "phase-4.2-calibration",
+      seeds: profiles.map((profile) => profile.seed),
+      requestedTicks: 10_000,
+      phase42Definitions: CANDIDATE_PHASE_4_2_DEFINITIONS,
+    });
+
+    expect(report.status).toBe("PARTIAL");
+    expect(report.provenance).toMatchObject({
+      calibrationEvidence: "PHASE_4_2_CANDIDATE_CALIBRATION_PRESENT",
+      holdoutEvidence: "NOT_PRESENT",
+    });
+    expect(report.scenarioOutcomeBands).toMatchObject({
+      status: "NOT_EVALUATED",
+      eligibility: { status: "PHASE_4_2_CALIBRATION_CANDIDATE" },
+      provenance: PHASE_4_2_CALIBRATION_PROVENANCE,
+    });
+  });
+
+  it("publishes the reviewed frozen Phase 4.2 definition tables", () => {
+    expect(PHASE_4_2_SCENARIO_OUTCOME_INCIDENCE_BANDS).toHaveLength(4);
+    expect(
+      PHASE_4_2_SCENARIO_OUTCOME_INCIDENCE_BANDS.map((band) => band.threshold),
+    ).toEqual([22, 7, 2, 1]);
+    expect(PHASE_4_2_SCENARIO_OUTCOME_DOMINANCE_RATIONALES).toHaveLength(9);
+    expect(PHASE_4_2_PAIRED_MACRO_BANDS).toHaveLength(1);
+    expect(PHASE_4_2_PAIRED_MACRO_BANDS[0]).toMatchObject({
+      dimension: "SETTLEMENT",
+      metricId: "ACTIVE_SHELTER_COUNT",
+      requiredPairedSeeds: 64,
+    });
+    expect(PHASE_4_2_CALIBRATION_PROVENANCE.bandFreezeStatus).toBe("FROZEN");
+    expect(PHASE_4_2_CALIBRATION_PROVENANCE).toMatchObject({
+      basis: "LOCKED_PHASE_4_2_CALIBRATION",
+      artifact: "docs/baselines/phase-4.2-calibration-v1.json.gz",
+      artifactSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      freezeReviewArtifact: "docs/baselines/phase-4.2-calibration-review-v1.md",
+      freezeReviewArtifactSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      calibrationStatus: "REVIEWED",
+      holdoutPolicy: "EVALUATE_UNCHANGED_THRESHOLDS_ONCE",
+    });
+    expect(PHASE_4_2_HOLDOUT_POLICY).toMatchObject({
+      calibrationStatus: "REVIEWED",
+      bandFreezeStatus: "FROZEN",
+      holdoutStatus: "RECORDED",
+      executionEnabled: false,
+      frozenDefinitionFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      provenance: {
+        verificationArtifactSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        verificationReviewArtifactSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      },
+    });
+    expect(PHASE_4_2_POST_FREEZE_VERIFICATION_PROVENANCE).toMatchObject({
+      basis: "POST_FREEZE_PHASE_4_2_VERIFICATION",
+      artifact: "docs/baselines/phase-4.2-calibration-v2.json.gz",
+      artifactSha256: PHASE_4_2_HOLDOUT_POLICY.provenance.verificationArtifactSha256,
+      reviewArtifact: "docs/baselines/phase-4.2-calibration-verification-review-v1.md",
+      reviewArtifactSha256:
+        PHASE_4_2_HOLDOUT_POLICY.provenance.verificationReviewArtifactSha256,
+      calibrationStatus: "REVIEWED",
+    });
+  });
+
+  it("validates a complete frozen definition set before post-freeze verification", () => {
+    const discoverySha = "a".repeat(64);
+    const reviewSha = "b".repeat(64);
+    const definitionFingerprint = "c".repeat(64);
+    const policy = {
+      ...PHASE_4_2_HOLDOUT_POLICY,
+      calibrationStatus: "DISCOVERY_RECORDED",
+      bandFreezeStatus: "FROZEN",
+      frozenDefinitionFingerprint: definitionFingerprint,
+      provenance: {
+        ...PHASE_4_2_HOLDOUT_POLICY.provenance,
+        discoveryArtifactSha256: discoverySha,
+        freezeReviewArtifactSha256: reviewSha,
+      },
+    } as const;
+    const provenance = {
+      basis: "LOCKED_PHASE_4_2_CALIBRATION",
+      artifact: policy.provenance.discoveryArtifact,
+      artifactSha256: discoverySha,
+      freezeReviewArtifact: policy.provenance.freezeReviewArtifact,
+      freezeReviewArtifactSha256: reviewSha,
+      classifierVersion: 3,
+      calibrationSeedCount: 64,
+      ticksPerRun: 10_000,
+      calibrationStatus: "DISCOVERY_RECORDED",
+      bandFreezeStatus: "FROZEN",
+      holdoutPolicy: "SEALED_PENDING_POST_FREEZE_VERIFICATION",
+      releaseClaim: false,
+    } as const satisfies Phase42CalibrationProvenance;
+    const incidenceBands = SCENARIO_IDS.map(
+      (scenarioId) =>
+        ({
+          tableVersion: SCENARIO_OUTCOME_BAND_TABLE_VERSION,
+          scenarioId,
+          labelId: "ESTABLISHED_SETTLEMENT",
+          metricPath: "analysis.outcomes.incidence[ESTABLISHED_SETTLEMENT].occurrences",
+          comparison: "GTE",
+          threshold: SCENARIO_OUTCOME_MINIMUM_OCCURRENCES,
+          requiredEligibleRuns: 64,
+          provenance,
+        }) satisfies ScenarioOutcomeIncidenceBandDefinition,
+    );
+    const dominanceRationales: ScenarioOutcomeDominanceRationaleDefinition[] =
+      PHASE_4_2_SCENARIO_OUTCOME_DOMINANCE_RATIONALES.map((definition) => ({
+        ...definition,
+        provenance,
+      }));
+    const conditionBand = {
+      tableVersion: PAIRED_MACRO_BAND_TABLE_VERSION,
+      dimension: "SETTLEMENT",
+      leftScenarioId: "petri-world",
+      rightScenarioId: "split-banks",
+      metricId: "MEAN_SHELTER_CONDITION",
+      metricPath: "pairedComparisons[petri-world->split-banks].MEAN_SHELTER_CONDITION",
+      deltaStatistic: "ABSOLUTE_PAIRED_MEAN_RIGHT_MINUS_LEFT",
+      minimumAbsoluteMeanDelta: 100,
+      effectStatistic: "ABSOLUTE_COHEN_DZ",
+      minimumAbsoluteCohenDz: 0.3,
+      requiredPairedSeeds: 61,
+      missingValuePolicy: "EXCLUDE_PAIR_IF_EITHER_VALUE_MISSING",
+      eligiblePairPolicy: "AT_LEAST_THRESHOLD_AFTER_MISSING_EXCLUSION",
+      provenance,
+    } as const satisfies PairedMacroBandDefinition;
+
+    expect(
+      phase42DefinitionsAreFrozen({
+        policy,
+        incidenceBands,
+        dominanceRationales,
+        pairedMacroBands: [conditionBand],
+        currentDefinitionFingerprint: definitionFingerprint,
+      }),
+    ).toBe(true);
+    expect(
+      phase42DefinitionsAreFrozen({
+        policy,
+        incidenceBands: incidenceBands.slice(1),
+        dominanceRationales,
+        pairedMacroBands: [conditionBand],
+        currentDefinitionFingerprint: definitionFingerprint,
+      }),
+    ).toBe(false);
+    expect(
+      phase42DefinitionsAreFrozen({
+        policy,
+        incidenceBands,
+        dominanceRationales,
+        pairedMacroBands: [
+          {
+            ...conditionBand,
+            missingValuePolicy: "ZERO_IS_OBSERVED",
+          },
+        ],
+        currentDefinitionFingerprint: definitionFingerprint,
+      }),
+    ).toBe(false);
+    expect(
+      phase42DefinitionsAreFrozen({
+        policy,
+        incidenceBands,
+        dominanceRationales,
+        pairedMacroBands: [conditionBand],
+        currentDefinitionFingerprint: "d".repeat(64),
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("scenario bands and invariants", () => {
@@ -265,7 +534,7 @@ describe("scenario bands and invariants", () => {
       dominance: { status: "NOT_EVALUATED", rationaleFailures: [] },
     });
     expect(report.hardInvariants.status).toBe("PASS");
-    expect(report.outcomes.incidence).toHaveLength(9);
+    expect(report.outcomes.incidence).toHaveLength(14);
     expect(
       report.outcomes.incidence.find(
         (incidence) => incidence.labelId === "FRAGMENTED_SOCIAL_STRUCTURE",
@@ -416,6 +685,32 @@ describe("frozen Phase 4.1 outcome-incidence bands", () => {
       },
     });
     expect(report.dominance.rationaleFailures).toEqual([]);
+  });
+
+  it("keeps Phase 4.2 labels outside the legacy classifier-2 dominance gate", () => {
+    const profiles = fullScenarioProfiles("petri-world");
+    for (const profile of profiles.slice(0, 8)) {
+      addCooperativeStorage(profile);
+      addSharedHydration(profile);
+    }
+    for (const profile of profiles) {
+      profile.hydration.sources.depletedSourceTicks = 500;
+      profile.settlement.horizon.activeShelterCount = 1;
+    }
+
+    const report = evaluateScenarioOutcomeBands("petri-world", profiles, {
+      corpus: "calibration",
+      seeds: Array.from({ length: 64 }, (_, index) => index + 1),
+      requestedTicks: 10_000,
+    });
+
+    expect(report.status).toBe("PASS");
+    expect(report.dominance.evaluations).toHaveLength(9);
+    expect(
+      report.dominance.evaluations.some(
+        (evaluation) => evaluation.labelId === "ESTABLISHED_SETTLEMENT",
+      ),
+    ).toBe(false);
   });
 
   it("fails a frozen incidence minimum below eight occurrences", () => {
@@ -599,9 +894,77 @@ describe("frozen Phase 4.1 paired macro bands", () => {
       report.evaluations.map((evaluation) => evaluation.minimumAbsoluteCohenDz),
     ).toEqual([0.5, 0.5, 0.3, 0.5]);
   });
+
+  it("retains historical macro bands without evaluating the sealed Phase 4.2 holdout", () => {
+    const runs = fullMatrixRuns({ seedOffset: 2_000 });
+    const report = evaluateFrozenPairedMacroBands(runs, pairedScenarioComparisons(runs), {
+      corpus: "phase-4.2-holdout",
+      seeds: Array.from({ length: 64 }, (_, index) => index + 2_001),
+      requestedTicks: 10_000,
+      phase42Definitions: CANDIDATE_PHASE_4_2_DEFINITIONS,
+    });
+
+    expect(report.corpusValidation).toMatchObject({
+      status: "PHASE_4_2_NOT_FROZEN",
+      reason: expect.stringContaining("reserved holdout remains sealed"),
+    });
+    expect(report.status).toBe("NOT_EVALUATED");
+    expect(report.bandEvaluationStatus).toBe("NOT_EVALUATED");
+    expect(report.evaluations.map((evaluation) => evaluation.metricId)).toEqual(
+      PAIRED_MACRO_BANDS.map((band) => band.metricId),
+    );
+    expect(
+      report.evaluations.every((evaluation) => evaluation.status === "NOT_EVALUATED"),
+    ).toBe(true);
+    expect(report.settlementRequirement).toMatchObject({
+      status: "NOT_EVALUATED",
+      observed: null,
+      threshold: 1,
+    });
+  });
 });
 
 describe("paired descriptive comparisons and convergence", () => {
+  it("supports a frozen eligible-pair threshold for nullable condition metrics", () => {
+    const expectedSeeds = Array.from({ length: 64 }, (_, index) => index + 1);
+    const conditionPolicy = {
+      missingValuePolicy: "EXCLUDE_PAIR_IF_EITHER_VALUE_MISSING" as const,
+      eligiblePairPolicy: "AT_LEAST_THRESHOLD_AFTER_MISSING_EXCLUSION" as const,
+      requiredPairedSeeds: 61,
+    };
+
+    expect(
+      evaluatePairedSeedEligibility(
+        conditionPolicy,
+        expectedSeeds.slice(0, 61),
+        expectedSeeds,
+      ),
+    ).toEqual({ eligible: true, reason: null });
+    expect(
+      evaluatePairedSeedEligibility(
+        conditionPolicy,
+        expectedSeeds.slice(0, 60),
+        expectedSeeds,
+      ),
+    ).toMatchObject({
+      eligible: false,
+      reason: expect.stringContaining("frozen minimum is 61"),
+    });
+    expect(
+      evaluatePairedSeedEligibility(
+        {
+          ...conditionPolicy,
+          missingValuePolicy: "ZERO_IS_OBSERVED",
+        },
+        expectedSeeds.slice(0, 61),
+        expectedSeeds,
+      ),
+    ).toMatchObject({
+      eligible: false,
+      reason: expect.stringContaining("missing-value exclusion band"),
+    });
+  });
+
   it("reports right-minus-left paired effects without causal language", () => {
     const left = [1, 2].map((seed) => observedProfile("petri-world", seed));
     const right = [1, 2].map((seed) => observedProfile("split-banks", seed));
@@ -609,6 +972,10 @@ describe("paired descriptive comparisons and convergence", () => {
     left[1]!.groups.horizon.groupCount = 2;
     right[0]!.groups.horizon.groupCount = 3;
     right[1]!.groups.horizon.groupCount = 5;
+    left[0]!.settlement.horizon.activeShelterCount = 0;
+    left[1]!.settlement.horizon.activeShelterCount = 1;
+    right[0]!.settlement.horizon.activeShelterCount = 1;
+    right[1]!.settlement.horizon.activeShelterCount = 3;
 
     const comparisons = pairedScenarioComparisons([...left, ...right].map(runForProfile));
     const comparison = comparisons.find(
@@ -618,6 +985,9 @@ describe("paired descriptive comparisons and convergence", () => {
     );
     const groupCount = comparison?.metrics.find(
       (metric) => metric.metricId === "GROUP_COUNT",
+    );
+    const activeShelters = comparison?.metrics.find(
+      (metric) => metric.metricId === "ACTIVE_SHELTER_COUNT",
     );
 
     expect(comparison).toMatchObject({
@@ -636,6 +1006,11 @@ describe("paired descriptive comparisons and convergence", () => {
       value: 3.535533,
       interpretation: "DESCRIPTIVE_NON_CAUSAL",
     });
+    expect(activeShelters).toMatchObject({
+      dimension: "SETTLEMENT",
+      metricPath: "profile.settlement.horizon.activeShelterCount",
+    });
+    expect(activeShelters?.pairs.map((pair) => pair.delta)).toEqual([1, 2]);
 
     const diagnostics = convergenceDiagnostics(comparisons).filter(
       (diagnostic) =>
@@ -649,7 +1024,40 @@ describe("paired descriptive comparisons and convergence", () => {
       diagnostics.find((diagnostic) => diagnostic.dimension === "STORAGE")?.status,
     ).toBe("EXACT_CONVERGENCE");
     expect(
+      diagnostics.find((diagnostic) => diagnostic.dimension === "SETTLEMENT")?.status,
+    ).toBe("DIFFERENCE_OBSERVED");
+    expect(
       diagnostics.every((diagnostic) => diagnostic.interpretation.includes("NON_CAUSAL")),
     ).toBe(true);
+  });
+
+  it("excludes absent shelters from mean-condition pairs instead of treating them as zero", () => {
+    const left = [1, 2].map((seed) => observedProfile("petri-world", seed));
+    const right = [1, 2].map((seed) => observedProfile("split-banks", seed));
+    left[0]!.settlement.condition.activeShelterTicks = 0;
+    left[0]!.settlement.condition.meanCondition = 0;
+    right[0]!.settlement.condition.activeShelterTicks = 100;
+    right[0]!.settlement.condition.meanCondition = 5_000;
+    left[1]!.settlement.condition.activeShelterTicks = 100;
+    left[1]!.settlement.condition.meanCondition = 4_000;
+    right[1]!.settlement.condition.activeShelterTicks = 100;
+    right[1]!.settlement.condition.meanCondition = 6_000;
+
+    const comparison = pairedScenarioComparisons(
+      [...left, ...right].map(runForProfile),
+    ).find(
+      (candidate) =>
+        candidate.leftScenarioId === "petri-world" &&
+        candidate.rightScenarioId === "split-banks",
+    );
+    const condition = comparison?.metrics.find(
+      (metric) => metric.metricId === "MEAN_SHELTER_CONDITION",
+    );
+
+    expect(condition).toMatchObject({
+      missingValuePolicy: "EXCLUDE_PAIR_IF_EITHER_VALUE_MISSING",
+      pairs: [{ seed: 2, leftValue: 4_000, rightValue: 6_000, delta: 2_000 }],
+      summary: { pairedSeedCount: 1, meanDelta: 2_000 },
+    });
   });
 });

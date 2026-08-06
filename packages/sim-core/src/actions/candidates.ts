@@ -8,6 +8,7 @@ import {
 import {
   attemptInteractionSlotClaim,
   createInteractionTravelEstimator,
+  estimateInteractionTravelIgnoringOccupancy,
   interactionCrowding,
   requiresInteractionClaim,
   type InteractionTravelEstimate,
@@ -24,6 +25,20 @@ import { rankHierarchicalCandidates, recordPlanTransition } from "../plans.js";
 import { keyedRandomU32, keyedRandomUnit } from "../rng.js";
 import { captureReasonFact, selectStrongestReason } from "../reason-facts.js";
 import { relationshipFrom } from "../social.js";
+import {
+  SHELTER_MAINTENANCE_THRESHOLD,
+  SHELTER_RELOCATION_MINIMUM_IMPROVEMENT,
+  SHELTER_RELOCATION_REQUIRED_EVALUATIONS,
+  activeShelterForGroup,
+  assessShelterSite,
+  effectiveShelterCapacity,
+  isShelterStructure,
+  outdoorRestAnchorTile,
+  pendingShelterForGroup,
+  rankShelterSites,
+  shelterEligibility,
+  shelterOccupancy,
+} from "../shelters.js";
 import { entityTile, getCreature, getGroup, getStructure } from "../tick-context.js";
 import type {
   ActionKind,
@@ -365,19 +380,113 @@ function generateCandidates(
   }
 
   if (fatigue >= 2_400) {
-    const restTile = ownGroup?.homeTileIndex ?? creature.tileIndex;
+    const shelterChoices = state.structures
+      .filter(
+        (
+          structure,
+        ): structure is Extract<
+          SimulationState["structures"][number],
+          { condition: number }
+        > =>
+          isShelterStructure(structure) &&
+          structure.kind === "SHELTER" &&
+          shelterEligibility(state, creature, structure) !== "INELIGIBLE",
+      )
+      .map((shelter) => {
+        const availableTravel = estimateTravel(
+          "REST_SHELTERED",
+          shelter.id,
+          shelter.tileIndex,
+        );
+        const hasDisplaceableGuest = state.creatures.some(
+          (candidate) =>
+            candidate.alive &&
+            candidate.groupId !== shelter.groupId &&
+            candidate.activeAction?.kind === "REST_SHELTERED" &&
+            candidate.activeAction.targetEntityId === shelter.id &&
+            candidate.activeAction.interactionClaim !== null &&
+            shelterEligibility(state, candidate, shelter) === "TRUSTED_GUEST",
+        );
+        return {
+          shelter,
+          travel:
+            availableTravel ??
+            (creature.groupId === shelter.groupId && hasDisplaceableGuest
+              ? estimateInteractionTravelIgnoringOccupancy(
+                  state,
+                  creature,
+                  "REST_SHELTERED",
+                  shelter.id,
+                  shelter.tileIndex,
+                )
+              : null),
+        };
+      })
+      .filter(
+        (
+          candidate,
+        ): candidate is {
+          shelter: Extract<SimulationState["structures"][number], { condition: number }>;
+          travel: InteractionTravelEstimate;
+        } => candidate.travel !== null,
+      )
+      .sort(
+        (left, right) =>
+          (creature.groupId === left.shelter.groupId ? 0 : 1) -
+            (creature.groupId === right.shelter.groupId ? 0 : 1) ||
+          left.travel.cost - right.travel.cost ||
+          left.shelter.id - right.shelter.id,
+      )
+      .slice(0, 1);
+    for (const { shelter, travel } of shelterChoices) {
+      const occupancy = shelterOccupancy(state, shelter.id);
+      const eligibility = shelterEligibility(state, creature, shelter);
+      candidates.push(
+        scoredCandidate(state, creature, "REST_SHELTERED", shelter.id, shelter.tileIndex, [
+          factor("need for rest", fatigue, [], fatigue, "UNIT"),
+          factor(
+            "sheltered recovery",
+            1_300 + shelter.condition / 8,
+            [],
+            shelter.condition,
+            "UNIT",
+            shelter.id,
+          ),
+          factor(
+            "shelter eligibility",
+            eligibility === "MEMBER" ? 550 : 100,
+            [],
+            eligibility,
+            "LABEL",
+            shelter.id,
+          ),
+          factor(
+            "usable shelter places",
+            effectiveShelterCapacity(shelter) * 120,
+            [],
+            effectiveShelterCapacity(shelter) - occupancy.reserved,
+            "COUNT",
+            shelter.id,
+          ),
+          travelFactor(travel, 30),
+          factor("urgent hunger", hunger > 8_000 ? -2_500 : 0, [], hunger, "UNIT"),
+        ]),
+      );
+    }
+    const restTile = outdoorRestAnchorTile(state, creature);
+    const ownShelter = activeShelterForGroup(state, ownGroup);
     const travel = estimateTravel("REST", null, restTile);
     if (travel) {
       candidates.push(
         scoredCandidate(state, creature, "REST", null, restTile, [
-          factor("need for rest", fatigue, [], fatigue, "UNIT"),
+          factor("need for rest", fatigue - 450, [], fatigue, "UNIT"),
           factor(
-            "familiar home",
-            ownGroup ? 700 : 100,
+            ownShelter ? "local outdoor fallback" : "familiar home",
+            ownShelter ? 180 : ownGroup ? 700 : 100,
             [],
-            ownGroup?.name ?? null,
-            ownGroup ? "LABEL" : null,
-            ownGroup?.id ?? null,
+            ownShelter ? restTile : (ownGroup?.name ?? null),
+            ownShelter ? "TILES" : ownGroup ? "LABEL" : null,
+            ownShelter?.id ?? ownGroup?.id ?? null,
           ),
           travelFactor(travel, 35, null),
           factor("urgent hunger", hunger > 8_000 ? -2_500 : 0, [], hunger, "UNIT"),
@@ -719,6 +828,250 @@ function generateCandidates(
             ],
           ),
         );
+    }
+  }
+
+  if (ownGroup?.stage === "PERSISTENT") {
+    const activeShelter = activeShelterForGroup(state, ownGroup);
+    const pendingShelter = pendingShelterForGroup(state, ownGroup);
+    const storedRelocationReady =
+      creature.id === ownGroup.leaderId &&
+      pendingShelter === null &&
+      activeShelter !== null &&
+      ownGroup.shelterRelocations < 1 &&
+      ownGroup.shelterRelocationCandidate !== null &&
+      ownGroup.shelterRelocationCandidate.consecutiveEvaluations >=
+        SHELTER_RELOCATION_REQUIRED_EVALUATIONS;
+    const rankedRelocationSites = storedRelocationReady
+      ? rankShelterSites(state, ownGroup, true)
+      : [];
+    const currentRelocationSite = rankedRelocationSites[0] ?? null;
+    const currentRelocationImprovement =
+      activeShelter && currentRelocationSite
+        ? assessShelterSite(state, ownGroup, activeShelter.tileIndex, false).totalScore -
+          currentRelocationSite.assessment.totalScore
+        : Number.NEGATIVE_INFINITY;
+    const relocationReady =
+      storedRelocationReady &&
+      currentRelocationSite !== null &&
+      ownGroup.shelterRelocationCandidate?.tileIndex === currentRelocationSite.tileIndex &&
+      currentRelocationImprovement >= SHELTER_RELOCATION_MINIMUM_IMPROVEMENT;
+
+    if (
+      creature.id === ownGroup.leaderId &&
+      pendingShelter === null &&
+      (activeShelter === null || relocationReady)
+    ) {
+      const selectableSites = relocationReady
+        ? currentRelocationSite
+          ? [currentRelocationSite]
+          : []
+        : rankShelterSites(state, ownGroup, false);
+      const selection = selectableSites
+        .map((site) => ({
+          site,
+          travel: estimateTravel("ESTABLISH_SHELTER_SITE", null, site.tileIndex),
+        }))
+        .find(
+          (
+            candidate,
+          ): candidate is {
+            site: (typeof selectableSites)[number];
+            travel: InteractionTravelEstimate;
+          } => candidate.travel !== null,
+        );
+      if (selection) {
+        const { site, travel } = selection;
+        candidates.push(
+          scoredCandidate(state, creature, "ESTABLISH_SHELTER_SITE", null, site.tileIndex, [
+            factor(
+              relocationReady
+                ? "persistent relocation advantage"
+                : "persistent group needs shelter",
+              relocationReady ? 4_800 : 5_200,
+              [],
+              relocationReady ? currentRelocationImprovement : ownGroup.stage,
+              relocationReady ? "MOVE_COST" : "LABEL",
+              ownGroup.id,
+            ),
+            factor(
+              "member access cost",
+              -site.assessment.memberTravelCost * 3,
+              [],
+              site.assessment.memberTravelCost,
+              "MOVE_COST",
+              ownGroup.id,
+            ),
+            factor(
+              "water access cost",
+              -site.assessment.waterAccessCost * 2,
+              [],
+              site.assessment.waterAccessCost,
+              "MOVE_COST",
+              ownGroup.id,
+            ),
+            factor(
+              "material access cost",
+              -site.assessment.materialAccessCost * 2,
+              [],
+              site.assessment.materialAccessCost,
+              "MOVE_COST",
+              ownGroup.id,
+            ),
+            travelFactor(travel, 24, ownGroup.id),
+          ]),
+        );
+      }
+    }
+
+    const needsShelterMaterial =
+      (pendingShelter !== null &&
+        pendingShelter.material < pendingShelter.materialRequired) ||
+      (activeShelter !== null && activeShelter.condition < SHELTER_MAINTENANCE_THRESHOLD);
+    if (needsShelterMaterial && space > 0 && creature.inventory.material < 3) {
+      for (const { node, travel } of nearestResourceCandidates(
+        state,
+        "MATERIAL",
+        "GATHER_MATERIAL",
+        estimateTravel,
+        1,
+      )) {
+        const candidate = scoredCandidate(
+          state,
+          creature,
+          "GATHER_MATERIAL",
+          node.id,
+          node.tileIndex,
+          [
+            factor(
+              "shelter needs material",
+              3_100,
+              [],
+              pendingShelter?.kind ?? activeShelter?.condition ?? null,
+              pendingShelter ? "LABEL" : "UNIT",
+              pendingShelter?.id ?? activeShelter?.id ?? ownGroup.id,
+            ),
+            factor(
+              "group loyalty",
+              creature.traits.loyalty / 3,
+              [],
+              creature.traits.loyalty,
+              "UNIT",
+            ),
+            factor(
+              "material opportunity",
+              1_000,
+              recentInterventionEvidence(state, node.id),
+              node.currentStock,
+              "COUNT",
+              "TARGET",
+            ),
+            factor("urgent hunger", hunger > 7_500 ? -4_000 : 0, [], hunger, "UNIT"),
+            travelFactor(travel, 40),
+          ],
+        );
+        candidate.plan = pendingShelter
+          ? "BUILD_COMMUNAL_SHELTER"
+          : "MAINTAIN_COMMUNAL_SHELTER";
+        candidates.push(candidate);
+      }
+    }
+
+    if (pendingShelter) {
+      const readyForWork =
+        creature.inventory.material > 0 ||
+        pendingShelter.material >= pendingShelter.materialRequired;
+      if (readyForWork) {
+        const travel = estimateTravel(
+          "BUILD_SHELTER",
+          pendingShelter.id,
+          pendingShelter.tileIndex,
+        );
+        if (travel) {
+          candidates.push(
+            scoredCandidate(
+              state,
+              creature,
+              "BUILD_SHELTER",
+              pendingShelter.id,
+              pendingShelter.tileIndex,
+              [
+                factor(
+                  "communal shelter work",
+                  4_200,
+                  [],
+                  pendingShelter.progress,
+                  "UNIT",
+                  pendingShelter.id,
+                ),
+                factor(
+                  "carried material",
+                  creature.inventory.material * 700,
+                  [],
+                  creature.inventory.material,
+                  "COUNT",
+                ),
+                factor(
+                  "group loyalty",
+                  creature.traits.loyalty / 3,
+                  [],
+                  creature.traits.loyalty,
+                  "UNIT",
+                ),
+                travelFactor(travel, 36),
+              ],
+            ),
+          );
+        }
+      }
+    }
+
+    if (
+      activeShelter &&
+      activeShelter.condition < SHELTER_MAINTENANCE_THRESHOLD &&
+      creature.inventory.material > 0
+    ) {
+      const travel = estimateTravel(
+        "MAINTAIN_SHELTER",
+        activeShelter.id,
+        activeShelter.tileIndex,
+      );
+      if (travel) {
+        candidates.push(
+          scoredCandidate(
+            state,
+            creature,
+            "MAINTAIN_SHELTER",
+            activeShelter.id,
+            activeShelter.tileIndex,
+            [
+              factor(
+                "shelter upkeep need",
+                3_600 + (10_000 - activeShelter.condition) / 3,
+                [],
+                activeShelter.condition,
+                "UNIT",
+                activeShelter.id,
+              ),
+              factor(
+                "carried material",
+                creature.inventory.material * 650,
+                [],
+                creature.inventory.material,
+                "COUNT",
+              ),
+              factor(
+                "group loyalty",
+                creature.traits.loyalty / 3,
+                [],
+                creature.traits.loyalty,
+                "UNIT",
+              ),
+              travelFactor(travel, 34),
+            ],
+          ),
+        );
+      }
     }
   }
 

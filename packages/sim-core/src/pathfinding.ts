@@ -187,6 +187,57 @@ export function weightedTravelCostsFrom(
 }
 
 /**
+ * Computes the cheapest authoritative cost from every tile to any target.
+ *
+ * Movement charges the tile being entered, so a normal search from a target
+ * has the opposite endpoint charge from the route callers need here. Seeding
+ * each target with its own walk cost and subtracting the queried tile's walk
+ * cost after the reverse search preserves the exact forward cost:
+ *
+ *   d(start, target) = d(target, start) + cost(target) - cost(start)
+ *
+ * Multiple targets can therefore share one deterministic search while still
+ * matching the minimum of separate `weightedTravelCostsFrom(start)` lookups.
+ */
+export function weightedTravelCostsToNearest(
+  world: WorldState,
+  targetTileIndices: readonly number[],
+): Int32Array {
+  const tileCount = world.width * world.height;
+  const costs = new Int32Array(tileCount);
+  costs.fill(UNREACHABLE_TRAVEL_COST);
+  const heap: CostHeapEntry[] = [];
+  for (const targetTileIndex of targetTileIndices) {
+    if (
+      targetTileIndex < 0 ||
+      targetTileIndex >= tileCount ||
+      world.tiles[targetTileIndex]?.blocked
+    ) {
+      continue;
+    }
+    const initialCost = world.tiles[targetTileIndex]?.walkCost ?? 10;
+    if (initialCost >= costs[targetTileIndex]!) continue;
+    costs[targetTileIndex] = initialCost;
+    pushCostHeap(heap, { tileIndex: targetTileIndex, cost: initialCost });
+  }
+  while (heap.length > 0) {
+    const current = popCostHeap(heap)!;
+    if (current.cost !== costs[current.tileIndex]) continue;
+    for (const neighbour of neighbours(world, current.tileIndex)) {
+      const nextCost = current.cost + (world.tiles[neighbour]?.walkCost ?? 10);
+      if (nextCost >= costs[neighbour]!) continue;
+      costs[neighbour] = nextCost;
+      pushCostHeap(heap, { tileIndex: neighbour, cost: nextCost });
+    }
+  }
+  for (let tileIndex = 0; tileIndex < tileCount; tileIndex += 1) {
+    if (costs[tileIndex]! >= UNREACHABLE_TRAVEL_COST) continue;
+    costs[tileIndex] = costs[tileIndex]! - (world.tiles[tileIndex]?.walkCost ?? 10);
+  }
+  return costs;
+}
+
+/**
  * Deterministic four-way grid A*. The result includes both start and goal.
  * An empty array means the goal is invalid or unreachable.
  */

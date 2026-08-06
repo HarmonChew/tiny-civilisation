@@ -11,7 +11,7 @@ export interface InterventionResponsePoint {
 
 export const DEFAULT_INTERVENTION_RESPONSE_WINDOW_TICKS = 120;
 export const MAX_INTERVENTION_RESPONSE_WINDOW_TICKS = 5_000;
-export const INTERVENTION_RESPONSE_SCHEMA_VERSION = 2 as const;
+export const INTERVENTION_RESPONSE_SCHEMA_VERSION = 3 as const;
 
 export const INTERVENTION_RESPONSE_STATUSES = [
   "NOTICED",
@@ -184,6 +184,8 @@ const RESPONSE_CLOSURE_CODES = new Set<InterventionResponseClosureCode>([
 const RESPONSE_COMMAND_TYPES = new Set<ScheduledPlayerCommand["type"]>([
   "ADD_FOOD",
   "REMOVE_FOOD",
+  "ADD_MATERIAL",
+  "REMOVE_MATERIAL",
   "TOGGLE_OBSTACLE",
   "REPLENISH_WATER",
   "DRAIN_WATER",
@@ -932,6 +934,7 @@ function isUsedEvent(
   if (event.causedByEventIds.includes(outcome.eventId)) return true;
   return (
     ((trace.command.type === "ADD_FOOD" && event.type === "FOOD_GATHERED") ||
+      (trace.command.type === "ADD_MATERIAL" && event.type === "MATERIAL_GATHERED") ||
       ((trace.command.type === "REPLENISH_WATER" || trace.command.type === "DRAIN_WATER") &&
         event.type === "WATER_GATHERED")) &&
     event.locationTileIndex === trace.command.tileIndex &&

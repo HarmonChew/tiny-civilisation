@@ -152,6 +152,17 @@ const drawActionCue = (mark: Graphics, family: CreatureActionFamily): void => {
         .rect(x - 0.06, y, 0.12, 0.08)
         .stroke(stroke);
       break;
+    case "maintenance":
+      mark
+        .arc(x, y, 0.12, -0.2 * Math.PI, 1.25 * Math.PI)
+        .stroke(stroke)
+        .moveTo(x - 0.13, y - 0.08)
+        .lineTo(x - 0.13, y - 0.17)
+        .lineTo(x - 0.04, y - 0.16)
+        .moveTo(x + 0.02, y + 0.02)
+        .lineTo(x + 0.13, y + 0.13)
+        .stroke(stroke);
+      break;
     case "share":
       mark
         .circle(x - 0.08, y, 0.055)

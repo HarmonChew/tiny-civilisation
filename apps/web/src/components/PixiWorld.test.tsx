@@ -9,7 +9,7 @@ const camera = vi.hoisted(() => ({
   restoreCameraViewport: vi.fn(),
   screenToWorld: vi.fn(() => ({ x: 1, y: 1 })),
   setTransform: vi.fn(),
-  tileAtPoint: vi.fn(() => undefined),
+  tileAtPoint: vi.fn((): unknown => undefined),
 }));
 
 vi.mock("pixi.js", () => {
@@ -142,5 +142,60 @@ describe("PixiWorld replay camera", () => {
       panY: -37,
     });
     expect(camera.setTransform.mock.calls.at(-1)?.[1]).toBe(2);
+  });
+
+  it("selects a nearby shelter through the typed world focus callback", async () => {
+    const baseView = makeWorldView(createSimulation(4_182));
+    const view = {
+      ...baseView,
+      creatures: [],
+      structures: [
+        {
+          id: 900,
+          kind: "SHELTER",
+          x: 1,
+          y: 1,
+          groupId: 3,
+          progress: 100,
+          stored: 0,
+          capacity: 6,
+          condition: 82,
+          baseCapacity: 6,
+          effectiveCapacity: 6,
+          reservedSpaces: 2,
+          restingCreatures: 1,
+          memberOccupancy: 1,
+          guestOccupancy: 0,
+          upkeepNeeded: false,
+        },
+      ],
+    };
+    camera.screenToWorld.mockReturnValue({ x: 1.5, y: 1.5 });
+    camera.tileAtPoint.mockReturnValue(view.tiles[0]);
+    const onSelect = vi.fn();
+    const onSelectSubject = vi.fn();
+    render(
+      <PixiWorld
+        view={view}
+        selectedId={null}
+        focusedId={null}
+        followedId={null}
+        tool="inspect"
+        overlays={{ resources: true, intentions: false, groups: true, traffic: true }}
+        onSelect={onSelect}
+        onSelectSubject={onSelectSubject}
+        onHover={vi.fn()}
+        onWorldAction={vi.fn()}
+      />,
+    );
+
+    const dish = await screen.findByRole("application", {
+      name: /click a creature or structure/i,
+    });
+    fireEvent.pointerDown(dish, { pointerId: 4, button: 0, clientX: 120, clientY: 90 });
+    fireEvent.pointerUp(dish, { pointerId: 4, button: 0, clientX: 120, clientY: 90 });
+
+    expect(onSelectSubject).toHaveBeenCalledWith({ kind: "structure", id: 900 });
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

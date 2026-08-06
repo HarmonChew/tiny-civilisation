@@ -167,4 +167,31 @@ describe("web moment presentation policy", () => {
     expect(dismissed.state.moments.map((moment) => moment.id)).toEqual([2]);
     expect(dismissed.state.activeMomentId).toBe(2);
   });
+
+  it("keeps shelter completion and relocation as distinct settlement moments", () => {
+    const completion = {
+      ...event(40, 120, "SIGNIFICANT", "shelter:group:8:completion"),
+      category: "group",
+      type: "SHELTER_COMPLETED",
+      title: "Communal shelter completed",
+    } satisfies TimelineEventView;
+    const relocation = {
+      ...event(41, 260, "SIGNIFICANT", "shelter:group:8:relocation"),
+      category: "group",
+      type: "SHELTER_RELOCATED",
+      title: "Home relocated",
+    } satisfies TimelineEventView;
+    const queued = ingestMomentEvents(createMomentQueueState(), [completion, relocation], {
+      currentTick: 260,
+      speed: 2,
+      preference: "SLOW_SIGNIFICANT",
+      playing: true,
+    });
+
+    expect(queued.state.moments.map((moment) => moment.latestEvent.type)).toEqual([
+      "SHELTER_RELOCATED",
+      "SHELTER_COMPLETED",
+    ]);
+    expect(queued.pacingRequests).toHaveLength(2);
+  });
 });

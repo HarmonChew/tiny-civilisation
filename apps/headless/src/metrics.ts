@@ -8,6 +8,13 @@ export interface EventCounts {
   theftEvents: number;
   conflictEvents: number;
   storageEvents: number;
+  sheltersCompleted: number;
+  shelteredRests: number;
+  outdoorRests: number;
+  shelterMaintenanceMaterial: number;
+  shelterDeniedClaims: number;
+  shelterGuestUses: number;
+  shelterRelocations: number;
 }
 
 export interface SimulationMetrics extends EventCounts {
@@ -27,6 +34,13 @@ export function readEventCounts(state: SimulationState): EventCounts {
     theftEvents: state.metrics.thefts,
     conflictEvents: state.metrics.attacks,
     storageEvents: state.metrics.storagesCompleted,
+    sheltersCompleted: state.metrics.sheltersCompleted,
+    shelteredRests: state.metrics.shelteredRests,
+    outdoorRests: state.metrics.outdoorRests,
+    shelterMaintenanceMaterial: state.metrics.shelterMaintenanceMaterial,
+    shelterDeniedClaims: state.metrics.shelterDeniedClaims,
+    shelterGuestUses: state.metrics.shelterGuestUses,
+    shelterRelocations: state.metrics.shelterRelocations,
   };
 }
 

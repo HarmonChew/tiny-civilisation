@@ -33,7 +33,7 @@ const EXPECTED_MAP_HASHES = {
   "unequal-table": "6f16475a03ba40dc",
 } as const;
 
-const EXPECTED_CANONICAL_STATE_HASHES = {
+const HISTORICAL_V4_CANONICAL_STATE_HASHES = {
   "petri-world": { tick0: "871cc930ea04d4ab", tick2000: "6679af5deb9edd92" },
   "split-banks": { tick0: "3516765c3026bd7c", tick2000: "881fd2b2153f9e0a" },
   "scattered-plenty": {
@@ -41,6 +41,16 @@ const EXPECTED_CANONICAL_STATE_HASHES = {
     tick2000: "9f078c57d55ced42",
   },
   "unequal-table": { tick0: "ab1614171e7e0400", tick2000: "41308c6a4f4ba239" },
+} as const;
+
+const EXPECTED_CANONICAL_STATE_HASHES = {
+  "petri-world": { tick0: "b8ccf2cb6ac4334b", tick2000: "cf31008ad385755a" },
+  "split-banks": { tick0: "f7bfce7a594f5e14", tick2000: "a9ebb71ee0d71e08" },
+  "scattered-plenty": {
+    tick0: "797a9014ad2185cc",
+    tick2000: "917aa84e4dae041c",
+  },
+  "unequal-table": { tick0: "c952d1e906b84190", tick2000: "5c141776668f3423" },
 } as const;
 
 function populationHarness(world: WorldState, seed = 4_182): SimulationState {
@@ -298,18 +308,22 @@ describe("deterministic scenario compilation", () => {
   });
 
   it("locks each canonical story seed at its initial and 2,000-tick states", () => {
+    expect(EXPECTED_CANONICAL_STATE_HASHES).not.toEqual(
+      HISTORICAL_V4_CANONICAL_STATE_HASHES,
+    );
+    const observed: Record<
+      (typeof SCENARIO_IDS)[number],
+      { tick0: string; tick2000: string }
+    > = {} as Record<(typeof SCENARIO_IDS)[number], { tick0: string; tick2000: string }>;
     for (const scenarioId of SCENARIO_IDS) {
       const state = createSimulation(
         createScenarioReference(scenarioId, SCENARIO_CANONICAL_SEEDS[scenarioId]),
       );
-      expect(hashSimulationState(state)).toBe(
-        EXPECTED_CANONICAL_STATE_HASHES[scenarioId].tick0,
-      );
+      const tick0 = hashSimulationState(state);
       advanceSimulation(state, 2_000);
-      expect(hashSimulationState(state)).toBe(
-        EXPECTED_CANONICAL_STATE_HASHES[scenarioId].tick2000,
-      );
+      observed[scenarioId] = { tick0, tick2000: hashSimulationState(state) };
     }
+    expect(observed).toEqual(EXPECTED_CANONICAL_STATE_HASHES);
   });
 
   it("repeats the locked portable scenario matrix without long-run drift", () => {

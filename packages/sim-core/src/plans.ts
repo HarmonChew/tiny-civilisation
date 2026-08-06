@@ -148,6 +148,28 @@ export function planCompletedAfterAction(
   creature: CreatureState,
   action: ActionKind,
 ): boolean {
+  if (creature.activePlan?.kind === "ESTABLISH_SHELTER") {
+    if (creature.groupId === null) return true;
+    const group = state.groups.find((candidate) => candidate.id === creature.groupId);
+    return Boolean(group && group.pendingShelterId !== null);
+  }
+  if (creature.activePlan?.kind === "BUILD_COMMUNAL_SHELTER") {
+    if (action !== "GATHER_MATERIAL" && action !== "BUILD_SHELTER") return true;
+    if (creature.groupId === null) return true;
+    const group = state.groups.find((candidate) => candidate.id === creature.groupId);
+    return Boolean(
+      group && group.pendingShelterId === null && group.activeShelterId !== null,
+    );
+  }
+  if (creature.activePlan?.kind === "MAINTAIN_COMMUNAL_SHELTER") {
+    if (action !== "GATHER_MATERIAL" && action !== "MAINTAIN_SHELTER") return true;
+    if (creature.groupId === null) return true;
+    const group = state.groups.find((candidate) => candidate.id === creature.groupId);
+    const shelter = state.structures.find(
+      (candidate) => candidate.id === group?.activeShelterId,
+    );
+    return shelter?.kind === "SHELTER" && shelter.condition >= 6_500;
+  }
   if (creature.activePlan?.kind !== "COMPLETE_STORAGE") return true;
   if (action !== "GATHER_MATERIAL" && action !== "BUILD_STORAGE") return true;
   if (creature.groupId === null) return true;

@@ -16,6 +16,7 @@ import {
   type HistoricalEvent,
   type PlayerCommand,
   type RenderSnapshot,
+  type RenderStructure,
   type SimulationState,
   type UtilityFactor,
 } from "@tiny-civ/sim-core";
@@ -276,7 +277,11 @@ function eventCategory(
   if (/FIGHT|ATTACK|DAMAGE|HARM|THEFT|CONFLICT|CONFRONT|FLEE|FLED/i.test(type)) {
     return "conflict";
   }
-  if (/GROUP|LEADER|JOIN|LEAVE|STORAGE|FOUNDED/i.test(type)) return "group";
+  if (
+    /GROUP|LEADER|JOIN|LEAVE|STORAGE|FOUNDED|SHELTER|SETTLEMENT|RELOCAT|ABANDON/i.test(type)
+  ) {
+    return "group";
+  }
   if (/FOOD|WATER|THIRST|GATHER|RESOURCE|DEPOSIT|WITHDRAW|MATERIAL/i.test(type)) {
     return "resources";
   }
@@ -327,6 +332,7 @@ function mapDomainEvent(
     ...(reasonFromDecision(decision) ? { reason: reasonFromDecision(decision) } : {}),
     actorIds: [...event.actorIds],
     targetIds: [...event.targetIds],
+    groupIds: [...event.groupIds],
     causedByEventIds: [...event.causedByEventIds],
     importance: event.importance,
     attentionTier: domainEventAttention(event),
@@ -368,6 +374,7 @@ function mapHistoricalEvent(
     ...(reasonFromDecision(decision) ? { reason: reasonFromDecision(decision) } : {}),
     actorIds: [...event.actorIds],
     targetIds: commandSource ? [...commandSource.targetIds] : [],
+    groupIds: [...event.groupIds],
     causedByEventIds: [...event.sourceEventIds],
     importance: event.importance,
     attentionTier:
@@ -426,6 +433,12 @@ export const queueIntervention = (
     case "remove-food":
       command = { ...common, type: "REMOVE_FOOD", amount: 12 };
       break;
+    case "add-material":
+      command = { ...common, type: "ADD_MATERIAL", amount: 12 };
+      break;
+    case "remove-material":
+      command = { ...common, type: "REMOVE_MATERIAL", amount: 12 };
+      break;
     case "replenish-water":
       command = { ...common, type: "REPLENISH_WATER", amount: 12 };
       break;
@@ -443,6 +456,49 @@ export const queueIntervention = (
   queuePlayerCommand(state, command);
   return state;
 };
+
+function mapStructure(
+  structure: RenderStructure,
+  width: number,
+  storageCapacity?: number,
+): StructureView {
+  const shelter = structure.condition !== null;
+  return {
+    id: structure.id,
+    kind: structure.kind,
+    ...pointForTile(structure.tileIndex, width),
+    groupId: structure.groupId,
+    progress: percent(structure.progress),
+    stored: structure.food,
+    capacity: shelter
+      ? (structure.baseCapacity ?? structure.effectiveCapacity ?? 0)
+      : (structure.storageCapacity ??
+        storageCapacity ??
+        Math.max(structure.food, structure.storedMaterial, 20)),
+    materialDeposited: structure.material,
+    materialRequired: structure.materialRequired,
+    workRequired: structure.workRequired,
+    storedMaterial: structure.storedMaterial,
+    ...(structure.condition === null
+      ? {}
+      : {
+          condition: percent(structure.condition),
+          baseCapacity: structure.baseCapacity ?? 0,
+          effectiveCapacity: structure.effectiveCapacity ?? 0,
+          reservedSpaces: structure.reservedSpaces,
+          restingCreatures: structure.restingCreatures,
+          memberOccupancy: structure.memberOccupancy,
+          guestOccupancy: structure.guestOccupancy,
+          upkeepNeeded: structure.upkeepNeeded,
+          ...(structure.siteAssessment === null
+            ? {}
+            : { siteAssessment: { ...structure.siteAssessment } }),
+          ...(structure.builtFromShelterId === null
+            ? {}
+            : { builtFromShelterId: structure.builtFromShelterId }),
+        }),
+  };
+}
 
 export const makeWorldView = (state: SimulationState): WorldView => {
   const snapshot = createRenderSnapshot(state);
@@ -516,6 +572,17 @@ export const makeWorldView = (state: SimulationState): WorldView => {
       ...(rendered?.waterAccess === null || rendered?.waterAccess === undefined
         ? {}
         : { waterAccess: { ...rendered.waterAccess } }),
+      ...(rendered?.shelterAccess === null || rendered?.shelterAccess === undefined
+        ? {}
+        : {
+            shelterAccess: {
+              ...rendered.shelterAccess,
+              condition:
+                rendered.shelterAccess.condition === null
+                  ? null
+                  : percent(rendered.shelterAccess.condition),
+            },
+          }),
       health: percent(creature.health),
       hunger: percent(creature.needs.hunger),
       fatigue: percent(creature.needs.fatigue),
@@ -537,19 +604,19 @@ export const makeWorldView = (state: SimulationState): WorldView => {
     ...(resource.waterAccess === null ? {} : { access: { ...resource.waterAccess } }),
   }));
 
-  const structures: StructureView[] = state.structures.map((structure) => ({
-    id: structure.id,
-    kind: structure.kind,
-    ...pointForTile(structure.tileIndex, width),
-    groupId: structure.groupId,
-    progress: percent(structure.progress),
-    stored: structure.inventory.food,
-    capacity: structure.inventory.capacity,
-  }));
+  const structures: StructureView[] = snapshot.structures.map((structure) =>
+    mapStructure(
+      structure,
+      width,
+      state.structures.find((candidate) => candidate.id === structure.id)?.inventory
+        .capacity,
+    ),
+  );
 
   const groups: GroupView[] = snapshot.groups.map((group) => ({
     id: group.id,
     name: group.name,
+    stage: group.stage,
     memberIds: [...group.memberIds],
     ...(group.leaderId === null ? {} : { leaderId: group.leaderId }),
     home: {
@@ -560,6 +627,15 @@ export const makeWorldView = (state: SimulationState): WorldView => {
     sharingNorm: signedUnit(group.sharingNorm),
     conflictNorm: 0,
     storageIds: group.storageStructureId === null ? [] : [group.storageStructureId],
+    ...(group.activeShelterId === null ? {} : { activeShelterId: group.activeShelterId }),
+    ...(group.pendingShelterId === null
+      ? {}
+      : { pendingShelterId: group.pendingShelterId }),
+    shelterRelocations: group.shelterRelocations,
+    shelterCommitUntilTick: group.shelterCommitUntilTick,
+    ...(group.shelterRelocationCandidate === null
+      ? {}
+      : { shelterRelocationCandidate: { ...group.shelterRelocationCandidate } }),
   }));
 
   const promotedDomainEventIds = new Set(
@@ -705,6 +781,17 @@ export const makeWorldViewFromSnapshot = (
       ...(creature.waterAccess === null
         ? {}
         : { waterAccess: { ...creature.waterAccess } }),
+      ...(creature.shelterAccess === null
+        ? {}
+        : {
+            shelterAccess: {
+              ...creature.shelterAccess,
+              condition:
+                creature.shelterAccess.condition === null
+                  ? null
+                  : percent(creature.shelterAccess.condition),
+            },
+          }),
       health: percent(creature.health),
       hunger: percent(creature.hunger),
       fatigue: percent(creature.fatigue),
@@ -745,18 +832,13 @@ export const makeWorldViewFromSnapshot = (
     capacity: resource.maximumStock,
     ...(resource.waterAccess === null ? {} : { access: { ...resource.waterAccess } }),
   }));
-  const structures: StructureView[] = snapshot.structures.map((structure) => ({
-    id: structure.id,
-    kind: structure.kind,
-    ...pointForTile(structure.tileIndex, width),
-    groupId: structure.groupId,
-    progress: percent(structure.progress),
-    stored: structure.food,
-    capacity: Math.max(structure.food, structure.material, 20),
-  }));
+  const structures: StructureView[] = snapshot.structures.map((structure) =>
+    mapStructure(structure, width),
+  );
   const groups: GroupView[] = snapshot.groups.map((group) => ({
     id: group.id,
     name: group.name,
+    stage: group.stage,
     memberIds: [...group.memberIds],
     ...(group.leaderId === null ? {} : { leaderId: group.leaderId }),
     home: {
@@ -767,6 +849,15 @@ export const makeWorldViewFromSnapshot = (
     sharingNorm: signedUnit(group.sharingNorm),
     conflictNorm: 0,
     storageIds: group.storageStructureId === null ? [] : [group.storageStructureId],
+    ...(group.activeShelterId === null ? {} : { activeShelterId: group.activeShelterId }),
+    ...(group.pendingShelterId === null
+      ? {}
+      : { pendingShelterId: group.pendingShelterId }),
+    shelterRelocations: group.shelterRelocations,
+    shelterCommitUntilTick: group.shelterCommitUntilTick,
+    ...(group.shelterRelocationCandidate === null
+      ? {}
+      : { shelterRelocationCandidate: { ...group.shelterRelocationCandidate } }),
   }));
   const promoted = new Set(snapshot.historyEvents.flatMap((event) => event.sourceEventIds));
   const historyViews: TimelineEventView[] = snapshot.historyEvents.map((event) => {
@@ -793,6 +884,7 @@ export const makeWorldViewFromSnapshot = (
       ...(reasonFromDecision(decision) ? { reason: reasonFromDecision(decision) } : {}),
       actorIds: [...event.actorIds],
       targetIds: commandSource ? [...commandSource.targetIds] : [],
+      groupIds: [...event.groupIds],
       causedByEventIds: [...event.sourceEventIds],
       importance: event.importance,
       attentionTier,
@@ -837,6 +929,7 @@ export const makeWorldViewFromSnapshot = (
         ...(reasonFromDecision(decision) ? { reason: reasonFromDecision(decision) } : {}),
         actorIds: [...event.actorIds],
         targetIds: [...event.targetIds],
+        groupIds: [...event.groupIds],
         causedByEventIds: [...event.causedByEventIds],
         importance: event.importance,
         attentionTier: domainEventAttention(event),

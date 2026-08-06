@@ -355,7 +355,7 @@ describe("versioned simulation contracts", () => {
     expect(migrated.finalHash).toBeUndefined();
   });
 
-  it("atomically migrates Phase 3 saves into deterministic unverified hydration state", () => {
+  it("atomically migrates Phase 3 saves through deterministic hydration and shelter boundaries", () => {
     const legacyState = phaseThreeStateFixture();
     const original = JSON.stringify(legacyState);
     const legacySave = {
@@ -392,16 +392,23 @@ describe("versioned simulation contracts", () => {
       waterDrunk: 0,
       waterShared: 0,
     });
-    const migration = first.domainEvents.at(-1);
-    expect(migration).toMatchObject({
+    const hydrationMigration = first.domainEvents.at(-2);
+    expect(hydrationMigration).toMatchObject({
       tick: legacyState.tick,
       type: "HYDRATION_RULES_ENABLED",
       resourceKind: "WATER",
       quantity: 1,
     });
+    const shelterMigration = first.domainEvents.at(-1);
+    expect(shelterMigration).toMatchObject({
+      tick: legacyState.tick,
+      type: "SHELTER_RULES_ENABLED",
+      resourceKind: null,
+      quantity: 0,
+    });
     expect(
       first.domainEvents
-        .slice(0, -1)
+        .slice(0, -2)
         .every(
           (event) =>
             event.resourceKind !== "WATER" &&

@@ -106,7 +106,7 @@ describe("intervention response evidence", () => {
   it("versions, freezes, and strictly validates persisted traces", () => {
     const trace = createInterventionResponseTrace(command(), [2, 1, 2]);
 
-    expect(trace.schemaVersion).toBe(2);
+    expect(trace.schemaVersion).toBe(3);
     expect(Object.isFrozen(trace)).toBe(true);
     expect(Object.isFrozen(trace.command)).toBe(true);
     expect(Object.isFrozen(trace.participantIds)).toBe(true);

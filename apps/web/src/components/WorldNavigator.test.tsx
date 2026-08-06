@@ -352,6 +352,77 @@ describe("WorldNavigator", () => {
     expect(screen.getByText(/1 water source holds 0 units/i)).toBeTruthy();
   });
 
+  it("indexes settlement groups and shelter condition, capacity, occupancy, and upkeep in text", () => {
+    const settlementView: WorldView = {
+      ...baseView,
+      structures: [
+        ...baseView.structures,
+        {
+          id: 72,
+          kind: "SHELTER",
+          x: 7,
+          y: 4,
+          groupId: 12,
+          progress: 100,
+          stored: 0,
+          capacity: 6,
+          condition: 38,
+          baseCapacity: 6,
+          effectiveCapacity: 3,
+          reservedSpaces: 3,
+          restingCreatures: 2,
+          memberOccupancy: 1,
+          guestOccupancy: 1,
+          upkeepNeeded: true,
+        },
+      ],
+      groups: [
+        {
+          id: 12,
+          name: "Mossbank",
+          stage: "PERSISTENT",
+          memberIds: [1, 2],
+          leaderId: 1,
+          home: { x: 7.5, y: 4.5 },
+          cohesion: 76,
+          sharingNorm: 0.3,
+          conflictNorm: 0,
+          storageIds: [3],
+          activeShelterId: 72,
+          shelterRelocations: 0,
+          shelterCommitUntilTick: 80,
+        },
+      ],
+    };
+    const actions = callbacks();
+    render(
+      <WorldNavigator
+        view={settlementView}
+        selectedRef={{ kind: "group", id: 12 }}
+        focusedRef={null}
+        keyboardFocusedRef={null}
+        {...actions}
+      />,
+    );
+
+    const shelter = screen.getByRole("button", { name: /^Shelter 72,/ });
+    expect(shelter.getAttribute("aria-label")).toContain("condition 38 percent");
+    expect(shelter.getAttribute("aria-label")).toContain(
+      "2 resting and 3 reserved of 3 usable spaces",
+    );
+    expect(shelter.getAttribute("aria-label")).toContain("alert: shelter needs upkeep");
+    expect(shelter.getAttribute("aria-label")).toContain("all shelter spaces reserved");
+    const group = screen.getByRole("button", { name: /^Mossbank,/ });
+    expect(group.getAttribute("aria-pressed")).toBe("true");
+    expect(group.getAttribute("aria-label")).toContain("home shelter 38 percent condition");
+    fireEvent.click(screen.getByRole("button", { name: "Groups" }));
+    expect(
+      within(screen.getByRole("list", { name: "Groups in spatial order" })).getAllByRole(
+        "listitem",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("debounces polite announcements and ignores routine or notable changes", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const existing = makeEvent(1, 9, "SIGNIFICANT", "Existing alliance");

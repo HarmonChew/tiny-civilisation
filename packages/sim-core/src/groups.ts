@@ -3,6 +3,7 @@ import { findNearestWalkable } from "./navigation.js";
 import { tileCoordinates, tileIndexAt } from "./pathfinding.js";
 import { keyedRandomU32, keyedRandomUnit } from "./rng.js";
 import { addMemory, relationshipFrom } from "./social.js";
+import { nearestLegalStructurePlacementTile } from "./shelters.js";
 import { getCreature } from "./tick-context.js";
 import type { CreatureState, GroupState, SimulationState } from "./types.js";
 
@@ -108,7 +109,7 @@ function formGroup(state: SimulationState, members: CreatureState[]): void {
     sumX += point.x;
     sumY += point.y;
   }
-  const home = findNearestWalkable(
+  const centroidHome = findNearestWalkable(
     state,
     tileIndexAt(
       state.world,
@@ -116,6 +117,7 @@ function formGroup(state: SimulationState, members: CreatureState[]): void {
       Math.round(sumY / members.length),
     ),
   );
+  const home = nearestLegalStructurePlacementTile(state, centroidHome) ?? centroidHome;
   const id = state.nextGroupId++;
   const group: GroupState = {
     id,
@@ -126,6 +128,11 @@ function formGroup(state: SimulationState, members: CreatureState[]): void {
     leaderId: null,
     homeTileIndex: home,
     storageStructureId: null,
+    activeShelterId: null,
+    pendingShelterId: null,
+    shelterRelocations: 0,
+    shelterCommitUntilTick: 0,
+    shelterRelocationCandidate: null,
     cohesion: 5_000,
     sharingNorm: 1_000,
     majorEventIds: [],
@@ -224,7 +231,12 @@ export function updateGroups(state: SimulationState): void {
         member.role = "LEADER";
       } else if (member.actionCounts.GUARD > member.actionCounts.GATHER_FOOD) {
         member.role = "GUARD";
-      } else if (member.actionCounts.BUILD_STORAGE > member.actionCounts.GATHER_FOOD) {
+      } else if (
+        member.actionCounts.BUILD_STORAGE +
+          member.actionCounts.BUILD_SHELTER +
+          member.actionCounts.MAINTAIN_SHELTER >
+        member.actionCounts.GATHER_FOOD
+      ) {
         member.role = "BUILDER";
       } else {
         member.role = "FORAGER";

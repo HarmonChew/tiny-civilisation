@@ -45,7 +45,6 @@ import type {
 } from "../components/ExperimentWorkspace";
 import type { InterventionTool, TileView, TimelineEventView, WorldView } from "../model";
 import {
-  createSimulationEngine,
   type LongRunningOperationOptions,
   type ReplayResult,
   type RuntimeCanonicalHash,
@@ -54,6 +53,7 @@ import {
   type SimulationEngine,
   type SimulationFrame,
 } from "../runtime";
+import { createBrowserSimulationEngine } from "../runtime/browser-simulation-engine";
 import { makeWorldViewFromSnapshot } from "../sim-adapter";
 import { reconcileProjectedInterventions } from "../experiment/intervention-reconciliation";
 import {
@@ -72,7 +72,7 @@ import { useInterventionResponseTraces } from "./useInterventionResponseTraces";
 
 const ONBOARDING_KEY = "tiny-civilisation/orientation-complete/v1";
 const WORKSPACE_KIND = "tiny-civilisation/workspace";
-const WORKSPACE_SCHEMA_VERSION = 3;
+const WORKSPACE_SCHEMA_VERSION = 4;
 const INTERVENTION_BRANCH_BASE_ID = "intervention";
 const MAX_INTERACTIVE_REPLAY_TICK = 100_000;
 const MAX_IMPORTED_REPLAY_COMMANDS = 10_000;
@@ -145,6 +145,22 @@ const INTERVENTION_TOOLS: readonly InterventionToolOption[] = [
     supportsQuantity: true,
   },
   {
+    id: "add-material",
+    label: "Add material",
+    description:
+      "Introduce building material at a tile without ordering construction or upkeep.",
+    targetKind: "tile",
+    supportsQuantity: true,
+  },
+  {
+    id: "remove-material",
+    label: "Remove material",
+    description:
+      "Reduce building material at a tile without directing any creature or group.",
+    targetKind: "tile",
+    supportsQuantity: true,
+  },
+  {
     id: "replenish-water",
     label: "Replenish water",
     description: "Add water to an existing source without directing any creature.",
@@ -184,7 +200,7 @@ const EMPTY_COMPARISON: ComparisonState = {
   message: "Bookmark a baseline, introduce one condition, then compare both runs.",
 };
 
-interface PersistedWorkspaceV3 {
+interface PersistedWorkspaceV4 {
   kind: typeof WORKSPACE_KIND;
   schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
   activeBranchId: string;
@@ -192,7 +208,7 @@ interface PersistedWorkspaceV3 {
   simulationSave: string;
 }
 
-interface ParsedWorkspace extends PersistedWorkspaceV3 {
+interface ParsedWorkspace extends PersistedWorkspaceV4 {
   verificationUnavailable: boolean;
 }
 
@@ -701,6 +717,7 @@ function metricDisplay(
 ): string | number {
   if (key === "averageTrust") return (value / 1_000).toFixed(2);
   if (key === "routeConcentration") return `${(value * 100).toFixed(1)}%`;
+  if (key === "meanShelterCondition") return `${(value / 100).toFixed(1)}%`;
   if (key === "averageThirst" || key === "averageWaterAccessCost") {
     return Math.round(value);
   }
@@ -757,6 +774,26 @@ const METRIC_DEFINITIONS: ReadonlyArray<{
   { key: "thefts", label: "Thefts" },
   { key: "attacks", label: "Confrontations" },
   { key: "storagesCompleted", label: "Storage completed" },
+  { key: "sheltersCompleted", label: "Communal shelters completed" },
+  { key: "activeShelters", label: "Active communal shelters" },
+  {
+    key: "shelteredRests",
+    label: "Sheltered rests completed",
+    note: "Cumulative rest completions since the run began",
+  },
+  {
+    key: "outdoorRests",
+    label: "Outdoor rests completed",
+    note: "Cumulative fallback rest completions since the run began",
+  },
+  { key: "meanShelterCondition", label: "Mean active-shelter condition" },
+  {
+    key: "shelterMaintenanceMaterial",
+    label: "Material used for shelter upkeep",
+  },
+  { key: "shelterDeniedClaims", label: "Shelter claims denied" },
+  { key: "shelterGuestUses", label: "Guest shelter uses" },
+  { key: "shelterRelocations", label: "Completed home relocations" },
 ];
 
 export function comparisonMetrics(
@@ -779,7 +816,7 @@ export function comparisonMetrics(
   });
 }
 
-function serializeWorkspace(workspace: PersistedWorkspaceV3): string {
+function serializeWorkspace(workspace: PersistedWorkspaceV4): string {
   return JSON.stringify(workspace);
 }
 
@@ -797,6 +834,13 @@ function importedExperimentVerificationUnavailable(serialized: string): boolean 
     return false;
   }
   if (record?.kind !== "tiny-civilisation/experiment") return false;
+  if (
+    record.schemaVersion === 4 &&
+    record.behaviorVersion === 4 &&
+    record.stateSchemaVersion === 4
+  ) {
+    return true;
+  }
   if (
     record.schemaVersion === 3 &&
     record.behaviorVersion === 3 &&
@@ -825,22 +869,31 @@ function assertLegacyWorkspaceTuple(record: Record<string, unknown>): void {
     ((artifact.behaviorVersion === 1 && artifact.stateSchemaVersion === 1) ||
       (artifact.behaviorVersion === 3 && artifact.stateSchemaVersion === 2));
   const supported =
-    record.schemaVersion === 2
+    record.schemaVersion === 3
       ? experiment?.kind === "tiny-civilisation/experiment" &&
-        experiment.schemaVersion === 3 &&
-        experiment.behaviorVersion === 3 &&
-        experiment.stateSchemaVersion === 3 &&
+        experiment.schemaVersion === 4 &&
+        experiment.behaviorVersion === 4 &&
+        experiment.stateSchemaVersion === 4 &&
         save?.kind === "tiny-civilisation/save" &&
-        save.schemaVersion === 2 &&
-        save.behaviorVersion === 3 &&
-        save.stateSchemaVersion === 3
-      : record.schemaVersion === 1 &&
-        experiment?.kind === "tiny-civilisation/experiment" &&
-        (experiment?.schemaVersion === 1 || experiment?.schemaVersion === 2) &&
-        phaseOneOrTwo(experiment) &&
-        save?.kind === "tiny-civilisation/save" &&
-        save.schemaVersion === 1 &&
-        phaseOneOrTwo(save);
+        save.schemaVersion === 3 &&
+        save.behaviorVersion === 4 &&
+        save.stateSchemaVersion === 4
+      : record.schemaVersion === 2
+        ? experiment?.kind === "tiny-civilisation/experiment" &&
+          experiment.schemaVersion === 3 &&
+          experiment.behaviorVersion === 3 &&
+          experiment.stateSchemaVersion === 3 &&
+          save?.kind === "tiny-civilisation/save" &&
+          save.schemaVersion === 2 &&
+          save.behaviorVersion === 3 &&
+          save.stateSchemaVersion === 3
+        : record.schemaVersion === 1 &&
+          experiment?.kind === "tiny-civilisation/experiment" &&
+          (experiment?.schemaVersion === 1 || experiment?.schemaVersion === 2) &&
+          phaseOneOrTwo(experiment) &&
+          save?.kind === "tiny-civilisation/save" &&
+          save.schemaVersion === 1 &&
+          phaseOneOrTwo(save);
   if (!supported) {
     throw new Error("That browser save uses an incompatible legacy version tuple.");
   }
@@ -861,6 +914,7 @@ function parseWorkspace(serialized: string): ParsedWorkspace {
     record.kind !== WORKSPACE_KIND ||
     (record.schemaVersion !== 1 &&
       record.schemaVersion !== 2 &&
+      record.schemaVersion !== 3 &&
       record.schemaVersion !== WORKSPACE_SCHEMA_VERSION)
   ) {
     throw new Error("That browser save uses an incompatible workspace version.");
@@ -957,7 +1011,8 @@ export function useExperimentWorkspace({
   onFocusEvidence,
   createReplayEngine: createReplayEngineOverride,
 }: UseExperimentWorkspaceOptions): ExperimentWorkspaceController {
-  const createIsolatedReplayEngine = createReplayEngineOverride ?? createSimulationEngine;
+  const createIsolatedReplayEngine =
+    createReplayEngineOverride ?? createBrowserSimulationEngine;
   const getInterventionOutcomes = simulation.getInterventionOutcomes;
   const simulationTick = simulation.view.tick;
   const simulationRevision = `${simulation.scenario.scenarioId}@${simulation.scenario.scenarioVersion.toString()}/${simulation.scenario.mapGenerationVersion.toString()}:${simulation.seed.toString()}:${simulationTick.toString()}`;
@@ -1495,7 +1550,7 @@ export function useExperimentWorkspace({
       const checkpoint = await simulation.getCheckpoint();
       if (!checkpoint) throw new Error("The simulation is not ready to checkpoint.");
       const next = branchWithCheckpointResult(checkpoint);
-      const workspace: PersistedWorkspaceV3 = {
+      const workspace: PersistedWorkspaceV4 = {
         kind: WORKSPACE_KIND,
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activeBranchId: activeBranchRef.current,
@@ -1556,7 +1611,7 @@ export function useExperimentWorkspace({
       setActionStatus({
         phase: "success",
         message: workspace.verificationUnavailable
-          ? `Upgraded; prior verification unavailable. Restored tick ${restoredView.tick} under Phase 4. Rerun comparisons before drawing conclusions.`
+          ? `Upgraded; prior verification unavailable. Restored tick ${restoredView.tick} under Phase 4.2 rules. Rerun comparisons before drawing conclusions.`
           : `Restored tick ${restoredView.tick} without changing its hash.`,
       });
     } catch (error) {
@@ -1969,7 +2024,7 @@ export function useExperimentWorkspace({
   const calculateComparison = useCallback(async () => {
     const operation = acquireOperation("comparison");
     if (!operation) return;
-    const engine = createSimulationEngine();
+    const engine = createBrowserSimulationEngine();
     try {
       const current = experimentRef.current;
       const active = current.branches.find(
@@ -2150,6 +2205,8 @@ export function useExperimentWorkspace({
     if (
       (composerTool === "add-food" ||
         composerTool === "remove-food" ||
+        composerTool === "add-material" ||
+        composerTool === "remove-material" ||
         composerTool === "replenish-water" ||
         composerTool === "drain-water") &&
       (!Number.isInteger(amount) || amount < 1 || amount > 999)
@@ -2358,13 +2415,17 @@ export function useExperimentWorkspace({
             ? "Food added"
             : entry.command.type === "REMOVE_FOOD"
               ? "Food removed"
-              : entry.command.type === "REPLENISH_WATER"
-                ? "Water replenished"
-                : entry.command.type === "DRAIN_WATER"
-                  ? "Water drained"
-                  : entry.command.blocked
-                    ? "Passage closed"
-                    : "Passage opened",
+              : entry.command.type === "ADD_MATERIAL"
+                ? "Material added"
+                : entry.command.type === "REMOVE_MATERIAL"
+                  ? "Material removed"
+                  : entry.command.type === "REPLENISH_WATER"
+                    ? "Water replenished"
+                    : entry.command.type === "DRAIN_WATER"
+                      ? "Water drained"
+                      : entry.command.blocked
+                        ? "Passage closed"
+                        : "Passage opened",
         target: `tile ${x}, ${y}`,
         status,
         selectable,
@@ -2465,6 +2526,8 @@ export function useExperimentWorkspace({
     if (
       composerTool !== "add-food" &&
       composerTool !== "remove-food" &&
+      composerTool !== "add-material" &&
+      composerTool !== "remove-material" &&
       composerTool !== "replenish-water" &&
       composerTool !== "drain-water" &&
       composerTool !== "obstacle"
@@ -2494,13 +2557,17 @@ export function useExperimentWorkspace({
           ? `Add ${amount.toLocaleString()} food units at the target tile.`
           : composerTool === "remove-food"
             ? `Remove up to ${amount.toLocaleString()} food units from the target tile.`
-            : composerTool === "replenish-water"
-              ? `Add up to ${amount.toLocaleString()} units to the water source at the target tile.`
-              : composerTool === "drain-water"
-                ? `Remove up to ${amount.toLocaleString()} units from the water source at the target tile.`
-                : tile.blocked
-                  ? "Open the target passage."
-                  : "Close the target passage if the authoritative occupancy check permits it.",
+            : composerTool === "add-material"
+              ? `Add ${amount.toLocaleString()} material units at the target tile.`
+              : composerTool === "remove-material"
+                ? `Remove up to ${amount.toLocaleString()} material units from the target tile.`
+                : composerTool === "replenish-water"
+                  ? `Add up to ${amount.toLocaleString()} units to the water source at the target tile.`
+                  : composerTool === "drain-water"
+                    ? `Remove up to ${amount.toLocaleString()} units from the water source at the target tile.`
+                    : tile.blocked
+                      ? "Open the target passage."
+                      : "Close the target passage if the authoritative occupancy check permits it.",
     };
   }, [
     composerTool,

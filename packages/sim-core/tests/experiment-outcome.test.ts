@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertExperimentOutcome,
   compareExperimentOutcomes,
   createExperimentOutcome,
   createScenarioReference,
@@ -27,6 +28,11 @@ describe("canonical experiment outcomes", () => {
       leaderId: first.id,
       homeTileIndex: first.tileIndex,
       storageStructureId: 12,
+      activeShelterId: null,
+      pendingShelterId: null,
+      shelterRelocations: 0,
+      shelterCommitUntilTick: 0,
+      shelterRelocationCandidate: null,
       cohesion: 5_000,
       sharingNorm: 4_000,
       majorEventIds: [],
@@ -57,6 +63,38 @@ describe("canonical experiment outcomes", () => {
         inventory: { capacity: 100, food: 99, material: 99, water: 0 },
         guardIds: [],
         completedTick: null,
+      },
+      {
+        id: 14,
+        kind: "SHELTER",
+        tileIndex: first.tileIndex + 48,
+        groupId: 1,
+        material: 18,
+        materialRequired: 18,
+        progress: 10_000,
+        workRequired: 10_000,
+        inventory: { capacity: 0, food: 0, material: 0, water: 0 },
+        guardIds: [],
+        completedTick: 5,
+        condition: 6_000,
+        baseCapacity: 6,
+        siteAssessment: {
+          selectedAtTick: 1,
+          memberTravelCost: 10,
+          storageTravelCost: 10,
+          foodAccessCost: 10,
+          materialAccessCost: 10,
+          waterAccessCost: 10,
+          crowdingCost: 0,
+          constructionInvestmentCost: 0,
+          relocationChangeCost: 0,
+          totalScore: 90,
+        },
+        builtFromShelterId: null,
+        maintenanceMaterialSpent: 2,
+        lastMaintainedTick: 5,
+        lastUsedTick: 5,
+        conditionBand: "WORN",
       },
     );
     state.relationships.push(
@@ -93,6 +131,13 @@ describe("canonical experiment outcomes", () => {
     state.metrics.thefts = 3;
     state.metrics.attacks = 2;
     state.metrics.storagesCompleted = 1;
+    state.metrics.sheltersCompleted = 1;
+    state.metrics.shelteredRests = 9;
+    state.metrics.outdoorRests = 4;
+    state.metrics.shelterMaintenanceMaterial = 2;
+    state.metrics.shelterDeniedClaims = 3;
+    state.metrics.shelterGuestUses = 2;
+    state.metrics.shelterRelocations = 1;
 
     const outcome = createExperimentOutcome(state);
     expect(outcome).toMatchObject({
@@ -113,7 +158,17 @@ describe("canonical experiment outcomes", () => {
       thefts: 3,
       attacks: 2,
       storagesCompleted: 1,
+      sheltersCompleted: 1,
+      activeShelters: 1,
+      shelteredRests: 9,
+      outdoorRests: 4,
+      meanShelterCondition: 6_000,
+      shelterMaintenanceMaterial: 2,
+      shelterDeniedClaims: 3,
+      shelterGuestUses: 2,
+      shelterRelocations: 1,
     });
+    expect(() => assertExperimentOutcome(outcome)).not.toThrow();
   });
 
   it("uses zero average trust for an empty relationship graph", () => {
@@ -157,6 +212,8 @@ describe("canonical experiment outcomes", () => {
     interventionState.metrics.interactionContentions = 3;
     interventionState.metrics.waterGatherContentions = 2;
     interventionState.metrics.severeThirstCreatureTicks = 7;
+    interventionState.metrics.shelteredRests = 5;
+    interventionState.metrics.shelterDeniedClaims = 2;
     interventionState.resourceNodes[0]!.currentStock += 3;
     const comparison = compareExperimentOutcomes(
       createExperimentOutcome(baselineState),
@@ -168,6 +225,8 @@ describe("canonical experiment outcomes", () => {
     expect(comparison.delta.interactionContentions).toBe(3);
     expect(comparison.delta.waterGatherContentions).toBe(2);
     expect(comparison.delta.severeThirstExposureTicks).toBe(7);
+    expect(comparison.delta.shelteredRests).toBe(5);
+    expect(comparison.delta.shelterDeniedClaims).toBe(2);
     expect(comparison.baseline.foodShared).toBe(0);
     expect(comparison.intervention.foodShared).toBe(4);
 
@@ -185,6 +244,13 @@ describe("canonical experiment outcomes", () => {
     expect(() =>
       compareExperimentOutcomes(createExperimentOutcome(baselineState), incompatible),
     ).toThrow("incompatible behavior versions");
+    const oldSchema = {
+      ...createExperimentOutcome(baselineState),
+      schemaVersion: 3,
+    } as unknown as ExperimentOutcomeV1;
+    expect(() => assertExperimentOutcome(oldSchema)).toThrow(
+      "schema version 3 is incompatible with 4",
+    );
 
     const otherScenario = createSimulation(
       createScenarioReference("split-banks", baselineState.seed),

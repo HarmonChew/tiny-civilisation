@@ -104,6 +104,106 @@ export function drawStructureMark(mark: Graphics, structure: StructureView): voi
   const storage = boundedRatio(structure.stored, structure.capacity);
   mark.clear();
 
+  const shelterState = shelterPresentationState(structure);
+  if (shelterState !== null) {
+    const abandoned = shelterState === "abandoned";
+    const site = shelterState === "site";
+    const degraded = shelterState === "degraded";
+    const condition = boundedRatio(structure.condition ?? 0, 100);
+
+    if (site) {
+      mark
+        .moveTo(-0.42, 0.29)
+        .lineTo(-0.34, -0.35)
+        .moveTo(0.42, 0.29)
+        .lineTo(0.34, -0.35)
+        .moveTo(-0.49, -0.22)
+        .lineTo(0.49, -0.22)
+        .moveTo(-0.34, -0.17)
+        .lineTo(0.34, 0.25)
+        .stroke({ color: PALETTE.paper, width: 0.07, alpha: 0.88 })
+        .rect(-0.45, 0.41, 0.9, 0.08)
+        .fill({ color: PALETTE.ink, alpha: 0.66 })
+        .rect(-0.45, 0.41, 0.9 * progress, 0.08)
+        .fill({ color: PALETTE.selected, alpha: 0.96 });
+    } else {
+      mark
+        .rect(-0.45, -0.23, 0.9, 0.57)
+        .fill({
+          color: abandoned ? PALETTE.rock : PALETTE.storage,
+          alpha: abandoned ? 0.62 : degraded ? 0.72 : 0.94,
+        })
+        .stroke({
+          color: abandoned || degraded ? PALETTE.danger : PALETTE.ink,
+          width: 0.08,
+          alpha: 0.96,
+        })
+        .moveTo(-0.52, -0.23)
+        .lineTo(-0.27, -0.54)
+        .lineTo(0, -0.35)
+        .lineTo(0.25, -0.57)
+        .lineTo(0.52, -0.23)
+        .stroke({
+          color: abandoned ? PALETTE.danger : PALETTE.material,
+          width: 0.11,
+          alpha: abandoned ? 0.85 : 0.98,
+        })
+        .rect(-0.1, 0.04, 0.2, 0.3)
+        .stroke({ color: PALETTE.ink, width: 0.055, alpha: 0.88 });
+
+      if (degraded || abandoned) {
+        mark
+          .moveTo(-0.25, -0.12)
+          .lineTo(-0.08, 0.02)
+          .lineTo(-0.2, 0.16)
+          .moveTo(0.22, -0.18)
+          .lineTo(0.08, -0.02)
+          .lineTo(0.2, 0.13)
+          .stroke({ color: PALETTE.danger, width: 0.065, alpha: 0.94 });
+      }
+
+      if (abandoned) {
+        mark
+          .moveTo(-0.38, -0.38)
+          .lineTo(0.38, 0.31)
+          .moveTo(0.38, -0.38)
+          .lineTo(-0.38, 0.31)
+          .stroke({ color: PALETTE.paper, width: 0.055, alpha: 0.75 });
+      } else {
+        const capacity = Math.max(
+          1,
+          structure.effectiveCapacity ?? structure.baseCapacity ?? 1,
+        );
+        const shownCapacity = Math.min(6, capacity);
+        const reserved = Math.min(shownCapacity, structure.reservedSpaces ?? 0);
+        const resting = Math.min(shownCapacity, structure.restingCreatures ?? 0);
+        const startX = -((shownCapacity - 1) * 0.115) / 2;
+        for (let index = 0; index < shownCapacity; index += 1) {
+          const x = startX + index * 0.115;
+          mark.rect(x - 0.045, 0.42, 0.09, 0.07).stroke({
+            color: PALETTE.paper,
+            width: 0.022,
+            alpha: index < reserved ? 1 : 0.48,
+          });
+          if (index < resting) {
+            mark.circle(x, 0.455, 0.022).fill({ color: PALETTE.action, alpha: 1 });
+          }
+        }
+        mark
+          .rect(-0.45, 0.54, 0.9, 0.055)
+          .fill({ color: PALETTE.ink, alpha: 0.58 })
+          .rect(-0.45, 0.54, 0.9 * condition, 0.055)
+          .fill({
+            color: degraded ? PALETTE.danger : PALETTE.paper,
+            alpha: 0.9,
+          });
+      }
+    }
+
+    mark.position.set(structure.x + 0.5, structure.y + 0.5);
+    return;
+  }
+
   if (completed) {
     mark
       .rect(-0.43, -0.31, 0.86, 0.7)
@@ -144,4 +244,17 @@ export function drawStructureMark(mark: Graphics, structure: StructureView): voi
   }
 
   mark.position.set(structure.x + 0.5, structure.y + 0.5);
+}
+
+export type ShelterPresentationState = "site" | "active" | "degraded" | "abandoned";
+
+export function shelterPresentationState(
+  structure: Pick<StructureView, "kind" | "condition" | "upkeepNeeded">,
+): ShelterPresentationState | null {
+  if (structure.kind === "SHELTER_SITE") return "site";
+  if (structure.kind === "ABANDONED_SHELTER") return "abandoned";
+  if (structure.kind !== "SHELTER") return null;
+  return structure.upkeepNeeded || (structure.condition ?? 100) < 50
+    ? "degraded"
+    : "active";
 }

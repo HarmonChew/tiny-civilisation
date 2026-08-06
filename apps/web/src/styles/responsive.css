@@ -53,6 +53,7 @@
     display: none;
     width: min(390px, 46vw);
     border-left: 1px solid var(--border-strong);
+    background: color-mix(in srgb, var(--surface-paper-strong) 98%, var(--surface-canvas));
     box-shadow: -18px 0 44px rgba(31, 39, 32, 0.22);
   }
 

@@ -11,23 +11,36 @@ import {
 } from "@tiny-civ/sim-core";
 
 import type { ActivityProfile, BinaryOutcomeAggregate } from "./activity-collector.js";
+import { PHASE_4_2_HOLDOUT_SEEDS, PHASE_4_2_MATRIX_TICKS } from "./phase-4.2-corpora.js";
 import {
   PAIRED_MACRO_BANDS,
   PAIRED_MACRO_BAND_TABLE_VERSION,
   PHASE_4_1_CALIBRATION_SEED_COUNT,
   PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE,
+  PHASE_4_2_CALIBRATION_PROVENANCE,
+  PHASE_4_2_PAIRED_MACRO_BANDS,
+  PHASE_4_2_SCENARIO_OUTCOME_DOMINANCE_RATIONALES,
+  PHASE_4_2_SCENARIO_OUTCOME_INCIDENCE_BANDS,
   REQUIRED_PASSING_PHASE_3_MACRO_DIMENSIONS,
+  REQUIRED_PASSING_PHASE_4_2_SETTLEMENT_BANDS,
   SCENARIO_EXPECTED_BANDS,
   SCENARIO_EXPECTED_BAND_TABLE_VERSION,
   SCENARIO_OUTCOME_BAND_TABLE_VERSION,
   SCENARIO_OUTCOME_DOMINANCE_RATIONALES,
   SCENARIO_OUTCOME_DOMINANCE_THRESHOLD,
   SCENARIO_OUTCOME_INCIDENCE_BANDS,
-  type FrozenCalibrationProvenance,
+  SETTLEMENT_NEGLECT_LOW_CONDITION_RATE,
+  SETTLEMENT_NEGLECT_MINIMUM_ACTIVE_SHELTER_TICKS,
+  phase42BandsAreFrozen,
+  type CalibrationProvenance,
   type FrozenPairedMacroMetricId,
   type FrozenPhase3MacroDimension,
+  type PairedMacroBandDefinition,
+  type PairedMacroEligiblePairPolicy,
+  type PairedMacroMissingValuePolicy,
   type ScenarioBandMetricId,
   type ScenarioOutcomeDominanceRationaleDefinition,
+  type ScenarioOutcomeIncidenceBandDefinition,
   type ScenarioOutcomeLabelId,
 } from "./scenario-bands.js";
 import {
@@ -35,10 +48,16 @@ import {
   type ScenarioDefinitionIdentity,
 } from "./scenario-reporting.js";
 
-export const SCENARIO_ANALYSIS_SCHEMA_VERSION = 3 as const;
-export const OUTCOME_CLASSIFIER_VERSION = 2 as const;
+export const SCENARIO_ANALYSIS_SCHEMA_VERSION = 4 as const;
+export const OUTCOME_CLASSIFIER_VERSION = 3 as const;
 
-export type ScenarioCorpusName = "smoke" | "nightly" | "calibration" | "holdout";
+export type ScenarioCorpusName =
+  | "smoke"
+  | "nightly"
+  | "calibration"
+  | "holdout"
+  | "phase-4.2-calibration"
+  | "phase-4.2-holdout";
 
 export type OutcomeLabelId = ScenarioOutcomeLabelId;
 
@@ -56,6 +75,53 @@ export interface ScenarioAnalysisContext {
   readonly corpus: ScenarioCorpusName;
   readonly seeds: readonly number[];
   readonly requestedTicks: number;
+  readonly phase42DefinitionFingerprint?: string;
+  readonly phase42Definitions?: Phase42AnalysisDefinitionOverride;
+}
+
+export interface Phase42ClassifierRules {
+  readonly establishedSettlementMinimumActiveShelters: number;
+  readonly chronicNeglectMinimumActiveShelterTicks: number;
+  readonly chronicNeglectMinimumLowConditionExposureRate: number;
+  readonly shelterCrowdingMinimumEvents: number;
+  readonly guestShelteringMinimumEvents: number;
+  readonly settlementRelocationMinimumCount: number;
+}
+
+export const PHASE_4_2_CLASSIFIER_RULES: Phase42ClassifierRules = Object.freeze({
+  establishedSettlementMinimumActiveShelters: 1,
+  chronicNeglectMinimumActiveShelterTicks: SETTLEMENT_NEGLECT_MINIMUM_ACTIVE_SHELTER_TICKS,
+  chronicNeglectMinimumLowConditionExposureRate: SETTLEMENT_NEGLECT_LOW_CONDITION_RATE,
+  shelterCrowdingMinimumEvents: 1,
+  guestShelteringMinimumEvents: 1,
+  settlementRelocationMinimumCount: 1,
+});
+
+/**
+ * Trusted, already-validated Phase 4.2 tables embedded in a calibration
+ * artifact. Authentication uses these data-only definitions to reproduce the
+ * artifact under the exact candidate/frozen contract that created it.
+ */
+export interface Phase42AnalysisDefinitionOverride {
+  readonly status: "CANDIDATE" | "FROZEN";
+  readonly classifierRules: Phase42ClassifierRules;
+  readonly incidenceBands: readonly ScenarioOutcomeIncidenceBandDefinition[];
+  readonly dominanceRationales: readonly ScenarioOutcomeDominanceRationaleDefinition[];
+  readonly pairedMacroBands: readonly PairedMacroBandDefinition[];
+}
+
+function phase42ClassifierRulesForContext(
+  context: ScenarioAnalysisContext,
+): Phase42ClassifierRules {
+  return context.phase42Definitions?.classifierRules ?? PHASE_4_2_CLASSIFIER_RULES;
+}
+
+function phase42DefinitionsAreFrozenForContext(context: ScenarioAnalysisContext): boolean {
+  return context.phase42Definitions?.status === "FROZEN"
+    ? true
+    : context.phase42Definitions?.status === "CANDIDATE"
+      ? false
+      : phase42BandsAreFrozen(context.phase42DefinitionFingerprint);
 }
 
 export interface OutcomeEvidence {
@@ -129,7 +195,7 @@ export interface ScenarioOutcomeBandEvaluation {
   readonly threshold: number;
   readonly requiredEligibleRuns: typeof PHASE_4_1_CALIBRATION_SEED_COUNT;
   readonly reason: string | null;
-  readonly provenance: FrozenCalibrationProvenance;
+  readonly provenance: CalibrationProvenance;
 }
 
 export interface ScenarioOutcomeDominanceEvaluation {
@@ -150,11 +216,18 @@ export interface ScenarioOutcomeBandReport {
   readonly tableVersion: typeof SCENARIO_OUTCOME_BAND_TABLE_VERSION;
   readonly status: EvaluationSummaryStatus;
   readonly eligibility: {
-    readonly status: "FULL_CALIBRATION" | "FULL_HOLDOUT" | "NOT_EVALUATED";
+    readonly status:
+      | "FULL_CALIBRATION"
+      | "FULL_HOLDOUT"
+      | "PHASE_4_2_CALIBRATION_CANDIDATE"
+      | "FULL_PHASE_4_2_CALIBRATION"
+      | "FULL_PHASE_4_2_HOLDOUT"
+      | "PHASE_4_2_NOT_FROZEN"
+      | "NOT_EVALUATED";
     readonly reason: string | null;
   };
   readonly releaseClaim: false;
-  readonly provenance: FrozenCalibrationProvenance;
+  readonly provenance: CalibrationProvenance;
   readonly evaluations: readonly ScenarioOutcomeBandEvaluation[];
   readonly dominance: {
     readonly status: EvaluationSummaryStatus;
@@ -180,8 +253,11 @@ export interface ScenarioExpectedBandReport {
       | "SMOKE_SUBSET_ONLY"
       | "NIGHTLY_SUBSET_ONLY"
       | "FULL_CALIBRATION_PRESENT"
+      | "PHASE_4_2_CANDIDATE_CALIBRATION_PRESENT"
+      | "FULL_PHASE_4_2_CALIBRATION_PRESENT"
       | "NOT_PRESENT";
-    readonly holdoutEvidence: "FULL_HOLDOUT_PRESENT" | "NOT_PRESENT";
+    readonly holdoutEvidence:
+      "FULL_HOLDOUT_PRESENT" | "FULL_PHASE_4_2_HOLDOUT_PRESENT" | "NOT_PRESENT";
   };
   readonly evaluations: readonly ScenarioBandEvaluation[];
   readonly scenarioOutcomeBands: ScenarioOutcomeBandReport;
@@ -203,7 +279,8 @@ export interface ScenarioAnalysisReport {
   readonly expectedBands: ScenarioExpectedBandReport;
 }
 
-type MacroDimension = "SOCIAL" | "STORAGE" | "CONFLICT" | "SPATIAL" | "HYDRATION";
+type MacroDimension =
+  "SOCIAL" | "STORAGE" | "CONFLICT" | "SPATIAL" | "HYDRATION" | "SETTLEMENT";
 
 type MacroMetricId =
   | "GROUP_COUNT"
@@ -216,7 +293,12 @@ type MacroMetricId =
   | "SEVERE_THIRST_EXPOSURE_RATE"
   | "DEPLETED_WATER_SOURCE_TICKS"
   | "WATER_SHARED_UNITS"
-  | "WATER_ROUTE_HERFINDAHL_INDEX";
+  | "WATER_ROUTE_HERFINDAHL_INDEX"
+  | "ACTIVE_SHELTER_COUNT"
+  | "SHELTERED_REST_SHARE"
+  | "MEAN_SHELTER_CONDITION"
+  | "SHELTER_GUEST_USE_EVENTS"
+  | "SETTLEMENT_RELOCATION_COUNT";
 
 export interface PairedMetricDelta {
   readonly seed: number;
@@ -229,6 +311,7 @@ export interface PairedMetricSummary {
   readonly metricId: MacroMetricId;
   readonly dimension: MacroDimension;
   readonly metricPath: string;
+  readonly missingValuePolicy: "ZERO_IS_OBSERVED" | "EXCLUDE_PAIR_IF_EITHER_VALUE_MISSING";
   readonly deltaDirection: "RIGHT_MINUS_LEFT";
   readonly pairs: readonly PairedMetricDelta[];
   readonly summary: {
@@ -265,6 +348,9 @@ export interface FrozenPairedMacroBandEvaluation {
   readonly metricPath: string;
   readonly status: EvaluationStatus;
   readonly pairedSeedCount: number;
+  readonly requiredPairedSeeds: number;
+  readonly missingValuePolicy: PairedMacroMissingValuePolicy;
+  readonly eligiblePairPolicy: PairedMacroEligiblePairPolicy;
   readonly meanDelta: number | null;
   readonly absoluteMeanDelta: number | null;
   readonly minimumAbsoluteMeanDelta: number;
@@ -272,7 +358,7 @@ export interface FrozenPairedMacroBandEvaluation {
   readonly absoluteCohenDz: number | null;
   readonly minimumAbsoluteCohenDz: number;
   readonly reason: string | null;
-  readonly provenance: FrozenCalibrationProvenance;
+  readonly provenance: CalibrationProvenance;
 }
 
 export interface FrozenPairedMacroBandReport {
@@ -280,11 +366,15 @@ export interface FrozenPairedMacroBandReport {
   readonly status: EvaluationStatus;
   readonly bandEvaluationStatus: EvaluationSummaryStatus;
   readonly releaseClaim: false;
-  readonly provenance: FrozenCalibrationProvenance;
+  readonly provenance: CalibrationProvenance;
   readonly corpusValidation: {
     readonly status:
       | "FULL_CALIBRATION"
       | "FULL_HOLDOUT"
+      | "PHASE_4_2_CALIBRATION_CANDIDATE"
+      | "FULL_PHASE_4_2_CALIBRATION"
+      | "FULL_PHASE_4_2_HOLDOUT"
+      | "PHASE_4_2_NOT_FROZEN"
       | "NOT_FULL_CALIBRATION_OR_HOLDOUT"
       | "CORPUS_MISMATCH"
       | "HORIZON_MISMATCH";
@@ -302,6 +392,14 @@ export interface FrozenPairedMacroBandReport {
     readonly comparison: "GTE";
     readonly threshold: typeof REQUIRED_PASSING_PHASE_3_MACRO_DIMENSIONS;
     readonly passingDimensions: readonly FrozenPhase3MacroDimension[];
+    readonly reason: string | null;
+  };
+  readonly settlementRequirement: {
+    readonly status: EvaluationStatus;
+    readonly metricPath: "evaluations[dimension=SETTLEMENT,status=PASS]|count";
+    readonly observed: number | null;
+    readonly comparison: "GTE";
+    readonly threshold: typeof REQUIRED_PASSING_PHASE_4_2_SETTLEMENT_BANDS;
     readonly reason: string | null;
   };
 }
@@ -328,6 +426,24 @@ const OUTCOME_LABEL_ORDER: readonly OutcomeLabelId[] = [
   "SOURCE_BOTTLENECK",
   "PERSISTENT_DEHYDRATION",
   "CONCENTRATED_WATER_ROUTES",
+  "ESTABLISHED_SETTLEMENT",
+  "CHRONIC_SHELTER_NEGLECT",
+  "SHELTER_CROWDING",
+  "GUEST_SHELTERING",
+  "SETTLEMENT_RELOCATION",
+  "QUIET_STALEMATE",
+];
+
+/** Classifier-2 surface retained by the historical Phase 4.1 corpus gates. */
+const PHASE_4_1_OUTCOME_LABEL_ORDER: readonly OutcomeLabelId[] = [
+  "COOPERATIVE_SHARED_STORAGE",
+  "FRAGMENTED_SOCIAL_STRUCTURE",
+  "PERSISTENT_PRIVATE_RESERVES",
+  "RECURRING_CONFLICT",
+  "SHARED_HYDRATION",
+  "SOURCE_BOTTLENECK",
+  "PERSISTENT_DEHYDRATION",
+  "CONCENTRATED_WATER_ROUTES",
   "QUIET_STALEMATE",
 ];
 
@@ -340,6 +456,11 @@ const OUTCOME_LABEL_TITLES: Readonly<Record<OutcomeLabelId, string>> = {
   SOURCE_BOTTLENECK: "Source bottleneck",
   PERSISTENT_DEHYDRATION: "Persistent dehydration",
   CONCENTRATED_WATER_ROUTES: "Concentrated water routes",
+  ESTABLISHED_SETTLEMENT: "Established settlement",
+  CHRONIC_SHELTER_NEGLECT: "Chronic shelter neglect",
+  SHELTER_CROWDING: "Shelter crowding",
+  GUEST_SHELTERING: "Guest sheltering",
+  SETTLEMENT_RELOCATION: "Settlement relocation",
   QUIET_STALEMATE: "Quiet stalemate",
 };
 
@@ -361,6 +482,14 @@ const CORPUS_CONTRACT: Readonly<
   holdout: {
     seeds: SCENARIO_HOLDOUT_SEEDS,
     ticks: SCENARIO_MEASUREMENT_HORIZONS.matrixTicks,
+  },
+  "phase-4.2-calibration": {
+    seeds: SCENARIO_CALIBRATION_SEEDS,
+    ticks: PHASE_4_2_MATRIX_TICKS,
+  },
+  "phase-4.2-holdout": {
+    seeds: PHASE_4_2_HOLDOUT_SEEDS,
+    ticks: PHASE_4_2_MATRIX_TICKS,
   },
 };
 
@@ -456,7 +585,10 @@ function outcomeEvidence(
   return { metricPath, value, comparison, threshold };
 }
 
-export function summarizeRunOutcome(profile: ActivityProfile): RunOutcomeSummary {
+export function summarizeRunOutcome(
+  profile: ActivityProfile,
+  phase42Rules: Phase42ClassifierRules = PHASE_4_2_CLASSIFIER_RULES,
+): RunOutcomeSummary {
   const labels: OutcomeLabel[] = [];
   const evaluatedLabelIds: OutcomeLabelId[] = [];
   const notEvaluatedLabelIds: OutcomeLabelId[] = [];
@@ -714,6 +846,111 @@ export function summarizeRunOutcome(profile: ActivityProfile): RunOutcomeSummary
         ],
       });
     }
+
+    if (
+      profile.settlement.horizon.activeShelterCount >=
+      phase42Rules.establishedSettlementMinimumActiveShelters
+    ) {
+      labels.push({
+        id: "ESTABLISHED_SETTLEMENT",
+        title: OUTCOME_LABEL_TITLES.ESTABLISHED_SETTLEMENT,
+        factualSummary:
+          "The completed communal shelter count at the horizon met the declared threshold.",
+        evidence: [
+          outcomeEvidence(
+            "profile.settlement.horizon.activeShelterCount",
+            profile.settlement.horizon.activeShelterCount,
+            "GTE",
+            phase42Rules.establishedSettlementMinimumActiveShelters,
+          ),
+        ],
+      });
+    }
+
+    if (
+      profile.settlement.condition.activeShelterTicks >=
+        phase42Rules.chronicNeglectMinimumActiveShelterTicks &&
+      profile.settlement.condition.lowConditionExposureRate >=
+        phase42Rules.chronicNeglectMinimumLowConditionExposureRate
+    ) {
+      labels.push({
+        id: "CHRONIC_SHELTER_NEGLECT",
+        title: OUTCOME_LABEL_TITLES.CHRONIC_SHELTER_NEGLECT,
+        factualSummary:
+          "Low-condition exposure met both declared active-shelter duration and exposure-rate thresholds.",
+        evidence: [
+          outcomeEvidence(
+            "profile.settlement.condition.activeShelterTicks",
+            profile.settlement.condition.activeShelterTicks,
+            "GTE",
+            phase42Rules.chronicNeglectMinimumActiveShelterTicks,
+          ),
+          outcomeEvidence(
+            "profile.settlement.condition.lowConditionExposureRate",
+            profile.settlement.condition.lowConditionExposureRate,
+            "GTE",
+            phase42Rules.chronicNeglectMinimumLowConditionExposureRate,
+          ),
+        ],
+      });
+    }
+
+    if (
+      profile.settlement.occupancy.crowdingEvents >=
+      phase42Rules.shelterCrowdingMinimumEvents
+    ) {
+      labels.push({
+        id: "SHELTER_CROWDING",
+        title: OUTCOME_LABEL_TITLES.SHELTER_CROWDING,
+        factualSummary: "Capacity-based shelter crowding met the declared event threshold.",
+        evidence: [
+          outcomeEvidence(
+            "profile.settlement.occupancy.crowdingEvents",
+            profile.settlement.occupancy.crowdingEvents,
+            "GTE",
+            phase42Rules.shelterCrowdingMinimumEvents,
+          ),
+        ],
+      });
+    }
+
+    if (
+      profile.settlement.rest.guestUseEvents >= phase42Rules.guestShelteringMinimumEvents
+    ) {
+      labels.push({
+        id: "GUEST_SHELTERING",
+        title: OUTCOME_LABEL_TITLES.GUEST_SHELTERING,
+        factualSummary: "Non-member shelter use met the declared event threshold.",
+        evidence: [
+          outcomeEvidence(
+            "profile.settlement.rest.guestUseEvents",
+            profile.settlement.rest.guestUseEvents,
+            "GTE",
+            phase42Rules.guestShelteringMinimumEvents,
+          ),
+        ],
+      });
+    }
+
+    if (
+      profile.settlement.relocation.relocations >=
+      phase42Rules.settlementRelocationMinimumCount
+    ) {
+      labels.push({
+        id: "SETTLEMENT_RELOCATION",
+        title: OUTCOME_LABEL_TITLES.SETTLEMENT_RELOCATION,
+        factualSummary:
+          "Completed settlement relocations met the declared count threshold.",
+        evidence: [
+          outcomeEvidence(
+            "profile.settlement.relocation.relocations",
+            profile.settlement.relocation.relocations,
+            "GTE",
+            phase42Rules.settlementRelocationMinimumCount,
+          ),
+        ],
+      });
+    }
   }
 
   if (stalemateEligible && profile.stalemate.declared) {
@@ -921,6 +1158,24 @@ function outcomeBandEligibility(
   if (context.corpus === "holdout") {
     return { status: "FULL_HOLDOUT", reason: null };
   }
+  if (context.corpus === "phase-4.2-calibration") {
+    return phase42DefinitionsAreFrozenForContext(context)
+      ? { status: "FULL_PHASE_4_2_CALIBRATION", reason: null }
+      : {
+          status: "PHASE_4_2_CALIBRATION_CANDIDATE",
+          reason:
+            "Phase 4.2 discovery calibration reports candidate distributions; classifier and bands are not frozen.",
+        };
+  }
+  if (context.corpus === "phase-4.2-holdout") {
+    return phase42DefinitionsAreFrozenForContext(context)
+      ? { status: "FULL_PHASE_4_2_HOLDOUT", reason: null }
+      : {
+          status: "PHASE_4_2_NOT_FROZEN",
+          reason:
+            "Phase 4.2 outcome-incidence and dominance bands are not frozen; the reserved holdout remains sealed.",
+        };
+  }
   return {
     status: "NOT_EVALUATED",
     reason:
@@ -935,13 +1190,24 @@ export function evaluateScenarioOutcomeBands(
 ): ScenarioOutcomeBandReport {
   const validation = corpusValidation(profiles, context);
   const eligibility = outcomeBandEligibility(validation, context);
-  const eligible = eligibility.status !== "NOT_EVALUATED";
+  const eligible =
+    eligibility.status === "FULL_CALIBRATION" ||
+    eligibility.status === "FULL_HOLDOUT" ||
+    eligibility.status === "FULL_PHASE_4_2_CALIBRATION" ||
+    eligibility.status === "FULL_PHASE_4_2_HOLDOUT";
+  const phase42Context =
+    context.corpus === "phase-4.2-calibration" || context.corpus === "phase-4.2-holdout";
   const incidences = labelIncidence(
-    profiles.map((profile) => summarizeRunOutcome(profile)),
+    profiles.map((profile) =>
+      summarizeRunOutcome(profile, phase42ClassifierRulesForContext(context)),
+    ),
   );
-  const definitions = SCENARIO_OUTCOME_INCIDENCE_BANDS.filter(
-    (definition) => definition.scenarioId === scenarioId,
-  );
+  const definitions = (
+    phase42Context
+      ? (context.phase42Definitions?.incidenceBands ??
+        PHASE_4_2_SCENARIO_OUTCOME_INCIDENCE_BANDS)
+      : SCENARIO_OUTCOME_INCIDENCE_BANDS
+  ).filter((definition) => definition.scenarioId === scenarioId);
   const evaluations = definitions.map((definition): ScenarioOutcomeBandEvaluation => {
     const incidence = incidences.find(
       (candidate) => candidate.labelId === definition.labelId,
@@ -981,11 +1247,18 @@ export function evaluateScenarioOutcomeBands(
     };
   });
 
-  const dominanceEvaluations = OUTCOME_LABEL_ORDER.map(
+  const dominanceLabelOrder = phase42Context
+    ? OUTCOME_LABEL_ORDER
+    : PHASE_4_1_OUTCOME_LABEL_ORDER;
+  const dominanceEvaluations = dominanceLabelOrder.map(
     (labelId): ScenarioOutcomeDominanceEvaluation => {
       const incidence = incidences.find((candidate) => candidate.labelId === labelId);
       const rationale =
-        SCENARIO_OUTCOME_DOMINANCE_RATIONALES.find(
+        (phase42Context
+          ? (context.phase42Definitions?.dominanceRationales ??
+            PHASE_4_2_SCENARIO_OUTCOME_DOMINANCE_RATIONALES)
+          : SCENARIO_OUTCOME_DOMINANCE_RATIONALES
+        ).find(
           (candidate) =>
             candidate.scenarioId === scenarioId && candidate.labelId === labelId,
         ) ?? null;
@@ -1035,7 +1308,9 @@ export function evaluateScenarioOutcomeBands(
     status: evaluationSummaryStatus([...evaluations, ...dominanceEvaluations]),
     eligibility,
     releaseClaim: false,
-    provenance: PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE,
+    provenance: phase42Context
+      ? PHASE_4_2_CALIBRATION_PROVENANCE
+      : PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE,
     evaluations,
     dominance: {
       status: evaluationSummaryStatus(dominanceEvaluations),
@@ -1082,9 +1357,14 @@ export function evaluateScenarioExpectedBands(
       provenance: definition.provenance,
     };
   });
+  const scenarioOutcomeBands = evaluateScenarioOutcomeBands(scenarioId, profiles, context);
+  const safetyStatus = evaluationSummaryStatus(evaluations);
+  const phase42Candidate =
+    context.corpus === "phase-4.2-calibration" &&
+    !phase42DefinitionsAreFrozenForContext(context);
   return {
     tableVersion: SCENARIO_EXPECTED_BAND_TABLE_VERSION,
-    status: evaluationSummaryStatus(evaluations),
+    status: phase42Candidate && safetyStatus !== "FAIL" ? "PARTIAL" : safetyStatus,
     corpusValidation: validation,
     provenance: {
       releaseOutcomeClaim: false,
@@ -1093,18 +1373,27 @@ export function evaluateScenarioExpectedBands(
           ? "NOT_PRESENT"
           : context.corpus === "calibration"
             ? "FULL_CALIBRATION_PRESENT"
-            : context.corpus === "nightly"
-              ? "NIGHTLY_SUBSET_ONLY"
-              : context.corpus === "smoke"
-                ? "SMOKE_SUBSET_ONLY"
-                : "NOT_PRESENT",
+            : context.corpus === "phase-4.2-calibration"
+              ? phase42DefinitionsAreFrozenForContext(context)
+                ? "FULL_PHASE_4_2_CALIBRATION_PRESENT"
+                : "PHASE_4_2_CANDIDATE_CALIBRATION_PRESENT"
+              : context.corpus === "nightly"
+                ? "NIGHTLY_SUBSET_ONLY"
+                : context.corpus === "smoke"
+                  ? "SMOKE_SUBSET_ONLY"
+                  : "NOT_PRESENT",
       holdoutEvidence:
-        validation.status === "MATCHED_LOCKED_CORPUS" && context.corpus === "holdout"
-          ? "FULL_HOLDOUT_PRESENT"
-          : "NOT_PRESENT",
+        validation.status !== "MATCHED_LOCKED_CORPUS"
+          ? "NOT_PRESENT"
+          : context.corpus === "holdout"
+            ? "FULL_HOLDOUT_PRESENT"
+            : context.corpus === "phase-4.2-holdout" &&
+                phase42DefinitionsAreFrozenForContext(context)
+              ? "FULL_PHASE_4_2_HOLDOUT_PRESENT"
+              : "NOT_PRESENT",
     },
     evaluations,
-    scenarioOutcomeBands: evaluateScenarioOutcomeBands(scenarioId, profiles, context),
+    scenarioOutcomeBands,
   };
 }
 
@@ -1240,7 +1529,9 @@ export function analyzeScenarioRuns(
     throw new Error("Scenario analysis requires at least one run.");
   const profiles = runs.map((run) => run.profile);
   const validation = corpusValidation(profiles, context);
-  const outcomes = profiles.map((profile) => summarizeRunOutcome(profile));
+  const outcomes = profiles.map((profile) =>
+    summarizeRunOutcome(profile, phase42ClassifierRulesForContext(context)),
+  );
   const expectedBands = evaluateScenarioExpectedBands(scenarioId, profiles, context);
   const horizonEligible = validation.status === "MATCHED_LOCKED_CORPUS";
   const perRunHardInvariants = runs.map((run) => runHardInvariants(run, horizonEligible));
@@ -1268,6 +1559,7 @@ interface MacroMetricDefinition {
   readonly id: MacroMetricId;
   readonly dimension: MacroDimension;
   readonly metricPath: string;
+  readonly missingValuePolicy?: "ZERO_IS_OBSERVED" | "EXCLUDE_PAIR_IF_EITHER_VALUE_MISSING";
   readonly read: (profile: ActivityProfile) => number | null;
 }
 
@@ -1338,6 +1630,40 @@ const MACRO_METRICS: readonly MacroMetricDefinition[] = [
     metricPath: "profile.hydration.routes.herfindahlIndex",
     read: (profile) => profile.hydration.routes.herfindahlIndex,
   },
+  {
+    id: "ACTIVE_SHELTER_COUNT",
+    dimension: "SETTLEMENT",
+    metricPath: "profile.settlement.horizon.activeShelterCount",
+    read: (profile) => profile.settlement.horizon.activeShelterCount,
+  },
+  {
+    id: "SHELTERED_REST_SHARE",
+    dimension: "SETTLEMENT",
+    metricPath: "profile.settlement.rest.shelteredRestShare",
+    read: (profile) => profile.settlement.rest.shelteredRestShare,
+  },
+  {
+    id: "MEAN_SHELTER_CONDITION",
+    dimension: "SETTLEMENT",
+    metricPath: "profile.settlement.condition.meanCondition",
+    missingValuePolicy: "EXCLUDE_PAIR_IF_EITHER_VALUE_MISSING",
+    read: (profile) =>
+      profile.settlement.condition.activeShelterTicks === 0
+        ? null
+        : profile.settlement.condition.meanCondition,
+  },
+  {
+    id: "SHELTER_GUEST_USE_EVENTS",
+    dimension: "SETTLEMENT",
+    metricPath: "profile.settlement.rest.guestUseEvents",
+    read: (profile) => profile.settlement.rest.guestUseEvents,
+  },
+  {
+    id: "SETTLEMENT_RELOCATION_COUNT",
+    dimension: "SETTLEMENT",
+    metricPath: "profile.settlement.relocation.relocations",
+    read: (profile) => profile.settlement.relocation.relocations,
+  },
 ];
 
 function pairedMetricSummary(
@@ -1363,6 +1689,7 @@ function pairedMetricSummary(
     metricId: definition.id,
     dimension: definition.dimension,
     metricPath: definition.metricPath,
+    missingValuePolicy: definition.missingValuePolicy ?? "ZERO_IS_OBSERVED",
     deltaDirection: "RIGHT_MINUS_LEFT",
     pairs,
     summary: {
@@ -1431,6 +1758,67 @@ function sameNumbersWithCardinality(
   return left.length === right.length && sameNumbers(left, right);
 }
 
+export function evaluatePairedSeedEligibility(
+  definition: Pick<
+    PairedMacroBandDefinition,
+    "eligiblePairPolicy" | "missingValuePolicy" | "requiredPairedSeeds"
+  >,
+  observedSeeds: readonly number[],
+  expectedSeeds: readonly number[],
+): { readonly eligible: boolean; readonly reason: string | null } {
+  const uniqueObservedSeeds = [...new Set(observedSeeds)];
+  const expectedSeedSet = new Set(expectedSeeds);
+  if (
+    uniqueObservedSeeds.length !== observedSeeds.length ||
+    uniqueObservedSeeds.some((seed) => !expectedSeedSet.has(seed))
+  ) {
+    return {
+      eligible: false,
+      reason: "Eligible paired seeds must be unique members of the locked corpus.",
+    };
+  }
+
+  if (definition.eligiblePairPolicy === "ALL_LOCKED_SEEDS") {
+    if (
+      definition.missingValuePolicy !== "ZERO_IS_OBSERVED" ||
+      definition.requiredPairedSeeds !== expectedSeeds.length
+    ) {
+      return {
+        eligible: false,
+        reason:
+          "An all-seed band must declare ZERO_IS_OBSERVED and require the complete locked corpus.",
+      };
+    }
+    return sameNumbersWithCardinality(observedSeeds, expectedSeeds)
+      ? { eligible: true, reason: null }
+      : {
+          eligible: false,
+          reason: `The metric must contain all ${expectedSeeds.length.toString()} locked paired seeds exactly once.`,
+        };
+  }
+
+  const thresholdValid =
+    Number.isInteger(definition.requiredPairedSeeds) &&
+    definition.requiredPairedSeeds >= 1 &&
+    definition.requiredPairedSeeds <= expectedSeeds.length;
+  if (
+    definition.missingValuePolicy !== "EXCLUDE_PAIR_IF_EITHER_VALUE_MISSING" ||
+    !thresholdValid
+  ) {
+    return {
+      eligible: false,
+      reason:
+        "A missing-value exclusion band must freeze an eligible-pair threshold within the locked corpus size.",
+    };
+  }
+  return observedSeeds.length >= definition.requiredPairedSeeds
+    ? { eligible: true, reason: null }
+    : {
+        eligible: false,
+        reason: `The metric has ${observedSeeds.length.toString()} eligible paired seeds; the frozen minimum is ${definition.requiredPairedSeeds.toString()}.`,
+      };
+}
+
 function validateFrozenPairedMacroCorpus(
   runs: readonly ScenarioAnalysisRun[],
   context: ScenarioAnalysisContext,
@@ -1451,7 +1839,12 @@ function validateFrozenPairedMacroCorpus(
     expectedTicks: contract.ticks,
     observedTicks: context.requestedTicks,
   };
-  if (context.corpus !== "calibration" && context.corpus !== "holdout") {
+  const supportedCorpus =
+    context.corpus === "calibration" ||
+    context.corpus === "holdout" ||
+    context.corpus === "phase-4.2-calibration" ||
+    context.corpus === "phase-4.2-holdout";
+  if (!supportedCorpus) {
     return {
       ...base,
       status: "NOT_FULL_CALIBRATION_OR_HOLDOUT",
@@ -1485,6 +1878,30 @@ function validateFrozenPairedMacroCorpus(
       reason: "Every paired run must use the locked 10,000-tick horizon.",
     };
   }
+  if (context.corpus === "phase-4.2-calibration") {
+    return phase42DefinitionsAreFrozenForContext(context)
+      ? {
+          ...base,
+          status: "FULL_PHASE_4_2_CALIBRATION",
+          reason: null,
+        }
+      : {
+          ...base,
+          status: "PHASE_4_2_CALIBRATION_CANDIDATE",
+          reason:
+            "Phase 4.2 discovery calibration reports candidate settlement effects; macro bands are not frozen.",
+        };
+  }
+  if (context.corpus === "phase-4.2-holdout") {
+    return phase42DefinitionsAreFrozenForContext(context)
+      ? { ...base, status: "FULL_PHASE_4_2_HOLDOUT", reason: null }
+      : {
+          ...base,
+          status: "PHASE_4_2_NOT_FROZEN",
+          reason:
+            "Phase 4.2 settlement macro bands are not frozen; the reserved holdout remains sealed.",
+        };
+  }
   return {
     ...base,
     status: context.corpus === "calibration" ? "FULL_CALIBRATION" : "FULL_HOLDOUT",
@@ -1500,81 +1917,106 @@ export function evaluateFrozenPairedMacroBands(
   const corpusValidation = validateFrozenPairedMacroCorpus(runs, context);
   const corpusEligible =
     corpusValidation.status === "FULL_CALIBRATION" ||
-    corpusValidation.status === "FULL_HOLDOUT";
+    corpusValidation.status === "FULL_HOLDOUT" ||
+    corpusValidation.status === "FULL_PHASE_4_2_CALIBRATION" ||
+    corpusValidation.status === "FULL_PHASE_4_2_HOLDOUT";
+  const phase42Context =
+    context.corpus === "phase-4.2-calibration" || context.corpus === "phase-4.2-holdout";
   const expectedSeeds = corpusValidation.expectedSeeds;
-  const evaluations = PAIRED_MACRO_BANDS.map(
-    (definition): FrozenPairedMacroBandEvaluation => {
-      const comparison = comparisons.find(
-        (candidate) =>
-          candidate.leftScenarioId === definition.leftScenarioId &&
-          candidate.rightScenarioId === definition.rightScenarioId,
-      );
-      const metric = comparison?.metrics.find(
-        (candidate) => candidate.metricId === definition.metricId,
-      );
-      const pairedSeeds = metric?.pairs.map((pair) => pair.seed) ?? [];
-      const pairedSeedCount = metric?.summary.pairedSeedCount ?? 0;
-      const meanDelta = metric?.summary.meanDelta ?? null;
-      const cohenDz = metric?.effect.value ?? null;
-      const absoluteMeanDelta = meanDelta === null ? null : Math.abs(meanDelta);
-      const absoluteCohenDz = cohenDz === null ? null : Math.abs(cohenDz);
-      const pairSetMatches =
-        pairedSeedCount === definition.requiredPairedSeeds &&
-        sameNumbersWithCardinality(pairedSeeds, expectedSeeds);
-      const evidencePresent =
-        comparison !== undefined &&
-        metric !== undefined &&
-        pairSetMatches &&
-        absoluteMeanDelta !== null &&
-        absoluteCohenDz !== null;
-      const passed =
-        evidencePresent &&
-        absoluteMeanDelta >= definition.minimumAbsoluteMeanDelta &&
-        absoluteCohenDz >= definition.minimumAbsoluteCohenDz;
-      const status = !corpusEligible
-        ? "NOT_EVALUATED"
-        : evidencePresent
-          ? passed
-            ? "PASS"
-            : "FAIL"
-          : "FAIL";
-      const reason = !corpusEligible
-        ? corpusValidation.reason
-        : comparison === undefined
-          ? "The frozen scenario pair is absent."
-          : metric === undefined
-            ? "The frozen paired metric is absent."
-            : !pairSetMatches
-              ? `The metric must contain all ${definition.requiredPairedSeeds.toString()} locked paired seeds exactly once.`
-              : absoluteMeanDelta === null || absoluteCohenDz === null
-                ? "Both paired mean delta and Cohen dz must be present."
-                : !passed
-                  ? "The paired materiality magnitude is below one or both frozen thresholds."
-                  : null;
-      return {
-        tableVersion: definition.tableVersion,
-        dimension: definition.dimension,
-        leftScenarioId: definition.leftScenarioId,
-        rightScenarioId: definition.rightScenarioId,
-        metricId: definition.metricId,
-        metricPath: definition.metricPath,
-        status,
-        pairedSeedCount,
-        meanDelta,
-        absoluteMeanDelta,
-        minimumAbsoluteMeanDelta: definition.minimumAbsoluteMeanDelta,
-        cohenDz,
-        absoluteCohenDz,
-        minimumAbsoluteCohenDz: definition.minimumAbsoluteCohenDz,
-        reason,
-        provenance: definition.provenance,
-      };
-    },
-  );
+  const definitions = phase42Context
+    ? [
+        ...PAIRED_MACRO_BANDS,
+        ...(context.phase42Definitions?.pairedMacroBands ?? PHASE_4_2_PAIRED_MACRO_BANDS),
+      ]
+    : PAIRED_MACRO_BANDS;
+  const evaluations = definitions.map((definition): FrozenPairedMacroBandEvaluation => {
+    const comparison = comparisons.find(
+      (candidate) =>
+        candidate.leftScenarioId === definition.leftScenarioId &&
+        candidate.rightScenarioId === definition.rightScenarioId,
+    );
+    const metric = comparison?.metrics.find(
+      (candidate) => candidate.metricId === definition.metricId,
+    );
+    const pairedSeeds = metric?.pairs.map((pair) => pair.seed) ?? [];
+    const pairedSeedCount = metric?.summary.pairedSeedCount ?? 0;
+    const meanDelta = metric?.summary.meanDelta ?? null;
+    const cohenDz = metric?.effect.value ?? null;
+    const absoluteMeanDelta = meanDelta === null ? null : Math.abs(meanDelta);
+    const absoluteCohenDz = cohenDz === null ? null : Math.abs(cohenDz);
+    const pairEligibility = evaluatePairedSeedEligibility(
+      definition,
+      pairedSeeds,
+      expectedSeeds,
+    );
+    const pairedSeedCountMatches = pairedSeedCount === pairedSeeds.length;
+    const missingValuePolicyMatches =
+      metric?.missingValuePolicy === definition.missingValuePolicy;
+    const evidencePresent =
+      comparison !== undefined &&
+      metric !== undefined &&
+      pairedSeedCountMatches &&
+      missingValuePolicyMatches &&
+      pairEligibility.eligible &&
+      absoluteMeanDelta !== null &&
+      absoluteCohenDz !== null;
+    const passed =
+      evidencePresent &&
+      absoluteMeanDelta >= definition.minimumAbsoluteMeanDelta &&
+      absoluteCohenDz >= definition.minimumAbsoluteCohenDz;
+    const status = !corpusEligible
+      ? "NOT_EVALUATED"
+      : evidencePresent
+        ? passed
+          ? "PASS"
+          : "FAIL"
+        : "FAIL";
+    const reason = !corpusEligible
+      ? corpusValidation.reason
+      : comparison === undefined
+        ? "The frozen scenario pair is absent."
+        : metric === undefined
+          ? "The frozen paired metric is absent."
+          : !pairedSeedCountMatches
+            ? "The reported paired-seed count does not match the retained eligible pairs."
+            : !missingValuePolicyMatches
+              ? "The observed metric does not use the frozen missing-value policy."
+              : !pairEligibility.eligible
+                ? pairEligibility.reason
+                : absoluteMeanDelta === null || absoluteCohenDz === null
+                  ? "Both paired mean delta and Cohen dz must be present."
+                  : !passed
+                    ? "The paired materiality magnitude is below one or both frozen thresholds."
+                    : null;
+    return {
+      tableVersion: definition.tableVersion,
+      dimension: definition.dimension,
+      leftScenarioId: definition.leftScenarioId,
+      rightScenarioId: definition.rightScenarioId,
+      metricId: definition.metricId,
+      metricPath: definition.metricPath,
+      status,
+      pairedSeedCount,
+      requiredPairedSeeds: definition.requiredPairedSeeds,
+      missingValuePolicy: definition.missingValuePolicy,
+      eligiblePairPolicy: definition.eligiblePairPolicy,
+      meanDelta,
+      absoluteMeanDelta,
+      minimumAbsoluteMeanDelta: definition.minimumAbsoluteMeanDelta,
+      cohenDz,
+      absoluteCohenDz,
+      minimumAbsoluteCohenDz: definition.minimumAbsoluteCohenDz,
+      reason,
+      provenance: definition.provenance,
+    };
+  });
   const passingDimensions = [
     ...new Set(
       evaluations
-        .filter((evaluation) => evaluation.status === "PASS")
+        .filter(
+          (evaluation) =>
+            evaluation.status === "PASS" && evaluation.dimension !== "SETTLEMENT",
+        )
         .map((evaluation) => evaluation.dimension),
     ),
   ];
@@ -1583,13 +2025,31 @@ export function evaluateFrozenPairedMacroBands(
     : passingDimensions.length >= REQUIRED_PASSING_PHASE_3_MACRO_DIMENSIONS
       ? "PASS"
       : "FAIL";
+  const passingSettlementBands = evaluations.filter(
+    (evaluation) => evaluation.status === "PASS" && evaluation.dimension === "SETTLEMENT",
+  ).length;
+  const settlementStatus =
+    !phase42Context || !corpusEligible
+      ? "NOT_EVALUATED"
+      : passingSettlementBands >= REQUIRED_PASSING_PHASE_4_2_SETTLEMENT_BANDS
+        ? "PASS"
+        : "FAIL";
+  const overallStatus = phase42Context
+    ? !corpusEligible
+      ? "NOT_EVALUATED"
+      : dimensionStatus === "PASS" && settlementStatus === "PASS"
+        ? "PASS"
+        : "FAIL"
+    : dimensionStatus;
 
   return {
     tableVersion: PAIRED_MACRO_BAND_TABLE_VERSION,
-    status: dimensionStatus,
+    status: overallStatus,
     bandEvaluationStatus: evaluationSummaryStatus(evaluations),
     releaseClaim: false,
-    provenance: PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE,
+    provenance: phase42Context
+      ? PHASE_4_2_CALIBRATION_PROVENANCE
+      : PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE,
     corpusValidation,
     evaluations,
     dimensionRequirement: {
@@ -1605,6 +2065,20 @@ export function evaluateFrozenPairedMacroBands(
           ? "Fewer than three distinct original Phase 3 macro dimensions pass their frozen materiality bands."
           : null,
     },
+    settlementRequirement: {
+      status: settlementStatus,
+      metricPath: "evaluations[dimension=SETTLEMENT,status=PASS]|count",
+      observed: phase42Context && corpusEligible ? passingSettlementBands : null,
+      comparison: "GTE",
+      threshold: REQUIRED_PASSING_PHASE_4_2_SETTLEMENT_BANDS,
+      reason: !phase42Context
+        ? "The historical Phase 4.1 macro table has no settlement gate."
+        : !corpusEligible
+          ? corpusValidation.reason
+          : settlementStatus === "FAIL"
+            ? "No frozen SETTLEMENT materiality band passed."
+            : null,
+    },
   };
 }
 
@@ -1617,6 +2091,7 @@ export function convergenceDiagnostics(
     "CONFLICT",
     "SPATIAL",
     "HYDRATION",
+    "SETTLEMENT",
   ];
   return comparisons.flatMap((comparison) =>
     dimensions.map((dimension): ConvergenceDiagnostic => {
@@ -1649,4 +2124,87 @@ export function convergenceDiagnostics(
       };
     }),
   );
+}
+
+/**
+ * Release-evidence fingerprint input for the behavior implemented in this
+ * module. Function sources are included deliberately: Phase 4.2 evaluates the
+ * complete classifier-v3 label surface and inherited paired metrics, so a
+ * same-version predicate or metric-reader edit must invalidate reviewed v2
+ * evidence instead of silently reusing it for the holdout.
+ *
+ * This object contains no artifact paths, review hashes, or mutable process
+ * status. Those are bound separately by the corpus policy.
+ */
+export function phase42AnalysisSemanticContract() {
+  return {
+    scenarioAnalysisSchemaVersion: SCENARIO_ANALYSIS_SCHEMA_VERSION,
+    outcomeClassifierVersion: OUTCOME_CLASSIFIER_VERSION,
+    outcomeLabelOrder: [...OUTCOME_LABEL_ORDER],
+    outcomeLabelTitles: { ...OUTCOME_LABEL_TITLES },
+    historicalClassifier2LabelOrder: [...PHASE_4_1_OUTCOME_LABEL_ORDER],
+    evaluationWindows: {
+      anyObservedTickEnablesOrdinaryLabels: true,
+      matrixTicks: SCENARIO_MEASUREMENT_HORIZONS.matrixTicks,
+      stalemateWindowTicks: SCENARIO_MEASUREMENT_HORIZONS.stalemateWindowTicks,
+    },
+    phase42CorpusContracts: {
+      calibration: {
+        seeds: [...CORPUS_CONTRACT["phase-4.2-calibration"].seeds],
+        ticks: CORPUS_CONTRACT["phase-4.2-calibration"].ticks,
+      },
+      holdout: {
+        seeds: [...CORPUS_CONTRACT["phase-4.2-holdout"].seeds],
+        ticks: CORPUS_CONTRACT["phase-4.2-holdout"].ticks,
+      },
+    },
+    phase42ClassifierRuleKeys: Object.keys(PHASE_4_2_CLASSIFIER_RULES).sort(),
+    classifierImplementation: {
+      summarizeRunOutcome: summarizeRunOutcome.toString(),
+      phase42ClassifierRulesForContext: phase42ClassifierRulesForContext.toString(),
+      outcomeEvidence: outcomeEvidence.toString(),
+      action: action.toString(),
+      interactionCount: interactionCount.toString(),
+      labelIncidence: labelIncidence.toString(),
+      wilsonOutcome: wilsonOutcome.toString(),
+      evaluateScenarioOutcomeBands: evaluateScenarioOutcomeBands.toString(),
+      corpusValidation: corpusValidation.toString(),
+      outcomeBandEligibility: outcomeBandEligibility.toString(),
+      phase42DefinitionsAreFrozenForContext:
+        phase42DefinitionsAreFrozenForContext.toString(),
+      compareBand: compareBand.toString(),
+      sameNumbers: sameNumbers.toString(),
+      evaluationSummaryStatus: evaluationSummaryStatus.toString(),
+    },
+    safetyAndInvariantImplementation: {
+      minimumPresent: minimumPresent.toString(),
+      maximum: maximum.toString(),
+      sameScenarioReference: sameScenarioReference.toString(),
+      bandMetricValue: bandMetricValue.toString(),
+      evaluateScenarioExpectedBands: evaluateScenarioExpectedBands.toString(),
+      hardEvaluation: hardEvaluation.toString(),
+      runHardInvariants: runHardInvariants.toString(),
+      corpusHardInvariants: corpusHardInvariants.toString(),
+      analyzeScenarioRuns: analyzeScenarioRuns.toString(),
+    },
+    pairedMetricRegistry: MACRO_METRICS.map((definition) => ({
+      id: definition.id,
+      dimension: definition.dimension,
+      metricPath: definition.metricPath,
+      missingValuePolicy: definition.missingValuePolicy ?? "ZERO_IS_OBSERVED",
+      readImplementation: definition.read.toString(),
+    })),
+    pairedMetricImplementation: {
+      pairedMetricSummary: pairedMetricSummary.toString(),
+      pairedScenarioComparisons: pairedScenarioComparisons.toString(),
+      evaluatePairedSeedEligibility: evaluatePairedSeedEligibility.toString(),
+      validateFrozenPairedMacroCorpus: validateFrozenPairedMacroCorpus.toString(),
+      evaluateFrozenPairedMacroBands: evaluateFrozenPairedMacroBands.toString(),
+      sameNumbersWithCardinality: sameNumbersWithCardinality.toString(),
+      round: round.toString(),
+      mean: mean.toString(),
+      median: median.toString(),
+      sampleStandardDeviation: sampleStandardDeviation.toString(),
+    },
+  };
 }

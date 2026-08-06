@@ -229,6 +229,11 @@
   border-radius: 50%;
 }
 
+.world-navigator__mark--group {
+  border-style: double;
+  border-radius: 5px 50% 5px 50%;
+}
+
 .world-navigator__mark--structure {
   border-radius: 2px;
 }

@@ -82,6 +82,28 @@ const drawInteractionSlot = (graphics: Graphics, point: Point): void => {
     .stroke({ color: PALETTE.action, width: 0.055, alpha: 0.82 });
 };
 
+const drawStructureSelection = (graphics: Graphics, point: Point): void => {
+  const left = point.x - 0.66;
+  const right = point.x + 0.66;
+  const top = point.y - 0.7;
+  const bottom = point.y + 0.7;
+  const corner = 0.22;
+  graphics
+    .moveTo(left, top + corner)
+    .lineTo(left, top)
+    .lineTo(left + corner, top)
+    .moveTo(right - corner, top)
+    .lineTo(right, top)
+    .lineTo(right, top + corner)
+    .moveTo(right, bottom - corner)
+    .lineTo(right, bottom)
+    .lineTo(right - corner, bottom)
+    .moveTo(left + corner, bottom)
+    .lineTo(left, bottom)
+    .lineTo(left, bottom - corner)
+    .stroke({ color: PALETTE.selected, width: 0.1, alpha: 0.98 });
+};
+
 export function drawInterventionPreview(
   runtime: PixiRuntime,
   tile: TileView | null,
@@ -91,13 +113,16 @@ export function drawInterventionPreview(
   const graphics = runtime.layers.interventionPreview;
   graphics.clear();
   if (!tile || tool === "inspect") return;
-  const removing = tool === "remove-food" || tool === "drain-water";
+  const removing =
+    tool === "remove-food" || tool === "remove-material" || tool === "drain-water";
   const color =
     disabled || removing || (tool === "obstacle" && !tile.blocked)
       ? PALETTE.danger
       : tool === "replenish-water"
         ? PALETTE.water
-        : PALETTE.action;
+        : tool === "add-material"
+          ? PALETTE.material
+          : PALETTE.action;
   graphics
     .rect(tile.x + 0.08, tile.y + 0.08, 0.84, 0.84)
     .fill({ color, alpha: disabled ? 0.08 : 0.2 })
@@ -116,6 +141,18 @@ export function drawInterventionPreview(
       .lineTo(tile.x + 0.68, tile.y + 0.54)
       .lineTo(tile.x + 0.5, tile.y + 0.74)
       .lineTo(tile.x + 0.32, tile.y + 0.54)
+      .closePath()
+      .stroke({ color, width: 0.075, alpha: 1 });
+  }
+  if (tool === "add-material" || tool === "remove-material") {
+    graphics
+      .moveTo(tile.x + 0.28, tile.y + 0.68)
+      .lineTo(tile.x + 0.43, tile.y + 0.3)
+      .lineTo(tile.x + 0.56, tile.y + 0.68)
+      .closePath()
+      .moveTo(tile.x + 0.49, tile.y + 0.68)
+      .lineTo(tile.x + 0.63, tile.y + 0.38)
+      .lineTo(tile.x + 0.74, tile.y + 0.68)
       .closePath()
       .stroke({ color, width: 0.075, alpha: 1 });
   }
@@ -141,6 +178,7 @@ export const drawWorld = (
   followedId: EntityId | null,
   focusedId: EntityId | null,
   overlays: OverlaySettings,
+  selectedStructureId: EntityId | null = null,
 ) => {
   const { layers, view } = runtime;
   const signature = `${view.width}x${view.height}:${view.tiles
@@ -240,6 +278,15 @@ export const drawWorld = (
   }
 
   layers.interaction.clear();
+  const selectedStructure = view.structures.find(
+    (structure) => structure.id === selectedStructureId,
+  );
+  if (selectedStructure) {
+    drawStructureSelection(layers.interaction, {
+      x: selectedStructure.x + 0.5,
+      y: selectedStructure.y + 0.5,
+    });
+  }
   for (const creature of view.creatures) {
     if (
       creature.alive &&

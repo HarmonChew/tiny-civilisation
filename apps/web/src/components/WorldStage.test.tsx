@@ -143,7 +143,7 @@ describe("WorldStage dish subject label", () => {
     ).toBe(true);
   });
 
-  it("offers water interventions and a pressed traffic overlay control", () => {
+  it("offers water and material interventions with a pressed traffic overlay control", () => {
     render(
       <WorldStage
         seed={11}
@@ -163,7 +163,11 @@ describe("WorldStage dish subject label", () => {
     fireEvent.click(screen.getByRole("button", { name: "Replenish water" }));
     expect(callbacks.onTool).toHaveBeenLastCalledWith("replenish-water");
     expect(screen.getByRole("button", { name: "Drain water" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Add material" }));
+    expect(callbacks.onTool).toHaveBeenLastCalledWith("add-material");
+    expect(screen.getByRole("button", { name: "Remove material" })).toBeTruthy();
     expect(screen.getByText("water source")).toBeTruthy();
+    expect(screen.getByText("shelter / site")).toBeTruthy();
     expect(screen.getByText("recent traffic")).toBeTruthy();
   });
 });

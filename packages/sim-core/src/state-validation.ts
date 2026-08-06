@@ -6,7 +6,26 @@ import {
 } from "./types.js";
 import { DESIRE_KINDS, PLAN_KINDS } from "./desires.js";
 import { validateInteractionClaims } from "./interaction-slots.js";
+import {
+  UNREACHABLE_TRAVEL_COST,
+  tileCoordinates,
+  tileIndexAt,
+  weightedTravelCostsFrom,
+} from "./pathfinding.js";
 import { assertScenarioReference, compileScenario } from "./scenarios/index.js";
+import {
+  SHELTER_BASE_CAPACITY,
+  SHELTER_MATERIAL_REQUIRED,
+  SHELTER_MINIMUM_COMMITMENT_TICKS,
+  SHELTER_RELOCATION_CHANGE_COST,
+  SHELTER_RELOCATION_MINIMUM_IMPROVEMENT,
+  SHELTER_REST_OFFSETS,
+  SHELTER_WORK_REQUIRED,
+  assessShelterSite,
+  isLegalShelterSite,
+  rankShelterSites,
+  shelterConditionBand,
+} from "./shelters.js";
 import { SIMULATION_STATE_VERSION } from "./versions.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -24,6 +43,10 @@ const ACTION_KINDS = [
   "EAT",
   "DRINK",
   "REST",
+  "ESTABLISH_SHELTER_SITE",
+  "BUILD_SHELTER",
+  "REST_SHELTERED",
+  "MAINTAIN_SHELTER",
   "SHARE",
   "SHARE_WATER",
   "KEEP",
@@ -60,6 +83,7 @@ const INTERACTION_PURPOSES = [
   "SOCIAL",
   "STORAGE_ACCESS",
   "CONSTRUCTION",
+  "MAINTENANCE",
   "GUARD",
   "CONFLICT",
   "FLIGHT",
@@ -650,21 +674,193 @@ function validateStructures(value: unknown, tileCount: number): number[] {
       "inventory",
       "guardIds",
       "completedTick",
+      "condition",
+      "baseCapacity",
+      "siteAssessment",
+      "builtFromShelterId",
+      "maintenanceMaterialSpent",
+      "lastMaintainedTick",
+      "lastUsedTick",
+      "conditionBand",
     ]);
     ids.push(integer(structure.id, `${path}.id`, 1));
-    literal(structure.kind, `${path}.kind`, ["STORAGE", "STORAGE_SITE"]);
+    const kind = literal(structure.kind, `${path}.kind`, [
+      "STORAGE",
+      "STORAGE_SITE",
+      "SHELTER_SITE",
+      "SHELTER",
+      "ABANDONED_SHELTER",
+    ]);
     integer(structure.tileIndex, `${path}.tileIndex`, 0, tileCount - 1);
     integer(structure.groupId, `${path}.groupId`, 1);
-    integer(structure.material, `${path}.material`);
-    integer(structure.materialRequired, `${path}.materialRequired`);
-    integer(structure.progress, `${path}.progress`);
-    integer(structure.workRequired, `${path}.workRequired`);
+    const materialRequired = integer(
+      structure.materialRequired,
+      `${path}.materialRequired`,
+      0,
+    );
+    const material = integer(structure.material, `${path}.material`, 0, materialRequired);
+    const workRequired = integer(structure.workRequired, `${path}.workRequired`, 1);
+    const progress = integer(structure.progress, `${path}.progress`, 0, workRequired);
     validateInventory(structure.inventory, `${path}.inventory`);
     if ((structure.inventory as UnknownRecord).water !== 0) {
       fail(`${path}.inventory.water`, "must be zero before communal water storage exists");
     }
-    numberArray(structure.guardIds, `${path}.guardIds`, 1);
-    nullableInteger(structure.completedTick, `${path}.completedTick`);
+    const guardIds = numberArray(structure.guardIds, `${path}.guardIds`, 1);
+    const completedTick = nullableInteger(structure.completedTick, `${path}.completedTick`);
+    if (kind === "STORAGE" || kind === "STORAGE_SITE") {
+      for (const shelterOnlyKey of [
+        "condition",
+        "baseCapacity",
+        "siteAssessment",
+        "builtFromShelterId",
+        "maintenanceMaterialSpent",
+        "lastMaintainedTick",
+        "lastUsedTick",
+        "conditionBand",
+      ] as const) {
+        if (Object.hasOwn(structure, shelterOnlyKey)) {
+          fail(`${path}.${shelterOnlyKey}`, "is not supported for storage structures");
+        }
+      }
+      if (kind === "STORAGE_SITE" && completedTick !== null) {
+        fail(`${path}.completedTick`, "must be null while storage is under construction");
+      }
+      if (
+        kind === "STORAGE" &&
+        (completedTick === null ||
+          material !== materialRequired ||
+          progress !== workRequired)
+      ) {
+        fail(path, "must be complete when kind is STORAGE");
+      }
+    }
+    if (kind === "SHELTER_SITE" || kind === "SHELTER" || kind === "ABANDONED_SHELTER") {
+      const condition = integer(structure.condition, `${path}.condition`, 0, 10_000);
+      const baseCapacity = integer(structure.baseCapacity, `${path}.baseCapacity`, 2, 8);
+      if (baseCapacity !== SHELTER_BASE_CAPACITY) {
+        fail(
+          `${path}.baseCapacity`,
+          `must preserve the six-place shelter footprint (${SHELTER_BASE_CAPACITY.toString()})`,
+        );
+      }
+      if (
+        materialRequired !== SHELTER_MATERIAL_REQUIRED ||
+        workRequired !== SHELTER_WORK_REQUIRED
+      ) {
+        fail(path, "must use the version-5 shelter construction contract");
+      }
+      const assessment = object(structure.siteAssessment, `${path}.siteAssessment`, [
+        "selectedAtTick",
+        "memberTravelCost",
+        "storageTravelCost",
+        "foodAccessCost",
+        "materialAccessCost",
+        "waterAccessCost",
+        "crowdingCost",
+        "constructionInvestmentCost",
+        "relocationChangeCost",
+        "totalScore",
+      ]);
+      for (const key of [
+        "selectedAtTick",
+        "memberTravelCost",
+        "storageTravelCost",
+        "foodAccessCost",
+        "materialAccessCost",
+        "waterAccessCost",
+        "crowdingCost",
+        "constructionInvestmentCost",
+        "relocationChangeCost",
+        "totalScore",
+      ] as const) {
+        integer(assessment[key], `${path}.siteAssessment.${key}`, 0);
+      }
+      const weightedTotal =
+        (assessment.memberTravelCost as number) * 3 +
+        (assessment.storageTravelCost as number) * 2 +
+        (assessment.foodAccessCost as number) +
+        (assessment.materialAccessCost as number) * 2 +
+        (assessment.waterAccessCost as number) * 2 +
+        (assessment.crowdingCost as number) +
+        (assessment.constructionInvestmentCost as number) +
+        (assessment.relocationChangeCost as number);
+      if (assessment.totalScore !== weightedTotal) {
+        fail(
+          `${path}.siteAssessment.totalScore`,
+          "must equal the frozen weighted shelter-site score",
+        );
+      }
+      const builtFromShelterId = nullableInteger(
+        structure.builtFromShelterId,
+        `${path}.builtFromShelterId`,
+        1,
+      );
+      if (
+        builtFromShelterId === null &&
+        (assessment.constructionInvestmentCost !== 0 ||
+          assessment.relocationChangeCost !== 0)
+      ) {
+        fail(
+          `${path}.siteAssessment`,
+          "must not include relocation costs for a first shelter",
+        );
+      }
+      if (
+        builtFromShelterId !== null &&
+        (assessment.relocationChangeCost !== SHELTER_RELOCATION_CHANGE_COST ||
+          (assessment.constructionInvestmentCost as number) > 2_000)
+      ) {
+        fail(
+          `${path}.siteAssessment`,
+          "must include the bounded replacement-shelter investment and change costs",
+        );
+      }
+      const maintenanceMaterialSpent = integer(
+        structure.maintenanceMaterialSpent,
+        `${path}.maintenanceMaterialSpent`,
+        0,
+      );
+      nullableInteger(structure.lastMaintainedTick, `${path}.lastMaintainedTick`);
+      nullableInteger(structure.lastUsedTick, `${path}.lastUsedTick`);
+      const conditionBand = literal(structure.conditionBand, `${path}.conditionBand`, [
+        "GOOD",
+        "WORN",
+        "LOW",
+      ]);
+      if (conditionBand !== shelterConditionBand(condition)) {
+        fail(`${path}.conditionBand`, "does not match shelter condition");
+      }
+      const inventory = structure.inventory as UnknownRecord;
+      if (
+        inventory.capacity !== 0 ||
+        inventory.food !== 0 ||
+        inventory.material !== 0 ||
+        inventory.water !== 0
+      ) {
+        fail(`${path}.inventory`, "must remain empty for a shelter");
+      }
+      if (guardIds.length > 0) {
+        fail(`${path}.guardIds`, "must remain empty for a shelter");
+      }
+      if (kind === "SHELTER_SITE") {
+        if (
+          completedTick !== null ||
+          condition !== 10_000 ||
+          conditionBand !== "GOOD" ||
+          maintenanceMaterialSpent !== 0 ||
+          structure.lastMaintainedTick !== null ||
+          structure.lastUsedTick !== null
+        ) {
+          fail(path, "has active-shelter facts while still a site");
+        }
+      } else if (
+        completedTick === null ||
+        material !== materialRequired ||
+        progress !== workRequired
+      ) {
+        fail(path, "must be complete when active or abandoned");
+      }
+    }
   }
   assertUnique(ids, "structures");
   return ids;
@@ -683,6 +879,11 @@ function validateGroups(value: unknown, tileCount: number): number[] {
       "leaderId",
       "homeTileIndex",
       "storageStructureId",
+      "activeShelterId",
+      "pendingShelterId",
+      "shelterRelocations",
+      "shelterCommitUntilTick",
+      "shelterRelocationCandidate",
       "cohesion",
       "sharingNorm",
       "majorEventIds",
@@ -696,6 +897,44 @@ function validateGroups(value: unknown, tileCount: number): number[] {
     nullableInteger(group.leaderId, `${path}.leaderId`, 1);
     integer(group.homeTileIndex, `${path}.homeTileIndex`, 0, tileCount - 1);
     nullableInteger(group.storageStructureId, `${path}.storageStructureId`, 1);
+    nullableInteger(group.activeShelterId, `${path}.activeShelterId`, 1);
+    nullableInteger(group.pendingShelterId, `${path}.pendingShelterId`, 1);
+    integer(group.shelterRelocations, `${path}.shelterRelocations`, 0, 1);
+    integer(group.shelterCommitUntilTick, `${path}.shelterCommitUntilTick`);
+    if (group.shelterRelocationCandidate !== null) {
+      const candidate = object(
+        group.shelterRelocationCandidate,
+        `${path}.shelterRelocationCandidate`,
+        [
+          "tileIndex",
+          "firstSeenTick",
+          "lastEvaluatedTick",
+          "consecutiveEvaluations",
+          "scoreImprovement",
+        ],
+      );
+      integer(
+        candidate.tileIndex,
+        `${path}.shelterRelocationCandidate.tileIndex`,
+        0,
+        tileCount - 1,
+      );
+      integer(candidate.firstSeenTick, `${path}.shelterRelocationCandidate.firstSeenTick`);
+      integer(
+        candidate.lastEvaluatedTick,
+        `${path}.shelterRelocationCandidate.lastEvaluatedTick`,
+      );
+      integer(
+        candidate.consecutiveEvaluations,
+        `${path}.shelterRelocationCandidate.consecutiveEvaluations`,
+        1,
+      );
+      integer(
+        candidate.scoreImprovement,
+        `${path}.shelterRelocationCandidate.scoreImprovement`,
+        0,
+      );
+    }
     integer(group.cohesion, `${path}.cohesion`, 0, 10_000);
     finite(group.sharingNorm, `${path}.sharingNorm`);
     numberArray(group.majorEventIds, `${path}.majorEventIds`, 1);
@@ -796,6 +1035,8 @@ function validateCommands(value: unknown, tileCount: number, stateTick: number):
     const type = literal(command.type, `${path}.type`, [
       "ADD_FOOD",
       "REMOVE_FOOD",
+      "ADD_MATERIAL",
+      "REMOVE_MATERIAL",
       "TOGGLE_OBSTACLE",
       "REPLENISH_WATER",
       "DRAIN_WATER",
@@ -857,8 +1098,11 @@ function validateDomainEvents(value: unknown, tileCount: number): number[] {
     literal(event.type, `${path}.type`, [
       "SIMULATION_STARTED",
       "HYDRATION_RULES_ENABLED",
+      "SHELTER_RULES_ENABLED",
       "PLAYER_ADDED_FOOD",
       "PLAYER_REMOVED_FOOD",
+      "PLAYER_ADDED_MATERIAL",
+      "PLAYER_REMOVED_MATERIAL",
       "PLAYER_REPLENISHED_WATER",
       "PLAYER_DRAINED_WATER",
       "PLAYER_TOGGLED_OBSTACLE",
@@ -884,6 +1128,18 @@ function validateDomainEvents(value: unknown, tileCount: number): number[] {
       "STORAGE_SITE_STARTED",
       "STORAGE_WORK_ADVANCED",
       "STORAGE_COMPLETED",
+      "SHELTER_SITE_SELECTED",
+      "SHELTER_CONSTRUCTION_STARTED",
+      "SHELTER_WORK_ADVANCED",
+      "SHELTER_COMPLETED",
+      "SHELTER_RESTED",
+      "SHELTER_MAINTAINED",
+      "SHELTER_CONDITION_LOW",
+      "SHELTER_CONDITION_RECOVERED",
+      "SHELTER_CROWDED",
+      "SHELTER_GUEST_USED",
+      "SHELTER_ABANDONED",
+      "SHELTER_RELOCATED",
       "THREAT_NOTICED",
       "CONFRONTATION_APPROACHED",
       "CREATURE_ATTACKED",
@@ -955,6 +1211,8 @@ function validateHistoryEvents(value: unknown): number[] {
       "GROUP_FORMED",
       "LEADERSHIP",
       "STORAGE_BUILT",
+      "SHELTER_BUILT",
+      "SETTLEMENT_RELOCATED",
       "SOCIAL_BOND",
       "THEFT",
       "CONFRONTATION",
@@ -1035,6 +1293,13 @@ function validateMetrics(value: unknown): void {
     "attacks",
     "groupsFormed",
     "storagesCompleted",
+    "sheltersCompleted",
+    "shelteredRests",
+    "outdoorRests",
+    "shelterMaintenanceMaterial",
+    "shelterDeniedClaims",
+    "shelterGuestUses",
+    "shelterRelocations",
     "playerInterventions",
     "invalidPathFailures",
     "interactionContentions",
@@ -1181,11 +1446,18 @@ export function assertCompatibleSimulationState(
   const entitySet = new Set(entityIds);
   const groupSet = new Set(groupIds);
   const structureSet = new Set(structureIds);
+  const structureById = new Map(
+    structures.map((value) => {
+      const structure = value as UnknownRecord;
+      return [structure.id as number, structure] as const;
+    }),
+  );
   const memorySet = new Set(memoryIds);
   const eventSet = new Set(eventIds);
   const decisionSet = new Set(decisionIds);
   const subjectSet = new Set([...entityIds, ...groupIds]);
   const configuration = state.configuration as UnknownRecord;
+  const typedState = value as SimulationState;
 
   for (const [index, creatureValue] of creatures.entries()) {
     const creature = creatureValue as UnknownRecord;
@@ -1285,6 +1557,267 @@ export function assertCompatibleSimulationState(
         `references missing ID ${storageId.toString()}`,
       );
     }
+    if (storageId !== null) {
+      const storage = structureById.get(storageId);
+      if (
+        !storage ||
+        storage.groupId !== group.id ||
+        (storage.kind !== "STORAGE" && storage.kind !== "STORAGE_SITE")
+      ) {
+        fail(
+          `groups[${index.toString()}].storageStructureId`,
+          "must reference this group's storage or storage site",
+        );
+      }
+    }
+    if (group.stage === "PERSISTENT") {
+      const storage = storageId === null ? null : structureById.get(storageId);
+      if (!storage || storage.kind !== "STORAGE" || storage.completedTick === null) {
+        fail(
+          `groups[${index.toString()}].storageStructureId`,
+          "must reference the completed shared store that made the group persistent",
+        );
+      }
+    }
+    const activeShelterId = group.activeShelterId as number | null;
+    const pendingShelterId = group.pendingShelterId as number | null;
+    const ownedShelters = structures
+      .map((value) => value as UnknownRecord)
+      .filter(
+        (structure) =>
+          structure.groupId === group.id &&
+          (structure.kind === "SHELTER_SITE" ||
+            structure.kind === "SHELTER" ||
+            structure.kind === "ABANDONED_SHELTER"),
+      );
+    const activeShelters = ownedShelters.filter(
+      (structure) => structure.kind === "SHELTER",
+    );
+    const pendingShelters = ownedShelters.filter(
+      (structure) => structure.kind === "SHELTER_SITE",
+    );
+    const abandonedShelters = ownedShelters.filter(
+      (structure) => structure.kind === "ABANDONED_SHELTER",
+    );
+    if (activeShelters.length > 1 || pendingShelters.length > 1) {
+      fail(
+        `groups[${index.toString()}]`,
+        "may own at most one active shelter and one pending shelter site",
+      );
+    }
+    if (
+      (activeShelters[0]?.id ?? null) !== activeShelterId ||
+      (pendingShelters[0]?.id ?? null) !== pendingShelterId
+    ) {
+      fail(
+        `groups[${index.toString()}]`,
+        "shelter pointers must account for every active shelter and shelter site",
+      );
+    }
+    if (activeShelterId !== null) {
+      const activeShelter = structureById.get(activeShelterId);
+      if (
+        !activeShelter ||
+        activeShelter.groupId !== group.id ||
+        activeShelter.kind !== "SHELTER"
+      ) {
+        fail(
+          `groups[${index.toString()}].activeShelterId`,
+          "must reference this group's active shelter",
+        );
+      }
+      if (group.stage !== "PERSISTENT") {
+        fail(`groups[${index.toString()}].activeShelterId`, "requires a persistent group");
+      }
+      if (activeShelter?.tileIndex !== group.homeTileIndex) {
+        fail(
+          `groups[${index.toString()}].homeTileIndex`,
+          "must equal the active shelter tile",
+        );
+      }
+      if (
+        activeShelter?.completedTick === null ||
+        (group.shelterCommitUntilTick as number) !==
+          (activeShelter?.completedTick as number) + SHELTER_MINIMUM_COMMITMENT_TICKS
+      ) {
+        fail(
+          `groups[${index.toString()}].shelterCommitUntilTick`,
+          "must preserve the active shelter's minimum commitment period",
+        );
+      }
+    } else if (group.shelterCommitUntilTick !== 0) {
+      fail(
+        `groups[${index.toString()}].shelterCommitUntilTick`,
+        "must be zero before the first shelter is completed",
+      );
+    }
+    if (pendingShelterId !== null) {
+      const pendingShelter = structureById.get(pendingShelterId);
+      if (
+        !pendingShelter ||
+        pendingShelter.groupId !== group.id ||
+        pendingShelter.kind !== "SHELTER_SITE"
+      ) {
+        fail(
+          `groups[${index.toString()}].pendingShelterId`,
+          "must reference this group's pending shelter site",
+        );
+      }
+      if (group.stage !== "PERSISTENT") {
+        fail(`groups[${index.toString()}].pendingShelterId`, "requires a persistent group");
+      }
+      if (
+        pendingShelter.builtFromShelterId !== null &&
+        ((pendingShelter.siteAssessment as UnknownRecord).selectedAtTick as number) <
+          (group.shelterCommitUntilTick as number)
+      ) {
+        fail(
+          `groups[${index.toString()}].pendingShelterId`,
+          "cannot begin a replacement before the minimum shelter commitment",
+        );
+      }
+    }
+    if (activeShelterId !== null && activeShelterId === pendingShelterId) {
+      fail(`groups[${index.toString()}]`, "cannot use one shelter as active and pending");
+    }
+    const relocations = group.shelterRelocations as number;
+    if (relocations === 0 && abandonedShelters.length > 0) {
+      fail(
+        `groups[${index.toString()}].shelterRelocations`,
+        "must account for its abandoned shelter",
+      );
+    }
+    if (relocations === 1) {
+      if (
+        abandonedShelters.length !== 1 ||
+        activeShelterId === null ||
+        pendingShelterId !== null ||
+        group.shelterRelocationCandidate !== null
+      ) {
+        fail(
+          `groups[${index.toString()}]`,
+          "must retain one active and one abandoned shelter after its only relocation",
+        );
+      }
+      const active = structureById.get(activeShelterId);
+      if (active?.builtFromShelterId !== abandonedShelters[0]?.id) {
+        fail(
+          `groups[${index.toString()}].activeShelterId`,
+          "must identify the abandoned shelter it replaced",
+        );
+      }
+    }
+    if (relocations === 0 && activeShelterId !== null) {
+      const active = structureById.get(activeShelterId);
+      if (active?.builtFromShelterId !== null) {
+        fail(
+          `groups[${index.toString()}].activeShelterId`,
+          "cannot claim a prior shelter before relocation",
+        );
+      }
+    }
+    if (pendingShelterId !== null) {
+      const pending = structureById.get(pendingShelterId);
+      if (pending?.builtFromShelterId !== activeShelterId) {
+        fail(
+          `groups[${index.toString()}].pendingShelterId`,
+          "must identify the active shelter it will replace, or null for the first home",
+        );
+      }
+    }
+    if (group.shelterRelocationCandidate !== null) {
+      if (activeShelterId === null || pendingShelterId !== null || relocations !== 0) {
+        fail(
+          `groups[${index.toString()}].shelterRelocationCandidate`,
+          "requires one committed active shelter and no pending replacement",
+        );
+      }
+      const candidate = group.shelterRelocationCandidate as UnknownRecord;
+      if (candidate.tileIndex === group.homeTileIndex) {
+        fail(
+          `groups[${index.toString()}].shelterRelocationCandidate.tileIndex`,
+          "must differ from the current home",
+        );
+      }
+      const firstSeenTick = candidate.firstSeenTick as number;
+      const lastEvaluatedTick = candidate.lastEvaluatedTick as number;
+      const consecutiveEvaluations = candidate.consecutiveEvaluations as number;
+      if (
+        firstSeenTick > lastEvaluatedTick ||
+        lastEvaluatedTick > tick ||
+        tick - lastEvaluatedTick > 50
+      ) {
+        fail(
+          `groups[${index.toString()}].shelterRelocationCandidate`,
+          "must contain ordered, current evaluation ticks",
+        );
+      }
+      if (firstSeenTick % 50 !== 0 || lastEvaluatedTick % 50 !== 0) {
+        fail(
+          `groups[${index.toString()}].shelterRelocationCandidate`,
+          "must use the deterministic 50-tick shelter evaluation cadence",
+        );
+      }
+      if (lastEvaluatedTick - firstSeenTick !== (consecutiveEvaluations - 1) * 50) {
+        fail(
+          `groups[${index.toString()}].shelterRelocationCandidate.consecutiveEvaluations`,
+          "must exactly match the elapsed shelter evaluations",
+        );
+      }
+      if ((candidate.scoreImprovement as number) < SHELTER_RELOCATION_MINIMUM_IMPROVEMENT) {
+        fail(
+          `groups[${index.toString()}].shelterRelocationCandidate.scoreImprovement`,
+          `must be at least ${SHELTER_RELOCATION_MINIMUM_IMPROVEMENT.toString()}`,
+        );
+      }
+      if (tick < (group.shelterCommitUntilTick as number)) {
+        fail(
+          `groups[${index.toString()}].shelterRelocationCandidate`,
+          "cannot become relocation-ready before the minimum shelter commitment",
+        );
+      }
+      const candidateTileIndex = candidate.tileIndex as number;
+      const candidateCost = weightedTravelCostsFrom(
+        typedState.world,
+        group.homeTileIndex as number,
+      )[candidateTileIndex];
+      if (
+        !isLegalShelterSite(typedState, candidateTileIndex) ||
+        candidateCost === undefined ||
+        candidateCost >= UNREACHABLE_TRAVEL_COST
+      ) {
+        fail(
+          `groups[${index.toString()}].shelterRelocationCandidate.tileIndex`,
+          "must remain a legal, reachable candidate from the bounded site set",
+        );
+      }
+      if (lastEvaluatedTick === tick) {
+        const typedGroup = typedState.groups.find(
+          (candidateGroup) => candidateGroup.id === group.id,
+        );
+        const activeShelter = typedState.structures.find(
+          (structure) => structure.id === activeShelterId,
+        );
+        const currentBest = typedGroup
+          ? rankShelterSites(typedState, typedGroup, true)[0]
+          : null;
+        const currentImprovement =
+          typedGroup && activeShelter?.kind === "SHELTER" && currentBest
+            ? assessShelterSite(typedState, typedGroup, activeShelter.tileIndex, false)
+                .totalScore - currentBest.assessment.totalScore
+            : Number.NEGATIVE_INFINITY;
+        if (
+          !currentBest ||
+          currentBest.tileIndex !== candidateTileIndex ||
+          currentImprovement !== candidate.scoreImprovement
+        ) {
+          fail(
+            `groups[${index.toString()}].shelterRelocationCandidate`,
+            "must match the current deterministic best site and factual score improvement",
+          );
+        }
+      }
+    }
   }
   for (const [index, structureValue] of structures.entries()) {
     const structure = structureValue as UnknownRecord;
@@ -1296,6 +1829,101 @@ export function assertCompatibleSimulationState(
       creatureSet,
       `structures[${index.toString()}].guardIds`,
     );
+    const builtFromShelterId = structure.builtFromShelterId as number | null | undefined;
+    if (
+      builtFromShelterId !== null &&
+      builtFromShelterId !== undefined &&
+      !structureSet.has(builtFromShelterId)
+    ) {
+      fail(
+        `structures[${index.toString()}].builtFromShelterId`,
+        "references a missing shelter",
+      );
+    }
+    if (
+      structure.kind === "SHELTER_SITE" ||
+      structure.kind === "SHELTER" ||
+      structure.kind === "ABANDONED_SHELTER"
+    ) {
+      const owner = groups
+        .map((value) => value as UnknownRecord)
+        .find((group) => group.id === structure.groupId);
+      if (owner?.stage !== "PERSISTENT") {
+        fail(
+          `structures[${index.toString()}].groupId`,
+          "must belong to a persistent group",
+        );
+      }
+      if (builtFromShelterId !== null && builtFromShelterId !== undefined) {
+        const builtFrom = structureById.get(builtFromShelterId);
+        if (
+          !builtFrom ||
+          builtFrom.groupId !== structure.groupId ||
+          (structure.kind === "SHELTER_SITE"
+            ? builtFrom.kind !== "SHELTER"
+            : structure.kind === "SHELTER"
+              ? builtFrom.kind !== "ABANDONED_SHELTER"
+              : true)
+        ) {
+          fail(
+            `structures[${index.toString()}].builtFromShelterId`,
+            "must reference the same group's appropriate shelter lifecycle predecessor",
+          );
+        }
+      }
+      const completedTick = structure.completedTick as number | null;
+      const assessment = structure.siteAssessment as UnknownRecord;
+      if (completedTick !== null && (assessment.selectedAtTick as number) > completedTick) {
+        fail(
+          `structures[${index.toString()}].siteAssessment.selectedAtTick`,
+          "cannot be later than shelter completion",
+        );
+      }
+      if (
+        (completedTick !== null && completedTick > tick) ||
+        (assessment.selectedAtTick as number) > tick ||
+        (structure.lastMaintainedTick !== null &&
+          (structure.lastMaintainedTick as number) > tick) ||
+        (structure.lastUsedTick !== null && (structure.lastUsedTick as number) > tick)
+      ) {
+        fail(`structures[${index.toString()}]`, "contains shelter facts from the future");
+      }
+    }
+  }
+  const shelterEndpointOwners = new Map<number, number>();
+  for (const structure of typedState.structures) {
+    if (
+      structure.kind !== "SHELTER_SITE" &&
+      structure.kind !== "SHELTER" &&
+      structure.kind !== "ABANDONED_SHELTER"
+    ) {
+      continue;
+    }
+    if (
+      structure.kind !== "ABANDONED_SHELTER" &&
+      !isLegalShelterSite(typedState, structure.tileIndex, structure.id)
+    ) {
+      fail(
+        "structures",
+        `shelter ${structure.id.toString()} does not retain a legal six-place rest footprint`,
+      );
+    }
+    const center = tileCoordinates(typedState.world, structure.tileIndex);
+    for (const [offsetX, offsetY] of SHELTER_REST_OFFSETS) {
+      const endpoint = tileIndexAt(
+        typedState.world,
+        center.x + offsetX,
+        center.y + offsetY,
+      );
+      const owner = shelterEndpointOwners.get(endpoint);
+      if (owner !== undefined) {
+        fail(
+          "structures",
+          `shelters ${owner.toString()} and ${structure.id.toString()} have overlapping rest footprints`,
+        );
+      }
+      shelterEndpointOwners.set(endpoint, structure.id);
+    }
   }
   for (const [index, edgeValue] of relationships.entries()) {
     const edge = edgeValue as UnknownRecord;

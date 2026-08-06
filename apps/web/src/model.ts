@@ -6,7 +6,14 @@ export type TimelineCategory =
   "all" | "social" | "resources" | "conflict" | "group" | "player";
 
 export type InterventionTool =
-  "inspect" | "add-food" | "remove-food" | "replenish-water" | "drain-water" | "obstacle";
+  | "inspect"
+  | "add-food"
+  | "remove-food"
+  | "add-material"
+  | "remove-material"
+  | "replenish-water"
+  | "drain-water"
+  | "obstacle";
 
 export interface Point {
   x: number;
@@ -49,6 +56,33 @@ export interface StructureView {
   progress: number;
   stored: number;
   capacity: number;
+  materialDeposited?: number | undefined;
+  materialRequired?: number | undefined;
+  workRequired?: number | undefined;
+  storedMaterial?: number | undefined;
+  condition?: number | undefined;
+  baseCapacity?: number | undefined;
+  effectiveCapacity?: number | undefined;
+  reservedSpaces?: number | undefined;
+  restingCreatures?: number | undefined;
+  memberOccupancy?: number | undefined;
+  guestOccupancy?: number | undefined;
+  upkeepNeeded?: boolean | undefined;
+  siteAssessment?: ShelterSiteAssessmentView | undefined;
+  builtFromShelterId?: EntityId | undefined;
+}
+
+export interface ShelterSiteAssessmentView {
+  selectedAtTick: number;
+  memberTravelCost: number;
+  storageTravelCost: number;
+  foodAccessCost: number;
+  materialAccessCost: number;
+  waterAccessCost: number;
+  crowdingCost: number;
+  constructionInvestmentCost: number;
+  relocationChangeCost: number;
+  totalScore: number;
 }
 
 export interface TraitView {
@@ -138,6 +172,19 @@ export interface CreatureView {
         claimedInteractionSlots: number;
       }
     | undefined;
+  shelterAccess?:
+    | {
+        shelterId: EntityId | null;
+        weightedCost: number | null;
+        eligibility: "MEMBER" | "TRUSTED_GUEST" | "INELIGIBLE" | null;
+        condition: number | null;
+        effectiveCapacity: number;
+        reservedSpaces: number;
+        restingCreatures: number;
+        destination: "SHELTERED" | "OUTDOOR" | "NONE";
+        reason: string;
+      }
+    | undefined;
   health: number;
   hunger: number;
   fatigue: number;
@@ -152,6 +199,7 @@ export interface CreatureView {
 export interface GroupView {
   id: EntityId;
   name: string;
+  stage?: "PROVISIONAL" | "PERSISTENT" | undefined;
   memberIds: EntityId[];
   leaderId?: EntityId | undefined;
   home?: Point | undefined;
@@ -159,6 +207,19 @@ export interface GroupView {
   sharingNorm: number;
   conflictNorm: number;
   storageIds: EntityId[];
+  activeShelterId?: EntityId | undefined;
+  pendingShelterId?: EntityId | undefined;
+  shelterRelocations?: number | undefined;
+  shelterCommitUntilTick?: number | undefined;
+  shelterRelocationCandidate?:
+    | {
+        tileIndex: number;
+        firstSeenTick: number;
+        lastEvaluatedTick: number;
+        consecutiveEvaluations: number;
+        scoreImprovement: number;
+      }
+    | undefined;
 }
 
 export interface TimelineEventView {
@@ -172,6 +233,8 @@ export interface TimelineEventView {
   reason?: string | undefined;
   actorIds: EntityId[];
   targetIds: EntityId[];
+  /** Authoritative group subjects retained separately from entity targets. */
+  groupIds?: EntityId[] | undefined;
   causedByEventIds: number[];
   importance: number;
   attentionTier: "ROUTINE" | "NOTABLE" | "SIGNIFICANT" | "CRITICAL";

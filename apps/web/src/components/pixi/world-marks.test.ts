@@ -1,7 +1,12 @@
 import type { Graphics } from "pixi.js";
 import { describe, expect, it, vi } from "vitest";
-import type { ResourceView } from "../../model";
-import { drawResourceMark, resourceDepletionLevel } from "./world-marks";
+import type { ResourceView, StructureView } from "../../model";
+import {
+  drawResourceMark,
+  drawStructureMark,
+  resourceDepletionLevel,
+  shelterPresentationState,
+} from "./world-marks";
 
 class GraphicsStub {
   visible = true;
@@ -70,5 +75,46 @@ describe("resource marks", () => {
     expect(resourceDepletionLevel(4, 16)).toBe("low");
     expect(resourceDepletionLevel(5, 16)).toBe("available");
     expect(resourceDepletionLevel(16, 16)).toBe("full");
+  });
+});
+
+describe("shelter marks", () => {
+  const shelter = (overrides: Partial<StructureView> = {}): StructureView => ({
+    id: 72,
+    kind: "SHELTER",
+    x: 8,
+    y: 6,
+    groupId: 3,
+    progress: 100,
+    stored: 0,
+    capacity: 6,
+    condition: 76,
+    baseCapacity: 6,
+    effectiveCapacity: 5,
+    reservedSpaces: 3,
+    restingCreatures: 2,
+    memberOccupancy: 1,
+    guestOccupancy: 1,
+    upkeepNeeded: false,
+    ...overrides,
+  });
+
+  it("classifies site, active, degraded, and abandoned shapes without relying on color", () => {
+    expect(shelterPresentationState(shelter({ kind: "SHELTER_SITE" }))).toBe("site");
+    expect(shelterPresentationState(shelter())).toBe("active");
+    expect(shelterPresentationState(shelter({ condition: 42 }))).toBe("degraded");
+    expect(shelterPresentationState(shelter({ kind: "ABANDONED_SHELTER" }))).toBe(
+      "abandoned",
+    );
+    expect(shelterPresentationState(shelter({ kind: "STORAGE" }))).toBeNull();
+  });
+
+  it("draws capacity spaces and distinct resting occupancy marks", () => {
+    const mark = new GraphicsStub();
+    drawStructureMark(mark as unknown as Graphics, shelter());
+
+    expect(mark.calls.filter((call) => call === "circle")).toHaveLength(2);
+    expect(mark.calls.filter((call) => call === "rect").length).toBeGreaterThanOrEqual(8);
+    expect(mark.position.set).toHaveBeenCalledWith(8.5, 6.5);
   });
 });

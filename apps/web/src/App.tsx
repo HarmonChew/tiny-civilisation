@@ -64,7 +64,52 @@ interface MomentReplaySession {
   focusState: WorldFocusState;
   mobileRegion: MobileRegion;
   cameraTarget: ReplayCameraTarget;
+  subjectRef: WorldRef | null;
   returnFocus: HTMLElement | null;
+}
+
+export function worldSubjectForTimelineEvent(
+  event: TimelineEventView,
+  view: WorldView,
+): WorldRef | null {
+  const decisionActor = event.decisionActorId;
+  if (
+    decisionActor !== undefined &&
+    view.creatures.some((creature) => creature.id === decisionActor)
+  ) {
+    return creatureRef(decisionActor);
+  }
+  const actor = event.actorIds.find((id) =>
+    view.creatures.some((creature) => creature.id === id),
+  );
+  if (actor !== undefined) return creatureRef(actor);
+
+  const target = event.targetIds[0];
+  if (target !== undefined) {
+    if (
+      /SHELTER|SETTLEMENT|RELOCAT|ABANDON/i.test(event.type) &&
+      view.structures.some((structure) => structure.id === target)
+    ) {
+      return { kind: "structure", id: target };
+    }
+    if (view.creatures.some((creature) => creature.id === target)) {
+      return creatureRef(target);
+    }
+    if (view.structures.some((structure) => structure.id === target)) {
+      return { kind: "structure", id: target };
+    }
+    if (view.resources.some((resource) => resource.id === target)) {
+      return { kind: "resource", id: target };
+    }
+  }
+
+  const groupId = event.groupIds?.find((id) =>
+    view.groups.some((group) => group.id === id),
+  );
+  if (groupId !== undefined) return { kind: "group", id: groupId };
+  return event.locationTileIndex === undefined
+    ? null
+    : { kind: "tile", tileIndex: event.locationTileIndex };
 }
 
 export function replayCameraTargetForEvent(event: TimelineEventView): ReplayCameraTarget {
@@ -257,6 +302,7 @@ export default function App() {
     (ref: WorldRef, source: WorldFocusSource = "DISH") => {
       selectFocus(ref, source);
       setFollowedId(null);
+      setMobileRegion("subject");
     },
     [selectFocus],
   );
@@ -289,6 +335,10 @@ export default function App() {
     ] ?? null;
   const replayActive = activeReplayBeat !== null;
   const dishView = activeReplayBeat?.view ?? view;
+  const dishSelectedRef = replayActive
+    ? (momentReplaySessionRef.current?.subjectRef ?? null)
+    : focusState.selected;
+  const dishSelectedCreatureId = creatureIdFromRef(dishSelectedRef);
   const replayCamera = replayActive
     ? (momentReplaySessionRef.current?.cameraTarget ?? null)
     : null;
@@ -347,12 +397,15 @@ export default function App() {
 
   const focusTimelineEvent = useCallback(
     (event: TimelineEventView, source: "CHRONICLE" | "MOMENT") => {
-      const id = event.decisionActorId ?? event.actorIds[0] ?? event.targetIds[0] ?? null;
-      inspectEvidence(eventRef(event.id), id === null ? null : creatureRef(id), source);
+      inspectEvidence(
+        eventRef(event.id),
+        worldSubjectForTimelineEvent(event, view),
+        source,
+      );
       setFollowedId(null);
       setMobileRegion("subject");
     },
-    [inspectEvidence],
+    [inspectEvidence, view],
   );
 
   const inspectTimelineEvent = useCallback(
@@ -402,6 +455,7 @@ export default function App() {
         focusState: { ...focusState },
         mobileRegion,
         cameraTarget: replayCameraTargetForEvent(moment.latestEvent),
+        subjectRef: worldSubjectForTimelineEvent(moment.latestEvent, view),
         returnFocus:
           document.activeElement instanceof HTMLElement ? document.activeElement : null,
       };
@@ -741,7 +795,8 @@ export default function App() {
           <WorldStage
             seed={seed}
             view={dishView}
-            selectedId={replayActive ? (replayCamera?.subjectId ?? null) : selectedId}
+            selectedId={dishSelectedCreatureId}
+            selectedRef={dishSelectedRef}
             focusedId={replayActive ? null : focusedCreatureId}
             followedId={replayActive ? null : followedId}
             tool={tool}
@@ -758,6 +813,9 @@ export default function App() {
               setOverlays((current) => ({ ...current, [overlay]: !current[overlay] }))
             }
             onSelect={(id) => selectCreature(id, "DISH")}
+            onSelectSubject={(ref) =>
+              ref === null ? selectCreature(null, "DISH") : selectWorldSubject(ref, "DISH")
+            }
             onHover={(id) => setHovered(id === null ? null : creatureRef(id), "DISH")}
             onWorldAction={applyWorldAction}
           />
@@ -767,10 +825,11 @@ export default function App() {
           className={`workspace-panel workspace-panel--inspector ${
             mobileRegion === "subject" ? "is-mobile-active" : ""
           }`}
-          aria-label="Selected creature inspector"
+          aria-label="Selected subject notebook"
         >
           <InspectorPanel
             creature={selectedCreature}
+            subjectRef={focusState.selected}
             view={view}
             evidenceEvent={selectedEvidenceEvent}
             followed={selectedId !== null && followedId === selectedId}
@@ -779,6 +838,8 @@ export default function App() {
               setFollowedId((current) => (current === selectedId ? null : selectedId))
             }
             onSelect={(id) => selectCreature(id, "INSPECTOR")}
+            onSelectSubject={(ref) => selectWorldSubject(ref, "INSPECTOR")}
+            onInspectEvent={inspectTimelineEvent}
           />
         </aside>
       </main>

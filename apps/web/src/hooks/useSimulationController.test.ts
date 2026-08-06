@@ -12,10 +12,9 @@ const { createEngineMock } = vi.hoisted(() => ({
   createEngineMock: vi.fn(),
 }));
 
-vi.mock("../runtime", async (importOriginal) => {
-  const original = await importOriginal<Record<string, unknown>>();
-  return { ...original, createSimulationEngine: createEngineMock };
-});
+vi.mock("../runtime/browser-simulation-engine", () => ({
+  createBrowserSimulationEngine: createEngineMock,
+}));
 
 import { WorkerSimulationEngine } from "../runtime";
 import { useSimulationController } from "./useSimulationController";

@@ -158,6 +158,8 @@ function playerCommandFromScheduled(command: ScheduledPlayerCommand): PlayerComm
         amount: command.amount,
       };
     case "REMOVE_FOOD":
+    case "ADD_MATERIAL":
+    case "REMOVE_MATERIAL":
     case "REPLENISH_WATER":
     case "DRAIN_WATER":
       return {

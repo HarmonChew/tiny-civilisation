@@ -1,6 +1,7 @@
 import { addHistory, emitDomainEvent } from "./events.js";
 import { findNearestWalkable, isWalkableTile } from "./navigation.js";
-import { tileIndexAt } from "./pathfinding.js";
+import { tileCoordinates, tileIndexAt } from "./pathfinding.js";
+import { isProtectedShelterTile } from "./shelters.js";
 import {
   MAX_PLAYER_COMMAND_AMOUNT,
   type PlayerCommand,
@@ -13,9 +14,18 @@ function resolveCommandTile(state: SimulationState, command: PlayerCommand): num
   if (typeof command.x === "number" && typeof command.y === "number") {
     return tileIndexAt(state.world, Math.floor(command.x), Math.floor(command.y));
   }
-  if (command.type === "ADD_FOOD" || command.type === "REMOVE_FOOD") {
+  if (
+    command.type === "ADD_FOOD" ||
+    command.type === "REMOVE_FOOD" ||
+    command.type === "ADD_MATERIAL" ||
+    command.type === "REMOVE_MATERIAL"
+  ) {
+    const kind =
+      command.type === "ADD_MATERIAL" || command.type === "REMOVE_MATERIAL"
+        ? "MATERIAL"
+        : "FOOD";
     const foodNode = state.resourceNodes
-      .filter((node) => node.kind === "FOOD")
+      .filter((node) => node.kind === kind)
       .sort((left, right) => left.id - right.id)[0];
     if (foodNode) return foodNode.tileIndex;
   }
@@ -33,6 +43,27 @@ function resolveCommandTile(state: SimulationState, command: PlayerCommand): num
   return findNearestWalkable(state, center);
 }
 
+function nearestResourcePlacementTile(
+  state: SimulationState,
+  requestedTileIndex: number,
+): number {
+  const origin = tileCoordinates(state.world, requestedTileIndex);
+  return (
+    state.world.tiles
+      .filter(
+        (tile) =>
+          isWalkableTile(state, tile.index) && !isProtectedShelterTile(state, tile.index),
+      )
+      .sort(
+        (left, right) =>
+          Math.abs(left.x - origin.x) +
+            Math.abs(left.y - origin.y) -
+            (Math.abs(right.x - origin.x) + Math.abs(right.y - origin.y)) ||
+          left.index - right.index,
+      )[0]?.index ?? findNearestWalkable(state, requestedTileIndex)
+  );
+}
+
 export function queuePlayerCommand(
   state: SimulationState,
   command: PlayerCommand,
@@ -45,12 +76,17 @@ export function queuePlayerCommand(
   ) {
     throw new RangeError(`Player command targets invalid tile ${tileIndex}.`);
   }
-  if (command.type === "ADD_FOOD" && !isWalkableTile(state, tileIndex)) {
-    tileIndex = findNearestWalkable(state, tileIndex);
+  if (
+    (command.type === "ADD_FOOD" || command.type === "ADD_MATERIAL") &&
+    (!isWalkableTile(state, tileIndex) || isProtectedShelterTile(state, tileIndex))
+  ) {
+    tileIndex = nearestResourcePlacementTile(state, tileIndex);
   }
   const isQuantityCommand =
     command.type === "ADD_FOOD" ||
     command.type === "REMOVE_FOOD" ||
+    command.type === "ADD_MATERIAL" ||
+    command.type === "REMOVE_MATERIAL" ||
     command.type === "REPLENISH_WATER" ||
     command.type === "DRAIN_WATER";
   const requestedAmount = isQuantityCommand ? (command.amount ?? 12) : 0;
@@ -96,6 +132,34 @@ export function applyScheduledCommands(state: SimulationState): void {
   for (const command of ready) {
     state.metrics.playerInterventions += 1;
     if (command.type === "ADD_FOOD") {
+      if (
+        !isWalkableTile(state, command.tileIndex) ||
+        isProtectedShelterTile(state, command.tileIndex)
+      ) {
+        const event = emitDomainEvent(state, {
+          type: "PLAYER_ADDED_FOOD",
+          locationTileIndex: command.tileIndex,
+          resourceKind: "FOOD",
+          quantity: 0,
+          importance: 20,
+          commandId: command.commandId,
+          commandOutcome: "REJECTED",
+          commandRejectionReason: "OCCUPIED_TILE",
+          summary:
+            "Food could not appear because the scheduled tile became blocked or part of a communal shelter footprint.",
+        });
+        addHistory(
+          state,
+          "INTERVENTION",
+          "Food placement was obstructed",
+          event.summary,
+          [event.id],
+          [],
+          [],
+          20,
+        );
+        continue;
+      }
       let node =
         state.resourceNodes.find(
           (candidate) =>
@@ -169,6 +233,114 @@ export function applyScheduledCommands(state: SimulationState): void {
         state,
         "INTERVENTION",
         "Food vanished",
+        event.summary,
+        [event.id],
+        [],
+        [],
+        55,
+      );
+    } else if (command.type === "ADD_MATERIAL") {
+      if (
+        !isWalkableTile(state, command.tileIndex) ||
+        isProtectedShelterTile(state, command.tileIndex)
+      ) {
+        const event = emitDomainEvent(state, {
+          type: "PLAYER_ADDED_MATERIAL",
+          locationTileIndex: command.tileIndex,
+          resourceKind: "MATERIAL",
+          quantity: 0,
+          importance: 20,
+          commandId: command.commandId,
+          commandOutcome: "REJECTED",
+          commandRejectionReason: "OCCUPIED_TILE",
+          summary:
+            "Material could not appear because the scheduled tile became blocked or part of a communal shelter footprint.",
+        });
+        addHistory(
+          state,
+          "INTERVENTION",
+          "Material placement was obstructed",
+          event.summary,
+          [event.id],
+          [],
+          [],
+          20,
+        );
+        continue;
+      }
+      let node =
+        state.resourceNodes.find(
+          (candidate) =>
+            candidate.kind === "MATERIAL" && candidate.tileIndex === command.tileIndex,
+        ) ?? null;
+      if (!node) {
+        node = {
+          id: state.nextEntityId++,
+          kind: "MATERIAL",
+          tileIndex: command.tileIndex,
+          currentStock: 0,
+          maximumStock: Math.max(40, command.amount),
+          regenerationEveryTicks: 60,
+          regenerationAmount: 1,
+        };
+        state.resourceNodes.push(node);
+      }
+      node.maximumStock = Math.max(node.maximumStock, node.currentStock + command.amount);
+      node.currentStock += command.amount;
+      const event = emitDomainEvent(state, {
+        type: "PLAYER_ADDED_MATERIAL",
+        targetIds: [node.id],
+        locationTileIndex: command.tileIndex,
+        resourceKind: "MATERIAL",
+        quantity: command.amount,
+        importance: 55,
+        commandId: command.commandId,
+        commandOutcome: "APPLIED",
+        summary: `The observer added ${command.amount} material units.`,
+      });
+      addHistory(
+        state,
+        "INTERVENTION",
+        "Material appeared",
+        event.summary,
+        [event.id],
+        [],
+        [],
+        55,
+      );
+    } else if (command.type === "REMOVE_MATERIAL") {
+      let remaining = command.amount;
+      let removed = 0;
+      const affectedNodeIds: number[] = [];
+      for (const node of state.resourceNodes) {
+        if (
+          node.kind !== "MATERIAL" ||
+          node.tileIndex !== command.tileIndex ||
+          remaining <= 0
+        ) {
+          continue;
+        }
+        const quantity = Math.min(remaining, node.currentStock);
+        node.currentStock -= quantity;
+        remaining -= quantity;
+        removed += quantity;
+        if (quantity > 0) affectedNodeIds.push(node.id);
+      }
+      const event = emitDomainEvent(state, {
+        type: "PLAYER_REMOVED_MATERIAL",
+        targetIds: affectedNodeIds,
+        locationTileIndex: command.tileIndex,
+        resourceKind: "MATERIAL",
+        quantity: removed,
+        importance: 55,
+        commandId: command.commandId,
+        commandOutcome: "APPLIED",
+        summary: `The observer removed ${removed} material units.`,
+      });
+      addHistory(
+        state,
+        "INTERVENTION",
+        "Material vanished",
         event.summary,
         [event.id],
         [],
@@ -270,7 +442,8 @@ export function applyScheduledCommands(state: SimulationState): void {
           (creature) => creature.alive && creature.tileIndex === command.tileIndex,
         ) ||
         state.resourceNodes.some((node) => node.tileIndex === command.tileIndex) ||
-        state.structures.some((structure) => structure.tileIndex === command.tileIndex);
+        state.structures.some((structure) => structure.tileIndex === command.tileIndex) ||
+        isProtectedShelterTile(state, command.tileIndex);
       if (nextBlocked && occupied) {
         const event = emitDomainEvent(state, {
           type: "PLAYER_TOGGLED_OBSTACLE",
@@ -281,7 +454,7 @@ export function applyScheduledCommands(state: SimulationState): void {
           commandOutcome: "REJECTED",
           commandRejectionReason: "OCCUPIED_TILE",
           summary:
-            "A barrier could not form on a tile occupied by a creature, resource, or structure.",
+            "A barrier could not form on a tile occupied by a creature, resource, structure, or usable shelter place.",
         });
         addHistory(
           state,

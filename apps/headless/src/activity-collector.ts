@@ -21,9 +21,17 @@ import {
   type RelationshipEdge,
   type ResourceKind,
   type SimulationState,
+  type StorageStructureState,
 } from "@tiny-civ/sim-core";
 
-export const ACTIVITY_PROFILE_SCHEMA_VERSION = 4 as const;
+import {
+  StreamingSettlementActivityCollector,
+  summarizeSettlementProfiles,
+  type SettlementActivityAggregate,
+  type SettlementActivityProfile,
+} from "./settlement-activity.js";
+
+export const ACTIVITY_PROFILE_SCHEMA_VERSION = 5 as const;
 export const ACTIVITY_SAMPLE_EVERY_TICKS = 1 as const;
 export const SIGNIFICANT_EVENT_TIERS = [
   "SIGNIFICANT",
@@ -92,6 +100,10 @@ export const ACTION_KINDS = [
   "EAT",
   "DRINK",
   "REST",
+  "ESTABLISH_SHELTER_SITE",
+  "BUILD_SHELTER",
+  "REST_SHELTERED",
+  "MAINTAIN_SHELTER",
   "SHARE",
   "SHARE_WATER",
   "KEEP",
@@ -111,6 +123,18 @@ export const INTERACTION_EVENT_TYPES = [
   "MATERIAL_DEPOSITED",
   "STORAGE_SITE_STARTED",
   "STORAGE_COMPLETED",
+  "SHELTER_SITE_SELECTED",
+  "SHELTER_CONSTRUCTION_STARTED",
+  "SHELTER_WORK_ADVANCED",
+  "SHELTER_COMPLETED",
+  "SHELTER_RESTED",
+  "SHELTER_MAINTAINED",
+  "SHELTER_CONDITION_LOW",
+  "SHELTER_CONDITION_RECOVERED",
+  "SHELTER_CROWDED",
+  "SHELTER_GUEST_USED",
+  "SHELTER_ABANDONED",
+  "SHELTER_RELOCATED",
   "CREATURE_GUARDED",
   "THEFT_COMMITTED",
   "THEFT_WITNESSED",
@@ -128,6 +152,7 @@ export const INTERACTION_PURPOSES = [
   "SOCIAL",
   "STORAGE_ACCESS",
   "CONSTRUCTION",
+  "MAINTENANCE",
   "GUARD",
   "CONFLICT",
   "FLIGHT",
@@ -801,6 +826,7 @@ export interface ActivityProfile {
   stalemate: StalemateProfile;
   desires: DesireActivityProfile;
   hydration: HydrationActivityProfile;
+  settlement: SettlementActivityProfile;
   scenarioSpatial: ScenarioSpatialActivityProfile;
   diagnostics: ActivityDiagnosticProfile;
 }
@@ -924,6 +950,7 @@ export interface ActivityProfileAggregate {
     chokepoints: ScenarioChokepointActivityAggregate[];
   };
   hydration: HydrationActivityAggregate;
+  settlement: SettlementActivityAggregate;
   warnings: string[];
 }
 
@@ -1891,7 +1918,11 @@ function horizonFacts(state: SimulationState): HorizonFactsProfile {
   const currentStock = nodes.reduce((total, node) => total + node.currentStock, 0);
   const maximumStock = nodes.reduce((total, node) => total + node.maximumStock, 0);
 
-  const structures = [...state.structures]
+  const structures = state.structures
+    .filter(
+      (structure): structure is StorageStructureState =>
+        structure.kind === "STORAGE" || structure.kind === "STORAGE_SITE",
+    )
     .sort((left, right) => left.id - right.id)
     .map((structure): StorageHorizonFact => ({
       id: structure.id,
@@ -1956,7 +1987,10 @@ function horizonFacts(state: SimulationState): HorizonFactsProfile {
       ungroupedCarriedMaterial: sumInventory(ungrouped, "material"),
       ungroupedCarriedWater: sumInventory(ungrouped, "water"),
       constructionCommittedMaterial: state.structures
-        .filter((structure) => structure.kind === "STORAGE_SITE")
+        .filter(
+          (structure) =>
+            structure.kind === "STORAGE_SITE" || structure.kind === "SHELTER_SITE",
+        )
         .reduce((total, structure) => total + structure.material, 0),
       byKind,
       nodes,
@@ -2117,6 +2151,7 @@ function waterAccessProfile(state: SimulationState): HydrationActivityProfile["a
 }
 
 export class StreamingActivityCollector {
+  private readonly settlement: StreamingSettlementActivityCollector;
   private readonly scenario: SimulationState["scenario"];
   private readonly compiledMapHash: string;
   private readonly seed: number;
@@ -2268,6 +2303,7 @@ export class StreamingActivityCollector {
   };
 
   constructor(initialState: SimulationState) {
+    this.settlement = new StreamingSettlementActivityCollector(initialState);
     const compiled = compileScenario(initialState.scenario);
     if (compiled.compiledMapHash !== initialState.compiledMapHash) {
       throw new Error(
@@ -2394,6 +2430,7 @@ export class StreamingActivityCollector {
     this.currentTickTransitionKeys.clear();
 
     const events = this.newEvents(state);
+    this.settlement.observe(state, events);
     for (const event of events) this.registerAppliedIntervention(event);
     this.observeDecisionsAndSelections(state, events);
     this.observeInterventionChanges(state, events);
@@ -3066,6 +3103,7 @@ export class StreamingActivityCollector {
       stalemate: this.stalemateProfile(),
       desires,
       hydration,
+      settlement: this.settlement.report(),
       scenarioSpatial,
       diagnostics,
     };
@@ -3772,6 +3810,8 @@ export class StreamingActivityCollector {
         break;
       case "PLAYER_ADDED_FOOD":
       case "PLAYER_REMOVED_FOOD":
+      case "PLAYER_ADDED_MATERIAL":
+      case "PLAYER_REMOVED_MATERIAL":
       case "PLAYER_REPLENISHED_WATER":
       case "PLAYER_DRAINED_WATER":
       case "PLAYER_TOGGLED_OBSTACLE":
@@ -4670,6 +4710,7 @@ export function summarizeActivityProfiles(
         ),
       },
     },
+    settlement: summarizeSettlementProfiles(profiles.map((profile) => profile.settlement)),
     warnings: warnings.sort(compareText),
   };
 }

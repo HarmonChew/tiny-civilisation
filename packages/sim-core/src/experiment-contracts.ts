@@ -240,6 +240,33 @@ export function deserializeScenarioReference(serialized: string): ScenarioRefere
       nonnegativeInteger(legacy.seed, "Scenario seed"),
     );
   }
+  if (isRecord(value) && value.schemaVersion === 2 && value.behaviorVersion === 4) {
+    const legacy = exactObject(
+      value,
+      [
+        "kind",
+        "schemaVersion",
+        "behaviorVersion",
+        "scenarioId",
+        "scenarioVersion",
+        "mapGenerationVersion",
+        "seed",
+      ],
+      "Scenario",
+    );
+    if (
+      legacy.kind !== "tiny-civilisation/scenario" ||
+      legacy.scenarioVersion !== 2 ||
+      legacy.mapGenerationVersion !== 1 ||
+      !isScenarioId(legacy.scenarioId)
+    ) {
+      throw new Error("Phase 4 scenario uses an unsupported definition or behavior.");
+    }
+    return createScenarioReference(
+      legacy.scenarioId,
+      nonnegativeInteger(legacy.seed, "Scenario seed"),
+    );
+  }
   assertScenarioReference(value);
   return createScenarioReference(value.scenarioId, value.seed);
 }
@@ -878,7 +905,10 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
   if (
     isRecord(value) &&
     value.kind === "tiny-civilisation/experiment" &&
-    (value.schemaVersion === 1 || value.schemaVersion === 2 || value.schemaVersion === 3)
+    (value.schemaVersion === 1 ||
+      value.schemaVersion === 2 ||
+      value.schemaVersion === 3 ||
+      value.schemaVersion === 4)
   ) {
     const legacySchemaVersion = value.schemaVersion;
     const legacy = exactObject(
@@ -902,8 +932,14 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
     const isPhaseTwoBehavior = legacyBehavior === 3 && legacyState === 2;
     const isPhaseThreeBehavior =
       legacySchemaVersion === 3 && legacyBehavior === 3 && legacyState === 3;
+    const isPhaseFourBehavior =
+      legacySchemaVersion === 4 && legacyBehavior === 4 && legacyState === 4;
     const supportedLegacyEnvelope =
-      legacySchemaVersion === 3 ? isPhaseThreeBehavior : isBehaviorV1 || isPhaseTwoBehavior;
+      legacySchemaVersion === 4
+        ? isPhaseFourBehavior
+        : legacySchemaVersion === 3
+          ? isPhaseThreeBehavior
+          : isBehaviorV1 || isPhaseTwoBehavior;
     if (!supportedLegacyEnvelope) {
       throw new Error(
         `Experiment schema version ${legacySchemaVersion.toString()} has incompatible behavior/state versions ${String(legacyBehavior)}/${String(legacyState)}.`,
@@ -911,7 +947,7 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
     }
     const scenario = exactObject(
       legacy.scenario,
-      isPhaseThreeBehavior
+      isPhaseThreeBehavior || isPhaseFourBehavior
         ? [
             "kind",
             "schemaVersion",
@@ -932,12 +968,14 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
       "Scenario",
     );
     let migratedScenario: ScenarioReferenceV2;
-    if (isPhaseThreeBehavior) {
+    if (isPhaseThreeBehavior || isPhaseFourBehavior) {
+      const expectedBehavior = isPhaseFourBehavior ? 4 : 3;
+      const expectedScenarioVersion = isPhaseFourBehavior ? 2 : 1;
       if (
         scenario.kind !== "tiny-civilisation/scenario" ||
         scenario.schemaVersion !== 2 ||
-        scenario.behaviorVersion !== 3 ||
-        scenario.scenarioVersion !== 1 ||
+        scenario.behaviorVersion !== expectedBehavior ||
+        scenario.scenarioVersion !== expectedScenarioVersion ||
         scenario.mapGenerationVersion !== 1 ||
         !isScenarioId(scenario.scenarioId)
       ) {
@@ -988,6 +1026,16 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
               : ["command", "outcome", "responseTrace"],
             `Experiment.branches[${branchIndex.toString()}].commandLog[${entryIndex.toString()}]`,
           );
+          if (
+            legacySchemaVersion === 4 &&
+            isRecord(entry.command) &&
+            (entry.command.type === "ADD_MATERIAL" ||
+              entry.command.type === "REMOVE_MATERIAL")
+          ) {
+            throw new Error(
+              `Experiment.branches[${branchIndex.toString()}].commandLog[${entryIndex.toString()}] contains a command unavailable in Phase 4.`,
+            );
+          }
           return {
             command: entry.command,
             outcome: { status: "PENDING" as const },

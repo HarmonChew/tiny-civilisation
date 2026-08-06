@@ -181,6 +181,18 @@ describe("simulation engines", () => {
     expect(workerAck).toEqual(directAck);
     expect(directAck.accepted).toBe(true);
 
+    for (const command of [
+      { type: "ADD_MATERIAL" as const, x: 16, y: 10, amount: 9 },
+      { type: "REMOVE_MATERIAL" as const, x: 16, y: 10, amount: 4 },
+    ]) {
+      const [directMaterialAck, workerMaterialAck] = await Promise.all([
+        direct.intervene(command),
+        worker.intervene(command),
+      ]);
+      expect(workerMaterialAck).toEqual(directMaterialAck);
+      expect(directMaterialAck.accepted).toBe(true);
+    }
+
     const [directApplied, workerApplied] = await Promise.all([
       direct.advance(1),
       worker.advance(1),

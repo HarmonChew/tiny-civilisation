@@ -6,6 +6,7 @@ export type CreatureActionFamily =
   | "eat"
   | "drink"
   | "build"
+  | "maintenance"
   | "share"
   | "guard"
   | "conflict"
@@ -44,13 +45,20 @@ export function actionFamily(action: string, phase = ""): CreatureActionFamily {
   }
   if (normalized === "EAT") return "eat";
   if (normalized === "DRINK") return "drink";
-  if (normalized === "BUILD_STORAGE") return "build";
+  if (
+    normalized === "BUILD_STORAGE" ||
+    normalized === "ESTABLISH_SHELTER_SITE" ||
+    normalized === "BUILD_SHELTER"
+  ) {
+    return "build";
+  }
+  if (normalized === "MAINTAIN_SHELTER") return "maintenance";
   if (normalized === "SHARE" || normalized === "SHARE_WATER" || normalized === "JOIN_GROUP")
     return "share";
   if (normalized === "GUARD") return "guard";
   if (normalized === "ATTACK" || normalized === "STEAL") return "conflict";
   if (normalized === "FLEE") return "flee";
-  if (normalized === "REST") return "rest";
+  if (normalized === "REST" || normalized === "REST_SHELTERED") return "rest";
   if (normalized === "DEPOSIT" || normalized === "WITHDRAW" || normalized === "KEEP") {
     return "storage";
   }

@@ -1,5 +1,6 @@
 import {
   Apple,
+  Boxes,
   BrickWall,
   DropletOff,
   Droplets,
@@ -18,6 +19,7 @@ import type {
   WorldAction,
   WorldView,
 } from "../model";
+import type { WorldRef } from "../focus";
 import { PixiWorld } from "./PixiWorld";
 import type { ReplayCameraTarget } from "./pixi/camera";
 import { compactLabel, identityGlyph } from "./pixi/visual-grammar";
@@ -48,6 +50,18 @@ const toolOptions: Array<{
     help: "Remove food from a tile and record the intervention.",
   },
   {
+    id: "add-material",
+    label: "Add material",
+    icon: Boxes,
+    help: "Place building material at a tile. Creatures decide whether it matters.",
+  },
+  {
+    id: "remove-material",
+    label: "Remove material",
+    icon: Eraser,
+    help: "Remove building material from a tile and record the intervention.",
+  },
+  {
     id: "replenish-water",
     label: "Replenish water",
     icon: Droplets,
@@ -71,6 +85,7 @@ export function WorldStage({
   seed,
   view,
   selectedId,
+  selectedRef = selectedId === null ? null : { kind: "creature", id: selectedId },
   focusedId,
   followedId,
   tool,
@@ -81,12 +96,14 @@ export function WorldStage({
   onTool,
   onOverlay,
   onSelect,
+  onSelectSubject,
   onHover,
   onWorldAction,
 }: {
   seed: number;
   view: WorldView;
   selectedId: EntityId | null;
+  selectedRef?: WorldRef | null;
   focusedId: EntityId | null;
   followedId: EntityId | null;
   tool: InterventionTool;
@@ -97,6 +114,7 @@ export function WorldStage({
   onTool: (tool: InterventionTool) => void;
   onOverlay: (overlay: keyof OverlaySettings) => void;
   onSelect: (id: EntityId | null) => void;
+  onSelectSubject?: ((ref: WorldRef | null) => void) | undefined;
   onHover: (id: EntityId | null) => void;
   onWorldAction: (action: WorldAction) => void;
 }) {
@@ -178,6 +196,7 @@ export function WorldStage({
         <PixiWorld
           view={view}
           selectedId={selectedId}
+          selectedRef={selectedRef}
           focusedId={focusedId}
           followedId={followedId}
           tool={tool}
@@ -185,6 +204,7 @@ export function WorldStage({
           mutationDisabled={mutationDisabled}
           replayCamera={replayCamera}
           onSelect={onSelect}
+          onSelectSubject={onSelectSubject}
           onHover={onHover}
           onWorldAction={onWorldAction}
         />
@@ -227,6 +247,9 @@ export function WorldStage({
           </span>
           <span>
             <i className="legend-dot legend-dot--storage" /> storage
+          </span>
+          <span>
+            <i className="legend-dot legend-dot--shelter" /> shelter / site
           </span>
           {overlays.traffic ? (
             <span>

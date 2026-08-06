@@ -16,6 +16,13 @@ import {
   estimateInteractionTravelIgnoringOccupancy,
   interactionCapacity,
 } from "./interaction-slots.js";
+import {
+  SHELTER_MAINTENANCE_THRESHOLD,
+  effectiveShelterCapacity,
+  isShelterStructure,
+  shelterEligibility,
+  shelterOccupancy,
+} from "./shelters.js";
 
 const HISTORY_TICKS_PER_MINUTE = 10;
 const HISTORY_MINUTES_PER_DAY = 24 * 60;
@@ -26,6 +33,8 @@ const MAX_PROJECTED_ATTENTION_EVENTS = 24;
 const MAX_PROJECTED_FACTORS_PER_CANDIDATE = 3;
 
 const ROUTINE_WATER_DRINKING_CLUSTER_KEY = "presentation:water-drinking:routine";
+const ROUTINE_SHELTER_REST_CLUSTER_KEY = "presentation:shelter-rest:routine";
+const ROUTINE_SHELTER_MAINTENANCE_CLUSTER_KEY = "presentation:shelter-maintenance:routine";
 const FIRST_WATER_SHARE_CLUSTER_KEY = "presentation:water-share:first";
 const CONTINUED_WATER_SHARE_CLUSTER_KEY = "presentation:water-share:continued";
 
@@ -49,6 +58,46 @@ function latestAggregate(
   };
 }
 
+function groupShelterEvents(
+  events: readonly DomainEvent[],
+): Array<readonly [number, DomainEvent[]]> {
+  const grouped = new Map<number, DomainEvent[]>();
+  for (const event of events) {
+    const shelterId = event.targetIds[0];
+    if (shelterId === undefined) continue;
+    const retained = grouped.get(shelterId) ?? [];
+    retained.push(event);
+    grouped.set(shelterId, retained);
+  }
+  return [...grouped.entries()].sort(([left], [right]) => left - right);
+}
+
+function latestShelterAggregate(
+  shelterId: number,
+  events: readonly DomainEvent[],
+  clusterKey: string,
+  summary: string,
+  quantity: number,
+): DomainEvent | null {
+  const aggregate = latestAggregate(
+    events,
+    `${clusterKey}:${shelterId.toString()}`,
+    summary,
+    quantity,
+  );
+  if (!aggregate) return null;
+  return {
+    ...aggregate,
+    actorIds: [...new Set(events.flatMap((event) => event.actorIds))].sort(
+      (left, right) => left - right,
+    ),
+    targetIds: [shelterId],
+    groupIds: [...new Set(events.flatMap((event) => event.groupIds))].sort(
+      (left, right) => left - right,
+    ),
+  };
+}
+
 /**
  * Keeps the observation stream compact without altering authoritative events.
  * Routine drinking is represented by its latest causally linked event, while
@@ -57,6 +106,14 @@ function latestAggregate(
 function projectRecentEvents(state: SimulationState): DomainEvent[] {
   const routineDrinks = state.domainEvents
     .filter((event) => event.type === "WATER_DRUNK" && event.attentionTier === "ROUTINE")
+    .sort(compareEvents);
+  const routineShelterRests = state.domainEvents
+    .filter((event) => event.type === "SHELTER_RESTED" && event.attentionTier === "ROUTINE")
+    .sort(compareEvents);
+  const routineShelterMaintenance = state.domainEvents
+    .filter(
+      (event) => event.type === "SHELTER_MAINTAINED" && event.attentionTier === "ROUTINE",
+    )
     .sort(compareEvents);
   const waterShares = state.domainEvents
     .filter((event) => event.type === "WATER_SHARED")
@@ -84,6 +141,39 @@ function projectRecentEvents(state: SimulationState): DomainEvent[] {
       ROUTINE_WATER_DRINKING_CLUSTER_KEY,
       drinkSummary,
       count,
+    );
+    if (aggregate) projected.push(aggregate);
+  }
+
+  for (const [shelterId, shelterEvents] of groupShelterEvents(routineShelterRests)) {
+    const latestRoutineShelterRest = shelterEvents.at(-1)!;
+    const count = shelterEvents.length;
+    const aggregate = latestShelterAggregate(
+      shelterId,
+      shelterEvents,
+      ROUTINE_SHELTER_REST_CLUSTER_KEY,
+      count === 1
+        ? latestRoutineShelterRest.summary
+        : `${count.toString()} routine sheltered rests were recorded at this shelter; latest: ${latestRoutineShelterRest.summary}`,
+      count,
+    );
+    if (aggregate) projected.push(aggregate);
+  }
+
+  for (const [shelterId, shelterEvents] of groupShelterEvents(routineShelterMaintenance)) {
+    const latestRoutineShelterMaintenance = shelterEvents.at(-1)!;
+    const material = shelterEvents.reduce(
+      (total, event) => total + Math.max(0, event.quantity),
+      0,
+    );
+    const aggregate = latestShelterAggregate(
+      shelterId,
+      shelterEvents,
+      ROUTINE_SHELTER_MAINTENANCE_CLUSTER_KEY,
+      shelterEvents.length === 1
+        ? latestRoutineShelterMaintenance.summary
+        : `${shelterEvents.length.toString()} routine upkeep actions at this shelter used ${material.toString()} material; latest: ${latestRoutineShelterMaintenance.summary}`,
+      material,
     );
     if (aggregate) projected.push(aggregate);
   }
@@ -195,6 +285,93 @@ function projectCreatureWaterAccess(
     interactionCapacity: interactionCapacity("GATHER_WATER"),
     claimedInteractionSlots: claimedWaterInteractionSlots(state, nearest.source.id),
   };
+}
+
+function projectCreatureShelterAccess(
+  state: SimulationState,
+  creature: SimulationState["creatures"][number],
+) {
+  if (!creature.alive) return null;
+  const candidates = state.structures
+    .filter(isShelterStructure)
+    .filter((structure) => structure.kind === "SHELTER")
+    .map((shelter) => ({
+      shelter,
+      eligibility: shelterEligibility(state, creature, shelter),
+      route: estimateInteractionTravelIgnoringOccupancy(
+        state,
+        creature,
+        "REST_SHELTERED",
+        shelter.id,
+        shelter.tileIndex,
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        (left.route === null ? 1 : 0) - (right.route === null ? 1 : 0) ||
+        (left.eligibility === "MEMBER" ? 0 : left.eligibility === "TRUSTED_GUEST" ? 1 : 2) -
+          (right.eligibility === "MEMBER"
+            ? 0
+            : right.eligibility === "TRUSTED_GUEST"
+              ? 1
+              : 2) ||
+        (left.route?.cost ?? Number.MAX_SAFE_INTEGER) -
+          (right.route?.cost ?? Number.MAX_SAFE_INTEGER) ||
+        left.shelter.id - right.shelter.id,
+    );
+  const destination =
+    creature.activeAction?.kind === "REST_SHELTERED"
+      ? "SHELTERED"
+      : creature.activeAction?.kind === "REST"
+        ? "OUTDOOR"
+        : "NONE";
+  const selected =
+    candidates.find(
+      (candidate) => creature.activeAction?.targetEntityId === candidate.shelter.id,
+    ) ?? candidates[0];
+  if (!selected) {
+    return {
+      shelterId: null,
+      weightedCost: null,
+      eligibility: null,
+      condition: null,
+      effectiveCapacity: 0,
+      reservedSpaces: 0,
+      restingCreatures: 0,
+      destination,
+      reason:
+        destination === "OUTDOOR"
+          ? "No active communal shelter exists, so outdoor rest is the available fallback."
+          : "No active communal shelter is currently available.",
+    } as const;
+  }
+  const occupancy = shelterOccupancy(state, selected.shelter.id);
+  return {
+    shelterId: selected.shelter.id,
+    weightedCost: selected.route?.cost ?? null,
+    eligibility: selected.eligibility,
+    condition: selected.shelter.condition,
+    effectiveCapacity: effectiveShelterCapacity(selected.shelter),
+    reservedSpaces: occupancy.reserved,
+    restingCreatures: occupancy.resting,
+    destination,
+    reason:
+      destination === "SHELTERED"
+        ? "A reachable, eligible shelter offered stronger recovery."
+        : destination === "OUTDOOR"
+          ? selected.route === null
+            ? "The active shelter was unreachable, so outdoor rest remained available."
+            : selected.eligibility === "INELIGIBLE"
+              ? "The reachable shelter did not admit this creature as a member or trusted guest, so outdoor rest remained available."
+              : occupancy.reserved >= effectiveShelterCapacity(selected.shelter)
+                ? "The reachable shelter had no unreserved place, so outdoor rest remained available."
+                : "Outdoor rest won the retained decision despite an eligible, reachable shelter."
+          : selected.route === null
+            ? "An active shelter exists but is currently unreachable."
+            : selected.eligibility === "INELIGIBLE"
+              ? "The nearest reachable shelter requires group membership or directed trust of at least 2500."
+              : "This shelter is reachable and may be chosen when fatigue becomes important.",
+  } as const;
 }
 
 function projectResourceNodes(state: SimulationState): RenderResourceNode[] {
@@ -324,6 +501,7 @@ export function createRenderSnapshot(
           ? null
           : creature.activeAction.interactionClaim.targetY / TILE_FIXED_UNITS,
       waterAccess: projectCreatureWaterAccess(state, creature),
+      shelterAccess: projectCreatureShelterAccess(state, creature),
       recentRoute: creature.recentRoute
         .slice(-MAX_PROJECTED_ROUTE_SAMPLES)
         .map((sample) => ({
@@ -398,17 +576,39 @@ export function createRenderSnapshot(
         })),
     })),
     resourceNodes: projectResourceNodes(state),
-    structures: state.structures.map((structure) => ({
-      id: structure.id,
-      kind: structure.kind,
-      tileIndex: structure.tileIndex,
-      groupId: structure.groupId,
-      progress: structure.progress,
-      food: structure.inventory.food,
-      material: structure.material,
-      water: structure.inventory.water,
-      guardIds: [...structure.guardIds],
-    })),
+    structures: state.structures.map((structure) => {
+      const shelter = isShelterStructure(structure) ? structure : null;
+      const occupancy = shelter
+        ? shelterOccupancy(state, shelter.id)
+        : { reserved: 0, resting: 0, members: 0, guests: 0 };
+      return {
+        id: structure.id,
+        kind: structure.kind,
+        tileIndex: structure.tileIndex,
+        groupId: structure.groupId,
+        progress: structure.progress,
+        workRequired: structure.workRequired,
+        food: structure.inventory.food,
+        material: structure.material,
+        storedMaterial: structure.inventory.material,
+        storageCapacity: structure.inventory.capacity,
+        materialRequired: structure.materialRequired,
+        water: structure.inventory.water,
+        guardIds: [...structure.guardIds],
+        condition: shelter?.condition ?? null,
+        baseCapacity: shelter?.baseCapacity ?? null,
+        effectiveCapacity:
+          shelter?.kind === "SHELTER" ? effectiveShelterCapacity(shelter) : null,
+        reservedSpaces: occupancy.reserved,
+        restingCreatures: occupancy.resting,
+        memberOccupancy: occupancy.members,
+        guestOccupancy: occupancy.guests,
+        upkeepNeeded:
+          shelter?.kind === "SHELTER" && shelter.condition < SHELTER_MAINTENANCE_THRESHOLD,
+        siteAssessment: shelter ? { ...shelter.siteAssessment } : null,
+        builtFromShelterId: shelter?.builtFromShelterId ?? null,
+      };
+    }),
     groups: state.groups.map((group) => ({
       ...group,
       memberIds: [...group.memberIds],

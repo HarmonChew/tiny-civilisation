@@ -11,11 +11,14 @@ import type {
   CandidateView,
   CreatureView,
   EntityId,
+  GroupView,
   MemoryView,
   RelationshipView,
+  StructureView,
   TimelineEventView,
   WorldView,
 } from "../model";
+import type { WorldRef } from "../focus";
 import { ticksPerSecond } from "../sim-adapter";
 import { IconButton, Meter, SectionTitle, formatScore, humanize, tickLabel } from "./ui";
 
@@ -146,7 +149,7 @@ function RelationshipLine({
   );
 }
 
-export function InspectorPanel({
+function CreatureNotebook({
   creature,
   view,
   evidenceEvent,
@@ -258,6 +261,66 @@ export function InspectorPanel({
             <p>No reachable potable source.</p>
           )}
         </div>
+        <div className="subject-summary" aria-label={`${creature.name} shelter access`}>
+          <span className="eyebrow">Rest destination</span>
+          {creature.shelterAccess ? (
+            <dl>
+              <div>
+                <dt>Destination</dt>
+                <dd>
+                  {creature.shelterAccess.destination === "SHELTERED"
+                    ? creature.shelterAccess.shelterId === null
+                      ? "Sheltered rest (site identity unavailable)"
+                      : `Shelter ${creature.shelterAccess.shelterId}`
+                    : creature.shelterAccess.destination === "OUTDOOR"
+                      ? "Outdoor rest selected"
+                      : "No rest destination"}
+                </dd>
+              </div>
+              <div>
+                <dt>Eligibility</dt>
+                <dd>
+                  {creature.shelterAccess.eligibility === null
+                    ? "No shelter evaluated"
+                    : humanize(creature.shelterAccess.eligibility)}
+                </dd>
+              </div>
+              <div>
+                <dt>Access</dt>
+                <dd>
+                  {creature.shelterAccess.weightedCost === null
+                    ? "No reachable eligible shelter route"
+                    : `${creature.shelterAccess.weightedCost} move-cost units`}
+                  ; {creature.shelterAccess.reservedSpaces}/
+                  {creature.shelterAccess.effectiveCapacity} spaces reserved
+                </dd>
+              </div>
+              <div>
+                <dt>Condition</dt>
+                <dd>
+                  {creature.shelterAccess.condition === null
+                    ? "Not applicable to outdoor rest"
+                    : `${Math.round(creature.shelterAccess.condition)} percent`}
+                </dd>
+              </div>
+              <div>
+                <dt>Why</dt>
+                <dd>{creature.shelterAccess.reason}</dd>
+              </div>
+            </dl>
+          ) : (
+            <p>
+              {creature.action === "REST" ? (
+                <>
+                  <strong>Outdoor rest selected.</strong> {creature.summary.reason} No
+                  reachable eligible communal shelter is recorded, so recovery is weaker.
+                </>
+              ) : (
+                "No current rest destination and no reachable eligible communal shelter. Outdoor rest remains the weaker fallback if fatigue presses."
+              )}
+            </p>
+          )}
+        </div>
       </section>
 
       <section className="inspector-section" aria-labelledby="intentions-heading">
@@ -357,5 +420,541 @@ export function InspectorPanel({
         )}
       </section>
     </div>
+  );
+}
+
+function LinkedEvidence({
+  events,
+  onInspectEvent,
+}: {
+  events: readonly TimelineEventView[];
+  onInspectEvent?: ((event: TimelineEventView) => void) | undefined;
+}) {
+  return (
+    <section className="inspector-section" aria-labelledby="subject-evidence-heading">
+      <SectionTitle icon={BookOpen} annotation={`${events.length} linked`}>
+        <span id="subject-evidence-heading">Linked observations</span>
+      </SectionTitle>
+      {events.length === 0 ? (
+        <p className="empty-copy">No retained settlement observation links here yet.</p>
+      ) : (
+        <ol className="subject-evidence-list">
+          {events.slice(0, 8).map((event) => (
+            <li key={event.id}>
+              <button type="button" onClick={() => onInspectEvent?.(event)}>
+                <span>{tickLabel(event.tick)}</span>
+                <strong>{event.title}</strong>
+                <small>{event.detail}</small>
+              </button>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function GroupNotebook({
+  group,
+  view,
+  onSelect,
+  onSelectSubject,
+  onInspectEvent,
+}: {
+  group: GroupView;
+  view: WorldView;
+  onSelect: (id: EntityId) => void;
+  onSelectSubject?: ((ref: WorldRef) => void) | undefined;
+  onInspectEvent?: ((event: TimelineEventView) => void) | undefined;
+}) {
+  const leader = view.creatures.find((creature) => creature.id === group.leaderId);
+  const members = group.memberIds
+    .map((id) => view.creatures.find((creature) => creature.id === id))
+    .filter((creature): creature is CreatureView => creature !== undefined);
+  const activeShelter = view.structures.find(
+    (structure) => structure.id === group.activeShelterId,
+  );
+  const pendingShelter = view.structures.find(
+    (structure) => structure.id === group.pendingShelterId,
+  );
+  const linkedEvents = view.events.filter(
+    (event) =>
+      /SHELTER|SETTLEMENT|GROUP|STORAGE|FOUNDED|RELOCAT|ABANDON/i.test(event.type) &&
+      ((event.groupIds ?? []).includes(group.id) ||
+        event.targetIds.some((id) =>
+          view.structures.some(
+            (structure) => structure.id === id && structure.groupId === group.id,
+          ),
+        ) ||
+        event.actorIds.some((id) => group.memberIds.includes(id))),
+  );
+  return (
+    <div className="inspector-scroll">
+      <section className="subject-header" aria-labelledby="subject-heading">
+        <div className="subject-header__top">
+          <div className="subject-avatar subject-avatar--group" aria-hidden="true">
+            <UsersRound size={19} />
+          </div>
+          <div>
+            <span className="eyebrow">
+              {group.stage === "PERSISTENT" ? "Persistent group" : "Group subject"}
+            </span>
+            <h2 id="subject-heading">{group.name}</h2>
+          </div>
+        </div>
+        <div className="subject-summary" aria-label={`${group.name} settlement summary`}>
+          <span className="eyebrow">Settlement state</span>
+          <dl>
+            <div>
+              <dt>Members</dt>
+              <dd>
+                {group.memberIds.length}
+                {leader ? `; ${leader.name} leads` : "; no current leader"}
+              </dd>
+            </div>
+            <div>
+              <dt>Cohesion</dt>
+              <dd>{Math.round(group.cohesion)} percent</dd>
+            </div>
+            <div>
+              <dt>Home</dt>
+              <dd>
+                {activeShelter
+                  ? `Shelter ${activeShelter.id} at ${Math.round(activeShelter.condition ?? 0)} percent condition`
+                  : pendingShelter
+                    ? `Site ${pendingShelter.id}, ${Math.round(pendingShelter.progress)} percent built`
+                    : "No communal shelter"}
+              </dd>
+            </div>
+            <div>
+              <dt>Relocation</dt>
+              <dd>
+                {group.activeShelterId === undefined
+                  ? "No active home to relocate"
+                  : `${group.shelterRelocations ?? 0} of 1 used${
+                      (group.shelterCommitUntilTick ?? 0) > view.tick
+                        ? `; committed through tick ${group.shelterCommitUntilTick}`
+                        : "; eligible for reevaluation"
+                    }`}
+              </dd>
+            </div>
+            {group.shelterRelocationCandidate ? (
+              <div>
+                <dt>Alternative under review</dt>
+                <dd>
+                  Tile {group.shelterRelocationCandidate.tileIndex}; better by{" "}
+                  {group.shelterRelocationCandidate.scoreImprovement} score units across{" "}
+                  {group.shelterRelocationCandidate.consecutiveEvaluations} repeated
+                  evaluations
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </div>
+      </section>
+      <section className="inspector-section" aria-labelledby="group-homes-heading">
+        <SectionTitle icon={Route} annotation="active and pending">
+          <span id="group-homes-heading">Communal shelter</span>
+        </SectionTitle>
+        <div className="subject-link-list">
+          {activeShelter ? (
+            <button
+              type="button"
+              onClick={() => onSelectSubject?.({ kind: "structure", id: activeShelter.id })}
+            >
+              <strong>Active shelter {activeShelter.id}</strong>
+              <span>
+                {activeShelter.restingCreatures ?? 0} resting;{" "}
+                {activeShelter.reservedSpaces ?? 0}/{activeShelter.effectiveCapacity ?? 0}{" "}
+                spaces reserved
+              </span>
+            </button>
+          ) : null}
+          {pendingShelter ? (
+            <button
+              type="button"
+              onClick={() =>
+                onSelectSubject?.({ kind: "structure", id: pendingShelter.id })
+              }
+            >
+              <strong>Pending site {pendingShelter.id}</strong>
+              <span>{Math.round(pendingShelter.progress)} percent built</span>
+            </button>
+          ) : null}
+          {!activeShelter && !pendingShelter ? (
+            <p className="empty-copy">
+              Persistent groups begin shelter planning only after completing shared storage.
+            </p>
+          ) : null}
+        </div>
+      </section>
+      <section className="inspector-section" aria-labelledby="group-members-heading">
+        <SectionTitle icon={UsersRound} annotation={`${members.length} living or retained`}>
+          <span id="group-members-heading">Members</span>
+        </SectionTitle>
+        <div className="subject-link-list">
+          {members.map((member) => (
+            <button type="button" key={member.id} onClick={() => onSelect(member.id)}>
+              <strong>{member.name}</strong>
+              <span>
+                {member.role} · {humanize(member.action)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+      <LinkedEvidence events={linkedEvents} onInspectEvent={onInspectEvent} />
+    </div>
+  );
+}
+
+function StructureNotebook({
+  structure,
+  view,
+  onSelectSubject,
+  onInspectEvent,
+}: {
+  structure: StructureView;
+  view: WorldView;
+  onSelectSubject?: ((ref: WorldRef) => void) | undefined;
+  onInspectEvent?: ((event: TimelineEventView) => void) | undefined;
+}) {
+  const group = view.groups.find((candidate) => candidate.id === structure.groupId);
+  const isActiveShelter = structure.kind === "SHELTER";
+  const isAbandonedShelter = structure.kind === "ABANDONED_SHELTER";
+  const isStorage = structure.kind === "STORAGE" || structure.kind === "STORAGE_SITE";
+  const isConstructionSite =
+    structure.kind === "STORAGE_SITE" || structure.kind === "SHELTER_SITE";
+  const tileIndex = Math.floor(structure.y) * view.width + Math.floor(structure.x);
+  const state =
+    structure.kind === "SHELTER_SITE"
+      ? "Site under construction"
+      : structure.kind === "ABANDONED_SHELTER"
+        ? "Abandoned former home"
+        : structure.kind === "SHELTER"
+          ? structure.upkeepNeeded
+            ? "Active; upkeep needed"
+            : "Active communal shelter"
+          : structure.progress >= 99
+            ? "Complete shared storage"
+            : "Storage under construction";
+  const linkedEvents = view.events.filter(
+    (event) =>
+      event.targetIds.includes(structure.id) ||
+      (event.locationTileIndex === tileIndex &&
+        /SHELTER|SETTLEMENT|STORAGE|RELOCAT|ABANDON/i.test(event.type)),
+  );
+  return (
+    <div className="inspector-scroll">
+      <section className="subject-header" aria-labelledby="subject-heading">
+        <div className="subject-header__top">
+          <div className="subject-avatar subject-avatar--structure" aria-hidden="true">
+            <PackageOpen size={19} />
+          </div>
+          <div>
+            <span className="eyebrow">Structure notebook</span>
+            <h2 id="subject-heading">{humanize(structure.kind)}</h2>
+          </div>
+        </div>
+        <div className="subject-summary" aria-label={`${humanize(structure.kind)} state`}>
+          <span className="eyebrow">Observed state</span>
+          <dl>
+            <div>
+              <dt>Status</dt>
+              <dd>{state}</dd>
+            </div>
+            <div>
+              <dt>Position</dt>
+              <dd>
+                Column {structure.x}, row {structure.y}
+              </dd>
+            </div>
+            <div>
+              <dt>Group</dt>
+              <dd>
+                {group ? (
+                  <button
+                    type="button"
+                    className="inline-subject-link"
+                    onClick={() => onSelectSubject?.({ kind: "group", id: group.id })}
+                  >
+                    {group.name}
+                  </button>
+                ) : (
+                  "No linked group"
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Progress</dt>
+              <dd>{Math.round(structure.progress)} percent</dd>
+            </div>
+            {structure.builtFromShelterId !== undefined ? (
+              <div>
+                <dt>Replaced former home</dt>
+                <dd>
+                  <button
+                    type="button"
+                    className="inline-subject-link"
+                    onClick={() =>
+                      onSelectSubject?.({
+                        kind: "structure",
+                        id: structure.builtFromShelterId!,
+                      })
+                    }
+                  >
+                    Shelter {structure.builtFromShelterId}
+                  </button>
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </div>
+        {isActiveShelter ? (
+          <div className="vitals-grid">
+            <Meter label="Condition" value={structure.condition ?? 0} tone="gold" />
+            <Meter
+              label="Reserved"
+              value={
+                (100 * (structure.reservedSpaces ?? 0)) /
+                Math.max(1, structure.effectiveCapacity ?? 1)
+              }
+              tone="water"
+            />
+          </div>
+        ) : null}
+      </section>
+      {isActiveShelter ? (
+        <section className="inspector-section" aria-labelledby="shelter-capacity-heading">
+          <SectionTitle
+            icon={UsersRound}
+            annotation={structure.upkeepNeeded ? "upkeep due" : "live"}
+          >
+            <span id="shelter-capacity-heading">Use and upkeep</span>
+          </SectionTitle>
+          <dl className="settlement-facts">
+            <div>
+              <dt>Usable spaces</dt>
+              <dd>
+                {structure.effectiveCapacity ?? 0} of {structure.baseCapacity ?? 0}
+              </dd>
+            </div>
+            <div>
+              <dt>Reserved / resting</dt>
+              <dd>
+                {structure.reservedSpaces ?? 0} / {structure.restingCreatures ?? 0}
+              </dd>
+            </div>
+            <div>
+              <dt>Inside now</dt>
+              <dd>
+                {structure.memberOccupancy ?? 0} members; {structure.guestOccupancy ?? 0}{" "}
+                guests
+              </dd>
+            </div>
+            <div>
+              <dt>Upkeep</dt>
+              <dd>
+                {structure.upkeepNeeded ? "Material maintenance needed" : "No upkeep due"}
+              </dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
+      {isStorage ? (
+        <section className="inspector-section" aria-labelledby="storage-contents-heading">
+          <SectionTitle
+            icon={PackageOpen}
+            annotation={
+              structure.kind === "STORAGE" ? "shared inventory" : "site inventory"
+            }
+          >
+            <span id="storage-contents-heading">Stored provisions</span>
+          </SectionTitle>
+          <dl className="settlement-facts">
+            <div>
+              <dt>Food stored</dt>
+              <dd>{structure.stored} units</dd>
+            </div>
+            <div>
+              <dt>Material stored</dt>
+              <dd>{structure.storedMaterial ?? 0} units</dd>
+            </div>
+            <div className="settlement-facts__total">
+              <dt>Shared capacity</dt>
+              <dd>
+                {structure.stored + (structure.storedMaterial ?? 0)} of {structure.capacity}{" "}
+                units used
+              </dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
+      {isConstructionSite ? (
+        <section
+          className="inspector-section"
+          aria-labelledby="construction-inputs-heading"
+        >
+          <SectionTitle icon={PackageOpen} annotation="physical progress">
+            <span id="construction-inputs-heading">Construction inputs</span>
+          </SectionTitle>
+          <dl className="settlement-facts">
+            <div>
+              <dt>Material deposited</dt>
+              <dd>
+                {structure.materialDeposited ?? 0} of {structure.materialRequired ?? 0}{" "}
+                units
+              </dd>
+            </div>
+            <div>
+              <dt>Work progress</dt>
+              <dd>{Math.round(structure.progress)} percent</dd>
+            </div>
+            <div className="settlement-facts__total">
+              <dt>Work target</dt>
+              <dd>{structure.workRequired ?? 0} work units</dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
+      {isAbandonedShelter ? (
+        <section className="inspector-section" aria-labelledby="former-home-heading">
+          <SectionTitle icon={PackageOpen} annotation="retained evidence">
+            <span id="former-home-heading">Former home record</span>
+          </SectionTitle>
+          <dl className="settlement-facts">
+            <div>
+              <dt>Final condition</dt>
+              <dd>{Math.round(structure.condition ?? 0)} percent</dd>
+            </div>
+            <div>
+              <dt>Original rest footprint</dt>
+              <dd>{structure.baseCapacity ?? 0} spaces</dd>
+            </div>
+            <div className="settlement-facts__total">
+              <dt>Use now</dt>
+              <dd>Inspectable history only; no rest or upkeep claims</dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
+      {structure.siteAssessment ? (
+        <section className="inspector-section" aria-labelledby="site-rationale-heading">
+          <SectionTitle
+            icon={Route}
+            annotation={`chosen at ${tickLabel(structure.siteAssessment.selectedAtTick)}`}
+          >
+            <span id="site-rationale-heading">Why this site</span>
+          </SectionTitle>
+          <p className="empty-copy">
+            Lower total scores are preferred; each retained cost records what the leader
+            compared.
+          </p>
+          <dl className="settlement-facts settlement-facts--site">
+            <div>
+              <dt>Member travel</dt>
+              <dd>{structure.siteAssessment.memberTravelCost} cost</dd>
+            </div>
+            <div>
+              <dt>Store access</dt>
+              <dd>{structure.siteAssessment.storageTravelCost} cost</dd>
+            </div>
+            <div>
+              <dt>Food access</dt>
+              <dd>{structure.siteAssessment.foodAccessCost} cost</dd>
+            </div>
+            <div>
+              <dt>Material access</dt>
+              <dd>{structure.siteAssessment.materialAccessCost} cost</dd>
+            </div>
+            <div>
+              <dt>Water access</dt>
+              <dd>{structure.siteAssessment.waterAccessCost} cost</dd>
+            </div>
+            <div>
+              <dt>Crowding</dt>
+              <dd>{structure.siteAssessment.crowdingCost} cost</dd>
+            </div>
+            <div>
+              <dt>Construction</dt>
+              <dd>{structure.siteAssessment.constructionInvestmentCost} cost</dd>
+            </div>
+            <div>
+              <dt>Relocation change</dt>
+              <dd>{structure.siteAssessment.relocationChangeCost} cost</dd>
+            </div>
+            <div className="settlement-facts__total">
+              <dt>Total score</dt>
+              <dd>{structure.siteAssessment.totalScore} (lower is better)</dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
+      <LinkedEvidence events={linkedEvents} onInspectEvent={onInspectEvent} />
+    </div>
+  );
+}
+
+export function InspectorPanel({
+  creature,
+  subjectRef,
+  view,
+  evidenceEvent,
+  followed,
+  onFollow,
+  onSelect,
+  onSelectSubject,
+  onInspectEvent,
+}: {
+  creature: CreatureView | null;
+  subjectRef?: WorldRef | null | undefined;
+  view: WorldView;
+  evidenceEvent: TimelineEventView | null;
+  followed: boolean;
+  onFollow: () => void;
+  onSelect: (id: EntityId) => void;
+  onSelectSubject?: ((ref: WorldRef) => void) | undefined;
+  onInspectEvent?: ((event: TimelineEventView) => void) | undefined;
+}) {
+  if (subjectRef?.kind === "group") {
+    const group = view.groups.find((candidate) => candidate.id === subjectRef.id);
+    if (group) {
+      return (
+        <GroupNotebook
+          group={group}
+          view={view}
+          onSelect={onSelect}
+          onSelectSubject={onSelectSubject}
+          onInspectEvent={onInspectEvent}
+        />
+      );
+    }
+  }
+  if (subjectRef?.kind === "structure") {
+    const structure = view.structures.find((candidate) => candidate.id === subjectRef.id);
+    if (structure) {
+      return (
+        <StructureNotebook
+          structure={structure}
+          view={view}
+          onSelectSubject={onSelectSubject}
+          onInspectEvent={onInspectEvent}
+        />
+      );
+    }
+  }
+  const selectedCreature =
+    subjectRef?.kind === "creature"
+      ? (view.creatures.find((candidate) => candidate.id === subjectRef.id) ?? null)
+      : creature;
+  return (
+    <CreatureNotebook
+      creature={selectedCreature}
+      view={view}
+      evidenceEvent={evidenceEvent}
+      followed={followed}
+      onFollow={onFollow}
+      onSelect={onSelect}
+    />
   );
 }

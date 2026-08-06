@@ -8,6 +8,7 @@ import type {
   WorldAction,
   WorldView,
 } from "../model";
+import type { WorldRef } from "../focus";
 import {
   captureCameraViewport,
   frameReplayCamera,
@@ -24,6 +25,7 @@ import { createRenderLayers, type PixiRuntime } from "./pixi/runtime";
 interface PixiWorldProps {
   view: WorldView;
   selectedId: EntityId | null;
+  selectedRef?: WorldRef | null;
   focusedId: EntityId | null;
   followedId: EntityId | null;
   tool: InterventionTool;
@@ -31,6 +33,7 @@ interface PixiWorldProps {
   mutationDisabled?: boolean;
   replayCamera?: ReplayCameraTarget | null;
   onSelect: (id: EntityId | null) => void;
+  onSelectSubject?: ((ref: WorldRef | null) => void) | undefined;
   onHover: (id: EntityId | null) => void;
   onWorldAction: (action: WorldAction) => void;
 }
@@ -52,6 +55,7 @@ interface ReplayCameraSession {
 export function PixiWorld({
   view,
   selectedId,
+  selectedRef = selectedId === null ? null : { kind: "creature", id: selectedId },
   focusedId,
   followedId,
   tool,
@@ -59,6 +63,7 @@ export function PixiWorld({
   mutationDisabled = false,
   replayCamera = null,
   onSelect,
+  onSelectSubject,
   onHover,
   onWorldAction,
 }: PixiWorldProps) {
@@ -70,12 +75,14 @@ export function PixiWorld({
   const propsRef = useRef({
     view,
     selectedId,
+    selectedRef,
     focusedId,
     followedId,
     tool,
     overlays,
     replayCamera,
     onSelect,
+    onSelectSubject,
     onHover,
     onWorldAction,
   });
@@ -85,12 +92,14 @@ export function PixiWorld({
   propsRef.current = {
     view,
     selectedId,
+    selectedRef,
     focusedId,
     followedId,
     tool,
     overlays,
     replayCamera,
     onSelect,
+    onSelectSubject,
     onHover,
     onWorldAction,
   };
@@ -178,6 +187,9 @@ export function PixiWorld({
           propsRef.current.followedId,
           propsRef.current.focusedId,
           propsRef.current.overlays,
+          propsRef.current.selectedRef?.kind === "structure"
+            ? propsRef.current.selectedRef.id
+            : null,
         );
         updateCamera(runtime, propsRef.current.replayCamera, propsRef.current.followedId);
 
@@ -214,9 +226,25 @@ export function PixiWorld({
     const runtime = runtimeRef.current;
     if (!runtime) return;
     runtime.view = view;
-    drawWorld(runtime, selectedId, followedId, focusedId, overlays);
+    drawWorld(
+      runtime,
+      selectedId,
+      followedId,
+      focusedId,
+      overlays,
+      selectedRef?.kind === "structure" ? selectedRef.id : null,
+    );
     updateCamera(runtime, replayCamera, followedId);
-  }, [view, selectedId, followedId, focusedId, overlays, replayCamera, updateCamera]);
+  }, [
+    view,
+    selectedId,
+    selectedRef,
+    followedId,
+    focusedId,
+    overlays,
+    replayCamera,
+    updateCamera,
+  ]);
 
   useEffect(() => {
     if (!replayCamera) return;
@@ -327,7 +355,27 @@ export function PixiWorld({
         distance: Math.hypot(creature.x - point.x, creature.y - point.y),
       }))
       .sort((a, b) => a.distance - b.distance || a.id - b.id)[0];
-    onSelect(nearest && nearest.distance <= 0.9 ? nearest.id : null);
+    const nearestStructure = runtime.view.structures
+      .map((structure) => ({
+        id: structure.id,
+        distance: Math.hypot(structure.x + 0.5 - point.x, structure.y + 0.5 - point.y),
+      }))
+      .sort((left, right) => left.distance - right.distance || left.id - right.id)[0];
+    const directStructureHit =
+      nearestStructure !== undefined &&
+      nearestStructure.distance <= 0.65 &&
+      (nearest === undefined ||
+        nearest.distance > 0.9 ||
+        nearestStructure.distance + 0.2 < nearest.distance);
+    if (directStructureHit && onSelectSubject) {
+      onSelectSubject({ kind: "structure", id: nearestStructure.id });
+      return;
+    }
+    if (nearest && nearest.distance <= 0.9) {
+      onSelect(nearest.id);
+      return;
+    }
+    onSelect(null);
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -397,7 +445,7 @@ export function PixiWorld({
       aria-label={
         replayCamera
           ? "Living dish replay frame. Camera controls are locked until you return to the live world."
-          : "Living dish map. Click a creature to inspect it. Drag to pan, use the mouse wheel to zoom, or use arrow and plus or minus keys."
+          : "Living dish map. Click a creature or structure to inspect it. Drag to pan, use the mouse wheel to zoom, or use arrow and plus or minus keys."
       }
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

@@ -1,5 +1,14 @@
 import { SCENARIO_IDS, type ScenarioId } from "@tiny-civ/sim-core";
 
+import {
+  PHASE_4_2_BAND_FREEZE_STATUS,
+  PHASE_4_2_CALIBRATION_STATUS,
+  PHASE_4_2_HOLDOUT_POLICY,
+  PHASE_4_2_MATRIX_TICKS,
+  type PHASE_4_2_CALIBRATION_DISCOVERY_OUTPUT_PATH,
+  type Phase42HoldoutPolicy,
+} from "./phase-4.2-corpora.js";
+
 export const PHASE_4_1_CALIBRATION_ARTIFACT =
   "docs/baselines/phase-4.1-calibration-v1.json.gz" as const;
 export const PHASE_4_1_CALIBRATION_SHA256 =
@@ -120,7 +129,16 @@ export type ScenarioOutcomeLabelId =
   | "SOURCE_BOTTLENECK"
   | "PERSISTENT_DEHYDRATION"
   | "CONCENTRATED_WATER_ROUTES"
+  | "ESTABLISHED_SETTLEMENT"
+  | "CHRONIC_SHELTER_NEGLECT"
+  | "SHELTER_CROWDING"
+  | "GUEST_SHELTERING"
+  | "SETTLEMENT_RELOCATION"
   | "QUIET_STALEMATE";
+
+/** Candidate classifier-v3 rules. Freeze them only after the Phase 4.2 calibration review. */
+export const SETTLEMENT_NEGLECT_MINIMUM_ACTIVE_SHELTER_TICKS = 1_000 as const;
+export const SETTLEMENT_NEGLECT_LOW_CONDITION_RATE = 0.5 as const;
 
 export const SCENARIO_OUTCOME_BAND_TABLE_VERSION = 1 as const;
 export const SCENARIO_OUTCOME_MINIMUM_OCCURRENCES = 8 as const;
@@ -132,9 +150,10 @@ export interface ScenarioOutcomeIncidenceBandDefinition {
   readonly labelId: ScenarioOutcomeLabelId;
   readonly metricPath: string;
   readonly comparison: "GTE";
-  readonly threshold: typeof SCENARIO_OUTCOME_MINIMUM_OCCURRENCES;
+  /** Reviewed occurrence floor for this scenario/label pair. */
+  readonly threshold: number;
   readonly requiredEligibleRuns: typeof PHASE_4_1_CALIBRATION_SEED_COUNT;
-  readonly provenance: FrozenCalibrationProvenance;
+  readonly provenance: CalibrationProvenance;
 }
 
 export interface FrozenCalibrationProvenance {
@@ -148,6 +167,41 @@ export interface FrozenCalibrationProvenance {
   readonly releaseClaim: false;
 }
 
+export interface Phase42CalibrationProvenance {
+  readonly basis:
+    "PHASE_4_2_DISCOVERY_CALIBRATION_CANDIDATE" | "LOCKED_PHASE_4_2_CALIBRATION";
+  readonly artifact: typeof PHASE_4_2_CALIBRATION_DISCOVERY_OUTPUT_PATH;
+  readonly artifactSha256: string | null;
+  readonly freezeReviewArtifact: string;
+  readonly freezeReviewArtifactSha256: string | null;
+  readonly classifierVersion: 3;
+  readonly calibrationSeedCount: typeof PHASE_4_1_CALIBRATION_SEED_COUNT;
+  readonly ticksPerRun: typeof PHASE_4_2_MATRIX_TICKS;
+  readonly calibrationStatus: typeof PHASE_4_2_CALIBRATION_STATUS;
+  readonly bandFreezeStatus: typeof PHASE_4_2_BAND_FREEZE_STATUS;
+  readonly holdoutPolicy:
+    | "SEALED_PENDING_REVIEW"
+    | "SEALED_PENDING_POST_FREEZE_VERIFICATION"
+    | "EVALUATE_UNCHANGED_THRESHOLDS_ONCE";
+  readonly releaseClaim: false;
+}
+
+export interface Phase42VerificationProvenance {
+  readonly basis: "POST_FREEZE_PHASE_4_2_VERIFICATION";
+  readonly artifact: string;
+  readonly artifactSha256: string | null;
+  readonly reviewArtifact: string;
+  readonly reviewArtifactSha256: string | null;
+  readonly classifierVersion: 3;
+  readonly calibrationSeedCount: typeof PHASE_4_1_CALIBRATION_SEED_COUNT;
+  readonly ticksPerRun: typeof PHASE_4_2_MATRIX_TICKS;
+  readonly calibrationStatus: typeof PHASE_4_2_CALIBRATION_STATUS;
+  readonly releaseClaim: false;
+}
+
+export type CalibrationProvenance =
+  FrozenCalibrationProvenance | Phase42CalibrationProvenance;
+
 export const PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE = Object.freeze({
   basis: "LOCKED_PHASE_4_1_CALIBRATION" as const,
   artifact: PHASE_4_1_CALIBRATION_ARTIFACT,
@@ -158,6 +212,48 @@ export const PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE = Object.freeze({
   holdoutPolicy: "EVALUATE_UNCHANGED_THRESHOLDS" as const,
   releaseClaim: false as const,
 }) satisfies FrozenCalibrationProvenance;
+
+export const PHASE_4_2_CALIBRATION_PROVENANCE: Phase42CalibrationProvenance = Object.freeze(
+  {
+    basis:
+      PHASE_4_2_BAND_FREEZE_STATUS === "FROZEN"
+        ? "LOCKED_PHASE_4_2_CALIBRATION"
+        : "PHASE_4_2_DISCOVERY_CALIBRATION_CANDIDATE",
+    artifact: PHASE_4_2_HOLDOUT_POLICY.provenance.discoveryArtifact,
+    artifactSha256: PHASE_4_2_HOLDOUT_POLICY.provenance.discoveryArtifactSha256,
+    freezeReviewArtifact: PHASE_4_2_HOLDOUT_POLICY.provenance.freezeReviewArtifact,
+    freezeReviewArtifactSha256:
+      PHASE_4_2_HOLDOUT_POLICY.provenance.freezeReviewArtifactSha256,
+    classifierVersion: 3,
+    calibrationSeedCount: PHASE_4_1_CALIBRATION_SEED_COUNT,
+    ticksPerRun: PHASE_4_2_MATRIX_TICKS,
+    calibrationStatus: PHASE_4_2_CALIBRATION_STATUS,
+    bandFreezeStatus: PHASE_4_2_BAND_FREEZE_STATUS,
+    holdoutPolicy:
+      PHASE_4_2_BAND_FREEZE_STATUS === "FROZEN" &&
+      PHASE_4_2_CALIBRATION_STATUS === "REVIEWED"
+        ? "EVALUATE_UNCHANGED_THRESHOLDS_ONCE"
+        : PHASE_4_2_BAND_FREEZE_STATUS === "FROZEN"
+          ? "SEALED_PENDING_POST_FREEZE_VERIFICATION"
+          : "SEALED_PENDING_REVIEW",
+    releaseClaim: false,
+  },
+);
+
+export const PHASE_4_2_POST_FREEZE_VERIFICATION_PROVENANCE: Phase42VerificationProvenance =
+  Object.freeze({
+    basis: "POST_FREEZE_PHASE_4_2_VERIFICATION",
+    artifact: PHASE_4_2_HOLDOUT_POLICY.provenance.verificationArtifact,
+    artifactSha256: PHASE_4_2_HOLDOUT_POLICY.provenance.verificationArtifactSha256,
+    reviewArtifact: PHASE_4_2_HOLDOUT_POLICY.provenance.verificationReviewArtifact,
+    reviewArtifactSha256:
+      PHASE_4_2_HOLDOUT_POLICY.provenance.verificationReviewArtifactSha256,
+    classifierVersion: 3,
+    calibrationSeedCount: PHASE_4_1_CALIBRATION_SEED_COUNT,
+    ticksPerRun: PHASE_4_2_MATRIX_TICKS,
+    calibrationStatus: PHASE_4_2_CALIBRATION_STATUS,
+    releaseClaim: false,
+  });
 
 const REQUIRED_OUTCOME_LABELS = Object.freeze({
   "petri-world": Object.freeze(["COOPERATIVE_SHARED_STORAGE", "SHARED_HYDRATION"] as const),
@@ -199,7 +295,7 @@ export interface ScenarioOutcomeDominanceRationaleDefinition {
   readonly rationaleId: string;
   readonly mechanicsAndScenarioBasis: string;
   readonly interpretation: "EXPLAINS_CALIBRATION_PREVALENCE_NOT_A_SCRIPTED_OUTCOME";
-  readonly provenance: FrozenCalibrationProvenance;
+  readonly provenance: CalibrationProvenance;
 }
 
 function rationale(
@@ -276,16 +372,76 @@ export const SCENARIO_OUTCOME_DOMINANCE_RATIONALES: readonly ScenarioOutcomeDomi
     ),
   ]);
 
+/**
+ * The discovery corpus observed an established settlement in 30, 13, 6, and
+ * 3 of 64 runs respectively. These floors are the whole-run lower bounds from
+ * each two-sided 95% Wilson interval (`floor(lower * 64)`, with a minimum of
+ * one when the factual label was observed). That preserves the fixed
+ * classifier rule while giving rarer scenario outcomes an honest, reviewed
+ * band instead of relabelling absence as settlement.
+ */
+export const PHASE_4_2_ESTABLISHED_SETTLEMENT_OCCURRENCE_FLOORS = Object.freeze({
+  "petri-world": 22,
+  "split-banks": 7,
+  "scattered-plenty": 2,
+  "unequal-table": 1,
+} satisfies Record<ScenarioId, number>);
+
+export const PHASE_4_2_SCENARIO_OUTCOME_INCIDENCE_BANDS: readonly ScenarioOutcomeIncidenceBandDefinition[] =
+  Object.freeze(
+    SCENARIO_IDS.map((scenarioId) =>
+      Object.freeze({
+        tableVersion: SCENARIO_OUTCOME_BAND_TABLE_VERSION,
+        scenarioId,
+        labelId: "ESTABLISHED_SETTLEMENT" as const,
+        metricPath: "analysis.outcomes.incidence[ESTABLISHED_SETTLEMENT].occurrences",
+        comparison: "GTE" as const,
+        threshold: PHASE_4_2_ESTABLISHED_SETTLEMENT_OCCURRENCE_FLOORS[scenarioId],
+        requiredEligibleRuns: PHASE_4_1_CALIBRATION_SEED_COUNT,
+        provenance: PHASE_4_2_CALIBRATION_PROVENANCE,
+      }),
+    ),
+  );
+
+/**
+ * Discovery found the same nine >85% incidences already explained by the
+ * declared Phase 4.1 mechanics. They are repeated with Phase 4.2 provenance
+ * because the new corpus is an independent reviewed evidence boundary.
+ */
+export const PHASE_4_2_SCENARIO_OUTCOME_DOMINANCE_RATIONALES: readonly ScenarioOutcomeDominanceRationaleDefinition[] =
+  Object.freeze(
+    SCENARIO_OUTCOME_DOMINANCE_RATIONALES.map((definition) =>
+      Object.freeze({
+        ...definition,
+        rationaleId: `PHASE_4_2_${definition.rationaleId}`,
+        provenance: PHASE_4_2_CALIBRATION_PROVENANCE,
+      }),
+    ),
+  );
+
 export const PAIRED_MACRO_BAND_TABLE_VERSION = 1 as const;
 export const REQUIRED_PASSING_PHASE_3_MACRO_DIMENSIONS = 3 as const;
+export const REQUIRED_PASSING_PHASE_4_2_SETTLEMENT_BANDS = 1 as const;
 
-export type FrozenPhase3MacroDimension = "SOCIAL" | "STORAGE" | "CONFLICT" | "SPATIAL";
+export type FrozenPhase3MacroDimension =
+  "SOCIAL" | "STORAGE" | "CONFLICT" | "SPATIAL" | "SETTLEMENT";
 
 export type FrozenPairedMacroMetricId =
   | "GROUP_COUNT"
   | "STORED_RESOURCE_UNITS"
   | "ATTACK_EVENT_COUNT"
-  | "CREATURE_PAIR_DISTANCE_MEDIAN";
+  | "CREATURE_PAIR_DISTANCE_MEDIAN"
+  | "ACTIVE_SHELTER_COUNT"
+  | "SHELTERED_REST_SHARE"
+  | "MEAN_SHELTER_CONDITION"
+  | "SHELTER_GUEST_USE_EVENTS"
+  | "SETTLEMENT_RELOCATION_COUNT";
+
+export type PairedMacroMissingValuePolicy =
+  "ZERO_IS_OBSERVED" | "EXCLUDE_PAIR_IF_EITHER_VALUE_MISSING";
+
+export type PairedMacroEligiblePairPolicy =
+  "ALL_LOCKED_SEEDS" | "AT_LEAST_THRESHOLD_AFTER_MISSING_EXCLUSION";
 
 export interface PairedMacroBandDefinition {
   readonly tableVersion: typeof PAIRED_MACRO_BAND_TABLE_VERSION;
@@ -298,16 +454,27 @@ export interface PairedMacroBandDefinition {
   readonly minimumAbsoluteMeanDelta: number;
   readonly effectStatistic: "ABSOLUTE_COHEN_DZ";
   readonly minimumAbsoluteCohenDz: number;
-  readonly requiredPairedSeeds: typeof PHASE_4_1_CALIBRATION_SEED_COUNT;
-  readonly provenance: FrozenCalibrationProvenance;
+  /**
+   * Exact cardinality for ALL_LOCKED_SEEDS, or a frozen minimum when the
+   * metric's declared missing-value policy excludes an otherwise valid pair.
+   */
+  readonly requiredPairedSeeds: number;
+  readonly missingValuePolicy: PairedMacroMissingValuePolicy;
+  readonly eligiblePairPolicy: PairedMacroEligiblePairPolicy;
+  readonly provenance: CalibrationProvenance;
 }
 
 function pairedBand(
-  definition: Omit<PairedMacroBandDefinition, "tableVersion" | "provenance">,
+  definition: Omit<
+    PairedMacroBandDefinition,
+    "tableVersion" | "provenance" | "missingValuePolicy" | "eligiblePairPolicy"
+  >,
 ): PairedMacroBandDefinition {
   return Object.freeze({
     ...definition,
     tableVersion: PAIRED_MACRO_BAND_TABLE_VERSION,
+    missingValuePolicy: "ZERO_IS_OBSERVED" as const,
+    eligiblePairPolicy: "ALL_LOCKED_SEEDS" as const,
     provenance: PHASE_4_1_FROZEN_CALIBRATION_PROVENANCE,
   });
 }
@@ -363,3 +530,176 @@ export const PAIRED_MACRO_BANDS: readonly PairedMacroBandDefinition[] = Object.f
     requiredPairedSeeds: PHASE_4_1_CALIBRATION_SEED_COUNT,
   }),
 ]);
+
+/**
+ * Discovery measured a Petri World -> Unequal Table active-shelter mean delta
+ * of -0.421875 and paired Cohen dz of -0.756174. The frozen minima leave
+ * material margin below both observed magnitudes while retaining all 64
+ * paired seeds and the declared right-minus-left orientation.
+ */
+export const PHASE_4_2_PAIRED_MACRO_BANDS: readonly PairedMacroBandDefinition[] =
+  Object.freeze([
+    Object.freeze({
+      tableVersion: PAIRED_MACRO_BAND_TABLE_VERSION,
+      dimension: "SETTLEMENT",
+      leftScenarioId: "petri-world",
+      rightScenarioId: "unequal-table",
+      metricId: "ACTIVE_SHELTER_COUNT",
+      metricPath: "pairedComparisons[petri-world->unequal-table].ACTIVE_SHELTER_COUNT",
+      deltaStatistic: "ABSOLUTE_PAIRED_MEAN_RIGHT_MINUS_LEFT",
+      minimumAbsoluteMeanDelta: 0.25,
+      effectStatistic: "ABSOLUTE_COHEN_DZ",
+      minimumAbsoluteCohenDz: 0.5,
+      requiredPairedSeeds: PHASE_4_1_CALIBRATION_SEED_COUNT,
+      missingValuePolicy: "ZERO_IS_OBSERVED",
+      eligiblePairPolicy: "ALL_LOCKED_SEEDS",
+      provenance: PHASE_4_2_CALIBRATION_PROVENANCE,
+    }),
+  ]);
+
+export interface Phase42FrozenDefinitionSet {
+  readonly policy?: Phase42HoldoutPolicy;
+  readonly incidenceBands?: readonly ScenarioOutcomeIncidenceBandDefinition[];
+  readonly dominanceRationales?: readonly ScenarioOutcomeDominanceRationaleDefinition[];
+  readonly pairedMacroBands?: readonly PairedMacroBandDefinition[];
+  readonly currentDefinitionFingerprint?: string;
+}
+
+function isSha256(value: string | null): value is string {
+  return value !== null && /^[0-9a-f]{64}$/u.test(value);
+}
+
+function hasFrozenPhase42Provenance(
+  provenance: CalibrationProvenance,
+  policy: Phase42HoldoutPolicy,
+): boolean {
+  return (
+    provenance.basis === "LOCKED_PHASE_4_2_CALIBRATION" &&
+    provenance.artifact === policy.provenance.discoveryArtifact &&
+    provenance.artifactSha256 === policy.provenance.discoveryArtifactSha256 &&
+    provenance.freezeReviewArtifact === policy.provenance.freezeReviewArtifact &&
+    provenance.freezeReviewArtifactSha256 ===
+      policy.provenance.freezeReviewArtifactSha256 &&
+    provenance.classifierVersion === 3 &&
+    provenance.calibrationSeedCount === PHASE_4_1_CALIBRATION_SEED_COUNT &&
+    provenance.ticksPerRun === PHASE_4_2_MATRIX_TICKS &&
+    provenance.calibrationStatus === policy.calibrationStatus &&
+    provenance.bandFreezeStatus === policy.bandFreezeStatus
+  );
+}
+
+function uniqueBy<T>(values: readonly T[], key: (value: T) => string): boolean {
+  return new Set(values.map(key)).size === values.length;
+}
+
+function phase42PairDefinitionIsValid(
+  definition: PairedMacroBandDefinition,
+  policy: Phase42HoldoutPolicy,
+): boolean {
+  const thresholdValid =
+    Number.isInteger(definition.requiredPairedSeeds) &&
+    definition.requiredPairedSeeds >= 1 &&
+    definition.requiredPairedSeeds <= PHASE_4_1_CALIBRATION_SEED_COUNT;
+  if (
+    definition.dimension !== "SETTLEMENT" ||
+    !thresholdValid ||
+    !hasFrozenPhase42Provenance(definition.provenance, policy)
+  ) {
+    return false;
+  }
+  if (definition.metricId === "MEAN_SHELTER_CONDITION") {
+    return (
+      definition.missingValuePolicy === "EXCLUDE_PAIR_IF_EITHER_VALUE_MISSING" &&
+      definition.eligiblePairPolicy === "AT_LEAST_THRESHOLD_AFTER_MISSING_EXCLUSION"
+    );
+  }
+  return (
+    definition.missingValuePolicy === "ZERO_IS_OBSERVED" &&
+    definition.eligiblePairPolicy === "ALL_LOCKED_SEEDS" &&
+    definition.requiredPairedSeeds === PHASE_4_1_CALIBRATION_SEED_COUNT
+  );
+}
+
+/**
+ * Validates the checked-in definition set independently of post-freeze
+ * verification status so the v2 calibration can evaluate the frozen rules.
+ */
+export function phase42DefinitionsAreFrozen(
+  definitions: Phase42FrozenDefinitionSet = {},
+): boolean {
+  const policy = definitions.policy ?? PHASE_4_2_HOLDOUT_POLICY;
+  const incidenceBands =
+    definitions.incidenceBands ?? PHASE_4_2_SCENARIO_OUTCOME_INCIDENCE_BANDS;
+  const dominanceRationales =
+    definitions.dominanceRationales ?? PHASE_4_2_SCENARIO_OUTCOME_DOMINANCE_RATIONALES;
+  const pairedMacroBands = definitions.pairedMacroBands ?? PHASE_4_2_PAIRED_MACRO_BANDS;
+  const currentDefinitionFingerprint = definitions.currentDefinitionFingerprint;
+  const discoverySha = policy.provenance.discoveryArtifactSha256;
+  const freezeReviewSha = policy.provenance.freezeReviewArtifactSha256;
+  return (
+    policy.bandFreezeStatus === "FROZEN" &&
+    policy.calibrationStatus !== "NOT_RUN" &&
+    isSha256(policy.frozenDefinitionFingerprint) &&
+    currentDefinitionFingerprint === policy.frozenDefinitionFingerprint &&
+    isSha256(discoverySha) &&
+    isSha256(freezeReviewSha) &&
+    incidenceBands.length > 0 &&
+    SCENARIO_IDS.every((scenarioId) =>
+      incidenceBands.some((definition) => definition.scenarioId === scenarioId),
+    ) &&
+    uniqueBy(
+      incidenceBands,
+      (definition) => `${definition.scenarioId}:${definition.labelId}`,
+    ) &&
+    incidenceBands.every(
+      (definition) =>
+        definition.requiredEligibleRuns === PHASE_4_1_CALIBRATION_SEED_COUNT &&
+        hasFrozenPhase42Provenance(definition.provenance, policy),
+    ) &&
+    uniqueBy(
+      dominanceRationales,
+      (definition) => `${definition.scenarioId}:${definition.labelId}`,
+    ) &&
+    dominanceRationales.every((definition) =>
+      hasFrozenPhase42Provenance(definition.provenance, policy),
+    ) &&
+    pairedMacroBands.length >= REQUIRED_PASSING_PHASE_4_2_SETTLEMENT_BANDS &&
+    uniqueBy(
+      pairedMacroBands,
+      (definition) =>
+        `${definition.leftScenarioId}:${definition.rightScenarioId}:${definition.metricId}`,
+    ) &&
+    pairedMacroBands.every((definition) => phase42PairDefinitionIsValid(definition, policy))
+  );
+}
+
+export function phase42BandsAreFrozen(currentDefinitionFingerprint?: string): boolean {
+  return (
+    PHASE_4_2_BAND_FREEZE_STATUS === "FROZEN" &&
+    phase42DefinitionsAreFrozen(
+      currentDefinitionFingerprint === undefined ? {} : { currentDefinitionFingerprint },
+    )
+  );
+}
+
+/** Executable definition-validation semantics included in the release fingerprint. */
+export function phase42BandValidationSemanticContract() {
+  return {
+    constants: {
+      phase41CalibrationSeedCount: PHASE_4_1_CALIBRATION_SEED_COUNT,
+      phase42MatrixTicks: PHASE_4_2_MATRIX_TICKS,
+      minimumOutcomeOccurrences: SCENARIO_OUTCOME_MINIMUM_OCCURRENCES,
+      dominanceThreshold: SCENARIO_OUTCOME_DOMINANCE_THRESHOLD,
+      requiredInheritedDimensions: REQUIRED_PASSING_PHASE_3_MACRO_DIMENSIONS,
+      requiredSettlementBands: REQUIRED_PASSING_PHASE_4_2_SETTLEMENT_BANDS,
+    },
+    implementation: {
+      isSha256: isSha256.toString(),
+      hasFrozenPhase42Provenance: hasFrozenPhase42Provenance.toString(),
+      uniqueBy: uniqueBy.toString(),
+      phase42PairDefinitionIsValid: phase42PairDefinitionIsValid.toString(),
+      phase42DefinitionsAreFrozen: phase42DefinitionsAreFrozen.toString(),
+      phase42BandsAreFrozen: phase42BandsAreFrozen.toString(),
+    },
+  };
+}

@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 
 export interface MatrixOutcomeIncidence {
@@ -10,8 +18,38 @@ export interface MatrixOutcomeIncidence {
   readonly eligibleRuns: number;
 }
 
+export interface MatrixPairedComparison {
+  readonly leftScenarioId: string;
+  readonly rightScenarioId: string;
+  readonly metrics: readonly {
+    readonly metricId: string;
+    readonly dimension: string;
+    readonly missingValuePolicy: string;
+    readonly summary: {
+      readonly pairedSeedCount: number;
+      readonly meanDelta: number | null;
+    };
+    readonly effect: { readonly value: number | null };
+  }[];
+}
+
 export interface MatrixScenarioEvidence {
   readonly scenario: { readonly scenarioId: string };
+  readonly activity?: {
+    readonly settlement?: {
+      readonly seedDistributions: Readonly<
+        Record<
+          | "activeShelterCount"
+          | "shelteredRestShare"
+          | "meanShelterCondition"
+          | "reservationUtilization"
+          | "guestUseEvents"
+          | "deniedClaims",
+          { readonly samples: number; readonly median: number | null }
+        >
+      >;
+    };
+  };
   readonly analysis: {
     readonly outcomes: {
       readonly incidence: readonly MatrixOutcomeIncidence[];
@@ -29,8 +67,9 @@ export interface MatrixScenarioEvidence {
         readonly status: string;
         readonly releaseClaim: false;
         readonly provenance: {
-          readonly artifactSha256: string;
+          readonly artifactSha256: string | null;
           readonly classifierVersion: number;
+          readonly basis?: string;
         };
         readonly evaluations: readonly {
           readonly labelId: string;
@@ -71,6 +110,12 @@ export interface MatrixEvidenceReport {
     readonly ordering: string;
     readonly repeatCount: number;
     readonly executionsPerCase: number;
+    readonly scenarioAnalysisSchemaVersion?: number;
+    readonly outcomeClassifierVersion?: number;
+    readonly phase42DefinitionContractSchemaVersion?: number;
+    readonly phase42DefinitionFingerprintAlgorithm?: string;
+    readonly phase42DefinitionStatus?: "CANDIDATE" | "FROZEN";
+    readonly phase42DefinitionFingerprint?: string;
   };
   readonly runs: readonly unknown[];
   readonly aggregate: {
@@ -88,14 +133,15 @@ export interface MatrixEvidenceReport {
         readonly status: string;
       };
     };
-    readonly pairedComparisons: readonly unknown[];
+    readonly pairedComparisons: readonly MatrixPairedComparison[];
     readonly frozenPairedMacroBands: {
       readonly tableVersion: number;
       readonly status: string;
       readonly bandEvaluationStatus: string;
       readonly releaseClaim: false;
       readonly provenance: {
-        readonly artifactSha256: string;
+        readonly artifactSha256: string | null;
+        readonly basis?: string;
       };
       readonly corpusValidation: { readonly status: string };
       readonly evaluations: readonly {
@@ -105,6 +151,9 @@ export interface MatrixEvidenceReport {
         readonly metricId: string;
         readonly status: string;
         readonly pairedSeedCount: number;
+        readonly requiredPairedSeeds: number;
+        readonly missingValuePolicy: string;
+        readonly eligiblePairPolicy: string;
         readonly absoluteMeanDelta: number | null;
         readonly minimumAbsoluteMeanDelta: number;
         readonly absoluteCohenDz: number | null;
@@ -115,6 +164,11 @@ export interface MatrixEvidenceReport {
         readonly observed: number | null;
         readonly threshold: number;
         readonly passingDimensions: readonly string[];
+      };
+      readonly settlementRequirement: {
+        readonly status: string;
+        readonly observed: number | null;
+        readonly threshold: number;
       };
     };
     readonly convergence: readonly { readonly status: string }[];
@@ -159,6 +213,22 @@ function repeatResult(report: MatrixEvidenceReport): string {
   return report.analysis.determinism.allExactMatches
     ? `${report.analysis.determinism.comparisonCount.toString()} of ${report.analysis.determinism.comparisonCount.toString()} exact repeats matched`
     : "One or more exact repeats differed";
+}
+
+function distributionMedian(
+  item: MatrixScenarioEvidence,
+  metric:
+    | "activeShelterCount"
+    | "shelteredRestShare"
+    | "meanShelterCondition"
+    | "reservationUtilization"
+    | "guestUseEvents"
+    | "deniedClaims",
+): string {
+  const distribution = item.activity?.settlement?.seedDistributions[metric];
+  return distribution?.median === null || distribution?.median === undefined
+    ? "n/a"
+    : `${distribution.median.toString()} (${distribution.samples.toString()} seeds)`;
 }
 
 export function serializeMatrixEvidence(report: MatrixEvidenceReport): string {
@@ -241,6 +311,54 @@ export function renderMatrixEvidenceSummary(
       }),
   );
   const pairedBands = report.analysis.frozenPairedMacroBands;
+  const outcomeProvenance =
+    report.aggregate.byScenario[0]?.analysis.expectedBands.scenarioOutcomeBands.provenance;
+  const phase42Corpus =
+    report.configuration.corpus === "phase-4.2-calibration" ||
+    report.configuration.corpus === "phase-4.2-holdout";
+  const phase42Frozen =
+    phase42Corpus && outcomeProvenance?.basis === "LOCKED_PHASE_4_2_CALIBRATION";
+  const outcomeBandHeading =
+    phase42Corpus && !phase42Frozen
+      ? "### Candidate Phase 4.2 outcome-incidence review (not frozen)"
+      : "### Frozen outcome-incidence bands";
+  const pairedBandHeading =
+    phase42Corpus && !phase42Frozen
+      ? "## Candidate Phase 4.2 paired macro review (not frozen)"
+      : "## Frozen paired macro bands";
+  const settlementSection =
+    report.configuration.corpus === "phase-4.2-holdout"
+      ? {
+          heading: "## Phase 4.2 settlement holdout distributions",
+          explanation:
+            "Medians and paired effects are descriptive holdout observations evaluated with the unchanged frozen definitions. `n/a` means no eligible shelter observation; this automated artifact is not by itself a release claim.",
+          pairHeading: "### Holdout SETTLEMENT pair effects",
+        }
+      : phase42Frozen
+        ? {
+            heading: "## Phase 4.2 post-freeze settlement verification distributions",
+            explanation:
+              "Medians and paired effects are descriptive verification observations under the frozen definitions. `n/a` means no eligible shelter observation; this automated artifact is not by itself a release claim.",
+            pairHeading: "### Frozen SETTLEMENT pair effects",
+          }
+        : {
+            heading: "## Phase 4.2 settlement discovery distributions",
+            explanation:
+              "Medians and paired effects are descriptive candidate evidence only. No Phase 4.2 threshold is frozen or passing. `n/a` means no eligible shelter observation.",
+            pairHeading: "### Candidate SETTLEMENT pair effects",
+          };
+  const settlementDistributionRows = report.aggregate.byScenario.map(
+    (item) =>
+      `| \`${markdownCell(item.scenario.scenarioId)}\` | ${distributionMedian(item, "activeShelterCount")} | ${distributionMedian(item, "shelteredRestShare")} | ${distributionMedian(item, "meanShelterCondition")} | ${distributionMedian(item, "reservationUtilization")} | ${distributionMedian(item, "guestUseEvents")} | ${distributionMedian(item, "deniedClaims")} |`,
+  );
+  const settlementPairRows = report.analysis.pairedComparisons.flatMap((comparison) =>
+    comparison.metrics
+      .filter((metric) => metric.dimension === "SETTLEMENT")
+      .map(
+        (metric) =>
+          `| \`${markdownCell(comparison.leftScenarioId)} -> ${markdownCell(comparison.rightScenarioId)}\` | ${markdownCell(metric.metricId)} | ${markdownCell(metric.missingValuePolicy)} | ${metric.summary.pairedSeedCount.toString()} | ${metric.summary.meanDelta?.toString() ?? "n/a"} | ${metric.effect.value?.toString() ?? "n/a"} |`,
+      ),
+  );
 
   const lines = [
     `# Tiny Civilisations ${report.configuration.corpus} matrix evidence`,
@@ -252,6 +370,15 @@ export function renderMatrixEvidenceSummary(
     `- Artifact: \`${gzipFilename}\``,
     `- SHA-256: \`${sha256}\``,
     `- Activity-profile schema: ${report.schemaVersion.toString()}`,
+    `- Scenario-analysis schema: ${report.configuration.scenarioAnalysisSchemaVersion?.toString() ?? "n/a"}`,
+    `- Outcome classifier: ${report.configuration.outcomeClassifierVersion?.toString() ?? outcomeProvenance?.classifierVersion.toString() ?? "n/a"}`,
+    ...(phase42Corpus
+      ? [
+          `- Phase 4.2 definition status: ${report.configuration.phase42DefinitionStatus ?? "n/a"}`,
+          `- Phase 4.2 definition contract: schema ${report.configuration.phase42DefinitionContractSchemaVersion?.toString() ?? "n/a"}, ${report.configuration.phase42DefinitionFingerprintAlgorithm ?? "n/a"}`,
+          `- Phase 4.2 definition fingerprint: \`${report.configuration.phase42DefinitionFingerprint ?? "n/a"}\``,
+        ]
+      : []),
     `- Scenarios: ${report.configuration.scenarios.map((value) => `\`${value}\``).join(", ")}`,
     `- Seeds: ${seedDescription(report.configuration.seeds)}`,
     `- Horizon: ${report.configuration.ticksPerRun.toString()} ticks per run`,
@@ -279,9 +406,9 @@ export function renderMatrixEvidenceSummary(
         .replace(/$/u, " |"),
     ),
     "",
-    "### Frozen outcome-incidence bands",
+    outcomeBandHeading,
     "",
-    `Classifier version: ${report.aggregate.byScenario[0]?.analysis.expectedBands.scenarioOutcomeBands.provenance.classifierVersion.toString() ?? "n/a"}. Calibration SHA-256: \`${report.aggregate.byScenario[0]?.analysis.expectedBands.scenarioOutcomeBands.provenance.artifactSha256 ?? "n/a"}\`. Thresholds are evaluated only on a complete locked 64-seed, 10,000-tick calibration or holdout corpus.`,
+    `Classifier version: ${outcomeProvenance?.classifierVersion.toString() ?? "n/a"}. Calibration SHA-256: \`${outcomeProvenance?.artifactSha256 ?? "n/a"}\`. ${phase42Corpus && !phase42Frozen ? "Candidate incidences are discovery evidence only; no Phase 4.2 threshold is frozen or passing." : "Thresholds are evaluated only on a complete locked 64-seed, 10,000-tick calibration or holdout corpus."}`,
     "",
     "| Scenario | Required label | Status | Occurrences / eligible runs | Frozen minimum |",
     "| --- | --- | --- | ---: | ---: |",
@@ -317,21 +444,48 @@ export function renderMatrixEvidenceSummary(
       ),
     ),
     "",
-    "## Frozen paired macro bands",
+    pairedBandHeading,
     "",
     `- Table version: ${pairedBands.tableVersion.toString()}`,
     `- Corpus validation: ${pairedBands.corpusValidation.status}`,
     `- Band evaluation status: ${pairedBands.bandEvaluationStatus}`,
     `- Distinct Phase 3 dimensions: ${pairedBands.dimensionRequirement.status} (${pairedBands.dimensionRequirement.observed?.toString() ?? "n/a"} observed; ${pairedBands.dimensionRequirement.threshold.toString()} required)`,
-    `- Calibration SHA-256: \`${pairedBands.provenance.artifactSha256}\``,
+    ...(phase42Corpus
+      ? [
+          `- Passing SETTLEMENT bands: ${pairedBands.settlementRequirement.status} (${pairedBands.settlementRequirement.observed?.toString() ?? "n/a"} observed; ${pairedBands.settlementRequirement.threshold.toString()} required)`,
+        ]
+      : []),
+    `- Calibration SHA-256: \`${pairedBands.provenance.artifactSha256 ?? "n/a"}\``,
     "- Artifact release claim: false",
     "",
-    "| Dimension | Scenario pair | Metric | Status | |mean delta| / minimum | |dz| / minimum | Paired seeds |",
-    "| --- | --- | --- | --- | ---: | ---: | ---: |",
+    "| Dimension | Scenario pair | Metric | Status | |mean delta| / minimum | |dz| / minimum | Eligible-pair policy | Paired seeds / required |",
+    "| --- | --- | --- | --- | ---: | ---: | --- | ---: |",
     ...pairedBands.evaluations.map(
       (evaluation) =>
-        `| ${markdownCell(evaluation.dimension)} | \`${markdownCell(evaluation.leftScenarioId)} -> ${markdownCell(evaluation.rightScenarioId)}\` | ${markdownCell(evaluation.metricId)} | ${markdownCell(evaluation.status)} | ${evaluation.absoluteMeanDelta?.toString() ?? "n/a"} / ${evaluation.minimumAbsoluteMeanDelta.toString()} | ${evaluation.absoluteCohenDz?.toString() ?? "n/a"} / ${evaluation.minimumAbsoluteCohenDz.toString()} | ${evaluation.pairedSeedCount.toString()} |`,
+        `| ${markdownCell(evaluation.dimension)} | \`${markdownCell(evaluation.leftScenarioId)} -> ${markdownCell(evaluation.rightScenarioId)}\` | ${markdownCell(evaluation.metricId)} | ${markdownCell(evaluation.status)} | ${evaluation.absoluteMeanDelta?.toString() ?? "n/a"} / ${evaluation.minimumAbsoluteMeanDelta.toString()} | ${evaluation.absoluteCohenDz?.toString() ?? "n/a"} / ${evaluation.minimumAbsoluteCohenDz.toString()} | ${markdownCell(evaluation.eligiblePairPolicy)}; ${markdownCell(evaluation.missingValuePolicy)} | ${evaluation.pairedSeedCount.toString()} / ${evaluation.requiredPairedSeeds.toString()} |`,
     ),
+    ...(phase42Corpus
+      ? [
+          "",
+          settlementSection.heading,
+          "",
+          settlementSection.explanation,
+          "",
+          "| Scenario | Active shelters | Sheltered-rest share | Mean condition | Reservation utilization | Guest uses | Denied claims |",
+          "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+          ...settlementDistributionRows,
+          "",
+          settlementSection.pairHeading,
+          "",
+          "Effects are descriptive right-minus-left comparisons. The missing-value policy and eligible paired-seed count are shown so absent shelters cannot silently become zero-condition observations.",
+          "",
+          "| Scenario pair | Metric | Missing-value policy | Paired seeds | Mean delta | Cohen dz |",
+          "| --- | --- | --- | ---: | ---: | ---: |",
+          ...(settlementPairRows.length > 0
+            ? settlementPairRows
+            : ["| none | none | n/a | 0 | n/a | n/a |"]),
+        ]
+      : []),
     "",
     "## Release boundary",
     "",
@@ -383,16 +537,58 @@ export function matrixEvidencePaths(
   };
 }
 
+export function assertMatrixEvidenceTargetsAbsent(
+  outputPath: string,
+  invocationDirectory = process.cwd(),
+): MatrixEvidencePaths {
+  const paths = matrixEvidencePaths(outputPath, invocationDirectory);
+  const existing = [paths.gzipPath, paths.checksumPath, paths.summaryPath].filter(
+    existsSync,
+  );
+  if (existing.length > 0) {
+    throw new Error(
+      `Matrix evidence is immutable; refusing to overwrite existing artifact${existing.length === 1 ? "" : "s"}: ${existing.join(", ")}.`,
+    );
+  }
+  return paths;
+}
+
 export function writeMatrixEvidence(
   report: MatrixEvidenceReport,
   outputPath: string,
   invocationDirectory = process.cwd(),
 ): MatrixEvidenceArtifacts {
-  const paths = matrixEvidencePaths(outputPath, invocationDirectory);
+  const paths = assertMatrixEvidenceTargetsAbsent(outputPath, invocationDirectory);
   const artifacts = createMatrixEvidenceArtifacts(report, basename(paths.gzipPath));
   mkdirSync(dirname(paths.gzipPath), { recursive: true });
-  writeFileSync(paths.gzipPath, artifacts.gzip);
-  writeFileSync(paths.checksumPath, artifacts.checksum, "utf8");
-  writeFileSync(paths.summaryPath, artifacts.markdown, "utf8");
-  return artifacts;
+  const stagingDirectory = mkdtempSync(
+    join(dirname(paths.gzipPath), ".matrix-evidence-staging-"),
+  );
+  const staged = {
+    gzipPath: join(stagingDirectory, basename(paths.gzipPath)),
+    checksumPath: join(stagingDirectory, basename(paths.checksumPath)),
+    summaryPath: join(stagingDirectory, basename(paths.summaryPath)),
+  };
+  const installed: string[] = [];
+  try {
+    writeFileSync(staged.gzipPath, artifacts.gzip);
+    writeFileSync(staged.checksumPath, artifacts.checksum, "utf8");
+    writeFileSync(staged.summaryPath, artifacts.markdown, "utf8");
+    for (const [source, target] of [
+      [staged.gzipPath, paths.gzipPath],
+      [staged.checksumPath, paths.checksumPath],
+      [staged.summaryPath, paths.summaryPath],
+    ] as const) {
+      linkSync(source, target);
+      installed.push(target);
+    }
+    return artifacts;
+  } catch (error) {
+    for (const installedPath of installed.reverse()) {
+      if (existsSync(installedPath)) unlinkSync(installedPath);
+    }
+    throw error;
+  } finally {
+    rmSync(stagingDirectory, { recursive: true, force: true });
+  }
 }

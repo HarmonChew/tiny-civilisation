@@ -1,3 +1,10 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
+
 import { describe, expect, it } from "vitest";
 
 import { SCENARIO_CATALOG, createScenarioReference } from "@tiny-civ/sim-core";
@@ -8,15 +15,124 @@ import {
   parseMatrixOptions,
   parseProfileOptions,
   parseRunOptions,
+  profileSimulation,
   runBatch,
   runMatrix,
   runProfile,
   runSimulation,
   simulate,
 } from "./index.js";
+import { canonicalPhase42DefinitionJson } from "./phase-4.2-definition-contract.js";
 import { scenarioDefinitionIdentity } from "./scenario-reporting.js";
 
+const PHASE_4_2_REVIEWABLE_DEFINITION_FIELDS = [
+  "classifierRules",
+  "incidenceBandPolicy",
+  "incidenceBands",
+  "dominanceRationales",
+  "settlementPairedMacroBands",
+] as const;
+
+function recordAt(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function staticDefinitionProjection(
+  contract: unknown,
+  allowMissingIncidenceBandPolicy = false,
+): Record<string, unknown> {
+  const projection = structuredClone(recordAt(contract, "definition contract"));
+  const phase42 = recordAt(projection.phase42, "definition contract phase42");
+  const expectedPhase42Fields = allowMissingIncidenceBandPolicy
+    ? PHASE_4_2_REVIEWABLE_DEFINITION_FIELDS.filter(
+        (field) => field !== "incidenceBandPolicy",
+      )
+    : PHASE_4_2_REVIEWABLE_DEFINITION_FIELDS;
+  expect(Object.keys(phase42).sort()).toEqual([...expectedPhase42Fields].sort());
+  phase42.classifierRules = {};
+  delete phase42.incidenceBandPolicy;
+  phase42.incidenceBands = [];
+  phase42.dominanceRationales = [];
+  phase42.settlementPairedMacroBands = [];
+  return projection;
+}
+
 describe("headless scenario CLI", () => {
+  it("emits a self-authenticating Phase 4.2 definition contract through the file-loader entrypoint", () => {
+    const entryPath = fileURLToPath(new URL("./index.ts", import.meta.url));
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", entryPath, "phase-4.2-definition-contract"],
+      { encoding: "utf8" },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    const payload = recordAt(JSON.parse(result.stdout) as unknown, "CLI payload");
+    expect(result.stdout).toBe(`${JSON.stringify(payload)}\n`);
+
+    const contract = recordAt(payload.contract, "CLI definition contract");
+    const fingerprint = createHash("sha256")
+      .update(canonicalPhase42DefinitionJson(contract), "utf8")
+      .digest("hex");
+    expect(payload).toMatchObject({
+      schemaVersion: contract.schemaVersion,
+      fingerprintAlgorithm: contract.fingerprintAlgorithm,
+      fingerprint,
+    });
+    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/u);
+
+    const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+    const committedV1 = recordAt(
+      JSON.parse(
+        gunzipSync(
+          readFileSync(
+            resolve(repositoryRoot, "docs/baselines/phase-4.2-calibration-v1.json.gz"),
+          ),
+        ).toString("utf8"),
+      ) as unknown,
+      "committed Phase 4.2 calibration v1",
+    );
+    const configuration = recordAt(
+      committedV1.configuration,
+      "committed Phase 4.2 calibration v1 configuration",
+    );
+    expect(staticDefinitionProjection(contract)).toEqual(
+      staticDefinitionProjection(configuration.phase42DefinitionContract, true),
+    );
+  });
+
+  it("prints only the definition fingerprint through the hash-only alias", () => {
+    const entryPath = fileURLToPath(new URL("./index.ts", import.meta.url));
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", entryPath, "definition-fingerprint"],
+      { encoding: "utf8" },
+    );
+    const contractResult = spawnSync(
+      process.execPath,
+      ["--import", "tsx", entryPath, "phase-4.2-definition-contract"],
+      { encoding: "utf8" },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(contractResult.error).toBeUndefined();
+    expect(contractResult.status).toBe(0);
+    expect(contractResult.stderr).toBe("");
+    const contractPayload = recordAt(
+      JSON.parse(contractResult.stdout) as unknown,
+      "CLI contract payload",
+    );
+    expect(result.stdout).toBe(`${String(contractPayload.fingerprint)}\n`);
+    expect(result.stdout).toMatch(/^[0-9a-f]{64}\n$/u);
+  });
+
   it("preserves the Petri defaults and validates scenario IDs", () => {
     expect(parseRunOptions([])).toEqual({
       scenarioId: "petri-world",
@@ -126,16 +242,22 @@ describe("headless scenario CLI", () => {
   });
 
   it.each([
-    ["smoke", 8, 2_000, 1],
-    ["nightly", 32, 10_000, 1],
-    ["calibration", 64, 10_000, 1],
-    ["holdout", 64, 10_000, 1_001],
-  ] as const)("resolves the locked %s corpus", (corpus, seedCount, ticks, firstSeed) => {
-    const options = parseMatrixOptions(["--corpus", corpus]);
-    expect(options).toMatchObject({ corpus, ticks });
-    expect(options.seeds).toHaveLength(seedCount);
-    expect(options.seeds[0]).toBe(firstSeed);
-  });
+    ["smoke", 8, 2_000, 1, 8],
+    ["nightly", 32, 10_000, 1, 32],
+    ["calibration", 64, 10_000, 1, 64],
+    ["holdout", 64, 10_000, 1_001, 1_064],
+    ["phase-4.2-calibration", 64, 10_000, 1, 64],
+    ["phase-4.2-holdout", 64, 10_000, 2_001, 2_064],
+  ] as const)(
+    "resolves the locked %s corpus",
+    (corpus, seedCount, ticks, firstSeed, lastSeed) => {
+      const options = parseMatrixOptions(["--corpus", corpus]);
+      expect(options).toMatchObject({ corpus, ticks });
+      expect(options.seeds).toHaveLength(seedCount);
+      expect(options.seeds[0]).toBe(firstSeed);
+      expect(options.seeds.at(-1)).toBe(lastSeed);
+    },
+  );
 
   it("accepts an opt-in compressed matrix evidence path", () => {
     expect(
@@ -152,6 +274,86 @@ describe("headless scenario CLI", () => {
     expect(() =>
       parseMatrixOptions(["--output", "docs/baselines/phase-3-calibration-v1.json"]),
     ).toThrow("--output must end with .json.gz");
+  });
+
+  it("resolves the canonical Phase 4.2 holdout request without executing it", () => {
+    const options = parseMatrixOptions(["--corpus", "phase-4.2-holdout"]);
+
+    expect(options).toMatchObject({
+      corpus: "phase-4.2-holdout",
+      ticks: 10_000,
+      outputPath: "docs/baselines/phase-4.2-holdout-v1.json.gz",
+    });
+    expect(options.seeds).toHaveLength(64);
+    expect(options.seeds[0]).toBe(2_001);
+    expect(options.seeds.at(-1)).toBe(2_064);
+  });
+
+  it("locks Phase 4.2 matrix horizons and canonical output paths", () => {
+    expect(parseMatrixOptions(["--corpus", "phase-4.2-calibration"])).toMatchObject({
+      ticks: 10_000,
+      outputPath: "docs/baselines/phase-4.2-calibration-v2.json.gz",
+    });
+    expect(() =>
+      parseMatrixOptions(["--corpus", "phase-4.2-calibration", "--ticks", "9999"]),
+    ).toThrow("--ticks is forbidden");
+    expect(() =>
+      parseMatrixOptions(["--corpus", "phase-4.2-holdout", "--ticks", "10000"]),
+    ).toThrow("--ticks is forbidden");
+    expect(() =>
+      parseMatrixOptions([
+        "--corpus",
+        "phase-4.2-holdout",
+        "--output",
+        "tmp/holdout.json.gz",
+      ]),
+    ).toThrow("must use canonical path");
+    expect(() =>
+      parseMatrixOptions(["--corpus", "phase-4.2-holdout", "--seeds", "2001"]),
+    ).toThrow("Unknown matrix option: --seeds");
+    expect(() =>
+      parseMatrixOptions([
+        "--corpus",
+        "phase-4.2-calibration",
+        "--output",
+        "docs/baselines/phase-4.2-calibration-v1.json.gz",
+      ]),
+    ).toThrow("must use canonical path docs/baselines/phase-4.2-calibration-v2.json.gz");
+  });
+
+  it("protects every reserved seed at the holdout horizon through generic commands", () => {
+    expect(() => parseRunOptions(["--seed", "2001", "--ticks", "0"])).toThrow(
+      "Reserved Phase 4.2 holdout seeds",
+    );
+    expect(() => simulate({ scenarioId: "petri-world", seed: 2_001, ticks: 0 })).toThrow(
+      "Reserved Phase 4.2 holdout seeds",
+    );
+    expect(() =>
+      profileSimulation({ scenarioId: "petri-world", seed: 2_001, ticks: 1 }),
+    ).toThrow("Reserved Phase 4.2 holdout seeds");
+    expect(() =>
+      runSimulation({ scenarioId: "petri-world", seed: 2_064, ticks: 9_999 }),
+    ).toThrow("Reserved Phase 4.2 holdout seeds");
+    expect(() => parseRunOptions(["--seed", "2001", "--ticks", "10000"])).toThrow(
+      "Reserved Phase 4.2 holdout seeds",
+    );
+    expect(() => parseBatchOptions(["--seeds", "2001", "--ticks", "12000"])).toThrow(
+      "Reserved Phase 4.2 holdout seeds",
+    );
+    expect(() => parseProfileOptions(["--seed", "2064", "--ticks", "10000"])).toThrow(
+      "Reserved Phase 4.2 holdout seeds",
+    );
+    expect(() => runMatrix({ corpus: "nightly", seeds: [2_001], ticks: 10_000 })).toThrow(
+      "Reserved Phase 4.2 holdout seeds",
+    );
+    expect(() =>
+      runMatrix({
+        corpus: "phase-4.2-holdout",
+        seeds: [2_001],
+        ticks: 10_000,
+        outputPath: "docs/baselines/phase-4.2-holdout-v1.json.gz",
+      }),
+    ).toThrow("already recorded and cannot be rerun");
   });
 
   it("orders matrix cases by catalog and then numeric seed", () => {
@@ -246,7 +448,7 @@ describe("headless scenario CLI", () => {
     ).toBe(true);
     expect(
       matrix.aggregate.byScenario.every(
-        (item) => item.analysis.outcomes.incidence.length === 9,
+        (item) => item.analysis.outcomes.incidence.length === 14,
       ),
     ).toBe(true);
     expect(matrix.analysis.determinism).toMatchObject({
@@ -259,7 +461,7 @@ describe("headless scenario CLI", () => {
       matrix.analysis.determinism.comparisons.every((comparison) => comparison.exactMatch),
     ).toBe(true);
     expect(matrix.analysis.pairedComparisons).toHaveLength(6);
-    expect(matrix.analysis.convergence).toHaveLength(30);
+    expect(matrix.analysis.convergence).toHaveLength(36);
     expect(matrix.analysis.rawProfileRetention).toEqual(
       expect.objectContaining({
         retainedRunCount: 4,

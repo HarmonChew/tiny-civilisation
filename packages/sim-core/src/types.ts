@@ -62,6 +62,10 @@ export type ActionKind =
   | "EAT"
   | "DRINK"
   | "REST"
+  | "ESTABLISH_SHELTER_SITE"
+  | "BUILD_SHELTER"
+  | "REST_SHELTERED"
+  | "MAINTAIN_SHELTER"
   | "SHARE"
   | "SHARE_WATER"
   | "KEEP"
@@ -95,6 +99,10 @@ export type PlanKind =
   | "FETCH_WATER"
   | "WITHDRAW_SHARED_FOOD"
   | "REST_SAFELY"
+  | "ESTABLISH_SHELTER"
+  | "BUILD_COMMUNAL_SHELTER"
+  | "REST_IN_SHELTER"
+  | "MAINTAIN_COMMUNAL_SHELTER"
   | "BUILD_PRIVATE_RESERVE"
   | "SHARE_WITH_OTHER"
   | "SHARE_WATER_WITH_OTHER"
@@ -192,6 +200,7 @@ export type InteractionPurpose =
   | "SOCIAL"
   | "STORAGE_ACCESS"
   | "CONSTRUCTION"
+  | "MAINTENANCE"
   | "GUARD"
   | "CONFLICT"
   | "FLIGHT";
@@ -312,9 +321,11 @@ export interface ResourceNode {
   regenerationAmount: number;
 }
 
-export type StructureKind = "STORAGE" | "STORAGE_SITE";
+export type StorageStructureKind = "STORAGE" | "STORAGE_SITE";
+export type ShelterStructureKind = "SHELTER_SITE" | "SHELTER" | "ABANDONED_SHELTER";
+export type StructureKind = StorageStructureKind | ShelterStructureKind;
 
-export interface StructureState {
+export interface StructureStateBase {
   id: EntityId;
   kind: StructureKind;
   tileIndex: number;
@@ -323,9 +334,51 @@ export interface StructureState {
   materialRequired: number;
   progress: Unit;
   workRequired: Unit;
+  /** Shelters keep a zero-capacity inventory; water is never communally stored. */
   inventory: Inventory;
   guardIds: EntityId[];
   completedTick: Tick | null;
+}
+
+export interface StorageStructureState extends StructureStateBase {
+  kind: StorageStructureKind;
+}
+
+export interface ShelterSiteAssessment {
+  selectedAtTick: Tick;
+  memberTravelCost: number;
+  storageTravelCost: number;
+  foodAccessCost: number;
+  materialAccessCost: number;
+  waterAccessCost: number;
+  crowdingCost: number;
+  constructionInvestmentCost: number;
+  relocationChangeCost: number;
+  totalScore: number;
+}
+
+export type ShelterConditionBand = "GOOD" | "WORN" | "LOW";
+
+export interface ShelterStructureState extends StructureStateBase {
+  kind: ShelterStructureKind;
+  condition: Unit;
+  baseCapacity: number;
+  siteAssessment: ShelterSiteAssessment;
+  builtFromShelterId: EntityId | null;
+  maintenanceMaterialSpent: number;
+  lastMaintainedTick: Tick | null;
+  lastUsedTick: Tick | null;
+  conditionBand: ShelterConditionBand;
+}
+
+export type StructureState = StorageStructureState | ShelterStructureState;
+
+export interface ShelterRelocationCandidate {
+  tileIndex: number;
+  firstSeenTick: Tick;
+  lastEvaluatedTick: Tick;
+  consecutiveEvaluations: number;
+  scoreImprovement: number;
 }
 
 export interface GroupState {
@@ -337,6 +390,11 @@ export interface GroupState {
   leaderId: EntityId | null;
   homeTileIndex: number;
   storageStructureId: EntityId | null;
+  activeShelterId: EntityId | null;
+  pendingShelterId: EntityId | null;
+  shelterRelocations: number;
+  shelterCommitUntilTick: Tick;
+  shelterRelocationCandidate: ShelterRelocationCandidate | null;
   cohesion: Unit;
   sharingNorm: number;
   majorEventIds: number[];
@@ -373,8 +431,11 @@ export interface RelationshipEdge {
 export type DomainEventType =
   | "SIMULATION_STARTED"
   | "HYDRATION_RULES_ENABLED"
+  | "SHELTER_RULES_ENABLED"
   | "PLAYER_ADDED_FOOD"
   | "PLAYER_REMOVED_FOOD"
+  | "PLAYER_ADDED_MATERIAL"
+  | "PLAYER_REMOVED_MATERIAL"
   | "PLAYER_REPLENISHED_WATER"
   | "PLAYER_DRAINED_WATER"
   | "PLAYER_TOGGLED_OBSTACLE"
@@ -400,6 +461,18 @@ export type DomainEventType =
   | "STORAGE_SITE_STARTED"
   | "STORAGE_WORK_ADVANCED"
   | "STORAGE_COMPLETED"
+  | "SHELTER_SITE_SELECTED"
+  | "SHELTER_CONSTRUCTION_STARTED"
+  | "SHELTER_WORK_ADVANCED"
+  | "SHELTER_COMPLETED"
+  | "SHELTER_RESTED"
+  | "SHELTER_MAINTAINED"
+  | "SHELTER_CONDITION_LOW"
+  | "SHELTER_CONDITION_RECOVERED"
+  | "SHELTER_CROWDED"
+  | "SHELTER_GUEST_USED"
+  | "SHELTER_ABANDONED"
+  | "SHELTER_RELOCATED"
   | "THREAT_NOTICED"
   | "CONFRONTATION_APPROACHED"
   | "CREATURE_ATTACKED"
@@ -443,6 +516,8 @@ export type HistoricalEventType =
   | "GROUP_FORMED"
   | "LEADERSHIP"
   | "STORAGE_BUILT"
+  | "SHELTER_BUILT"
+  | "SETTLEMENT_RELOCATED"
   | "SOCIAL_BOND"
   | "THEFT"
   | "CONFRONTATION";
@@ -472,6 +547,13 @@ export interface SimulationMetrics {
   attacks: number;
   groupsFormed: number;
   storagesCompleted: number;
+  sheltersCompleted: number;
+  shelteredRests: number;
+  outdoorRests: number;
+  shelterMaintenanceMaterial: number;
+  shelterDeniedClaims: number;
+  shelterGuestUses: number;
+  shelterRelocations: number;
   playerInterventions: number;
   invalidPathFailures: number;
   /** Claim attempts that encountered at least one occupied interaction slot. */
@@ -542,6 +624,24 @@ export interface RemoveFoodCommand {
   amount?: number;
 }
 
+export interface AddMaterialCommand {
+  type: "ADD_MATERIAL";
+  applyAtTick?: Tick;
+  tileIndex?: number;
+  x?: number;
+  y?: number;
+  amount?: number;
+}
+
+export interface RemoveMaterialCommand {
+  type: "REMOVE_MATERIAL";
+  applyAtTick?: Tick;
+  tileIndex?: number;
+  x?: number;
+  y?: number;
+  amount?: number;
+}
+
 export interface ToggleObstacleCommand {
   type: "TOGGLE_OBSTACLE";
   applyAtTick?: Tick;
@@ -572,6 +672,8 @@ export interface DrainWaterCommand {
 export type PlayerCommand =
   | AddFoodCommand
   | RemoveFoodCommand
+  | AddMaterialCommand
+  | RemoveMaterialCommand
   | ToggleObstacleCommand
   | ReplenishWaterCommand
   | DrainWaterCommand;
@@ -620,6 +722,7 @@ export interface RenderCreature {
   destinationX: number | null;
   destinationY: number | null;
   waterAccess: RenderCreatureWaterAccess | null;
+  shelterAccess: RenderCreatureShelterAccess | null;
   recentRoute: Array<{ tick: Tick; x: number; y: number }>;
   summary: CreatureObservationSummary;
   latestDecision: DecisionRecord | null;
@@ -636,6 +739,20 @@ export interface RenderCreatureWaterAccess {
   totalSources: number;
   interactionCapacity: number;
   claimedInteractionSlots: number;
+}
+
+export type ShelterEligibility = "MEMBER" | "TRUSTED_GUEST" | "INELIGIBLE";
+
+export interface RenderCreatureShelterAccess {
+  shelterId: EntityId | null;
+  weightedCost: number | null;
+  eligibility: ShelterEligibility | null;
+  condition: Unit | null;
+  effectiveCapacity: number;
+  reservedSpaces: number;
+  restingCreatures: number;
+  destination: "SHELTERED" | "OUTDOOR" | "NONE";
+  reason: string;
 }
 
 export interface RenderResourceNode {
@@ -662,10 +779,24 @@ export interface RenderStructure {
   tileIndex: number;
   groupId: GroupId;
   progress: Unit;
+  workRequired: Unit;
   food: number;
   material: number;
+  storedMaterial: number;
+  storageCapacity: number;
+  materialRequired: number;
   water: number;
   guardIds: EntityId[];
+  condition: Unit | null;
+  baseCapacity: number | null;
+  effectiveCapacity: number | null;
+  reservedSpaces: number;
+  restingCreatures: number;
+  memberOccupancy: number;
+  guestOccupancy: number;
+  upkeepNeeded: boolean;
+  siteAssessment: ShelterSiteAssessment | null;
+  builtFromShelterId: EntityId | null;
 }
 
 export interface RenderScenario {

@@ -1,7 +1,8 @@
-import type { SimulationState } from "./types.js";
+import type { ShelterStructureState, SimulationState } from "./types.js";
 import type { ScenarioReferenceV2 } from "./scenarios/types.js";
 import { OUTCOME_SCHEMA_VERSION, SIMULATION_BEHAVIOR_VERSION } from "./versions.js";
 import { estimateInteractionTravelIgnoringOccupancy } from "./interaction-slots.js";
+import { isShelterStructure } from "./shelters.js";
 
 export interface ExperimentOutcomeMetrics {
   readonly population: number;
@@ -32,6 +33,15 @@ export interface ExperimentOutcomeMetrics {
   readonly thefts: number;
   readonly attacks: number;
   readonly storagesCompleted: number;
+  readonly sheltersCompleted: number;
+  readonly activeShelters: number;
+  readonly shelteredRests: number;
+  readonly outdoorRests: number;
+  readonly meanShelterCondition: number;
+  readonly shelterMaintenanceMaterial: number;
+  readonly shelterDeniedClaims: number;
+  readonly shelterGuestUses: number;
+  readonly shelterRelocations: number;
 }
 
 export interface ExperimentOutcomeV1 extends ExperimentOutcomeMetrics {
@@ -76,6 +86,15 @@ const METRIC_KEYS = [
   "thefts",
   "attacks",
   "storagesCompleted",
+  "sheltersCompleted",
+  "activeShelters",
+  "shelteredRests",
+  "outdoorRests",
+  "meanShelterCondition",
+  "shelterMaintenanceMaterial",
+  "shelterDeniedClaims",
+  "shelterGuestUses",
+  "shelterRelocations",
 ] as const satisfies readonly (keyof ExperimentOutcomeMetrics)[];
 
 function metricsOf(outcome: ExperimentOutcomeV1): ExperimentOutcomeMetrics {
@@ -156,6 +175,10 @@ export function createExperimentOutcome(state: SimulationState): ExperimentOutco
   const completedStorages = state.structures.filter(
     (structure) => structure.kind === "STORAGE",
   );
+  const activeShelters = state.structures.filter(
+    (structure): structure is ShelterStructureState =>
+      isShelterStructure(structure) && structure.kind === "SHELTER",
+  );
   const relationshipTrust = state.relationships.reduce(
     (total, relationship) => total + relationship.trust,
     0,
@@ -216,7 +239,49 @@ export function createExperimentOutcome(state: SimulationState): ExperimentOutco
     thefts: state.metrics.thefts,
     attacks: state.metrics.attacks,
     storagesCompleted: state.metrics.storagesCompleted,
+    sheltersCompleted: state.metrics.sheltersCompleted,
+    activeShelters: activeShelters.length,
+    shelteredRests: state.metrics.shelteredRests,
+    outdoorRests: state.metrics.outdoorRests,
+    meanShelterCondition:
+      activeShelters.length === 0
+        ? 0
+        : activeShelters.reduce((total, shelter) => total + shelter.condition, 0) /
+          activeShelters.length,
+    shelterMaintenanceMaterial: state.metrics.shelterMaintenanceMaterial,
+    shelterDeniedClaims: state.metrics.shelterDeniedClaims,
+    shelterGuestUses: state.metrics.shelterGuestUses,
+    shelterRelocations: state.metrics.shelterRelocations,
   };
+}
+
+export function assertExperimentOutcome(
+  value: unknown,
+): asserts value is ExperimentOutcomeV1 {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Experiment outcome must be an object.");
+  }
+  const outcome = value as Record<string, unknown>;
+  if (outcome.schemaVersion !== OUTCOME_SCHEMA_VERSION) {
+    throw new Error(
+      `Experiment outcome schema version ${String(outcome.schemaVersion)} is incompatible with ${OUTCOME_SCHEMA_VERSION.toString()}.`,
+    );
+  }
+  if (outcome.behaviorVersion !== SIMULATION_BEHAVIOR_VERSION) {
+    throw new Error(
+      `Experiment outcome behavior version ${String(outcome.behaviorVersion)} is incompatible with ${SIMULATION_BEHAVIOR_VERSION.toString()}.`,
+    );
+  }
+  for (const key of METRIC_KEYS) {
+    const metric = outcome[key];
+    if (typeof metric !== "number" || !Number.isFinite(metric)) {
+      throw new Error(`Experiment outcome metric ${key} must be finite.`);
+    }
+  }
+  const condition = outcome.meanShelterCondition as number;
+  if (condition < 0 || condition > 10_000) {
+    throw new Error("Experiment outcome mean shelter condition must be bounded.");
+  }
 }
 
 export function compareExperimentOutcomes(
@@ -226,6 +291,8 @@ export function compareExperimentOutcomes(
   if (baseline.behaviorVersion !== intervention.behaviorVersion) {
     throw new Error("Experiment outcomes use incompatible behavior versions.");
   }
+  assertExperimentOutcome(baseline);
+  assertExperimentOutcome(intervention);
   const baselineIdentity = baseline.scenario;
   const interventionIdentity = intervention.scenario;
   if (

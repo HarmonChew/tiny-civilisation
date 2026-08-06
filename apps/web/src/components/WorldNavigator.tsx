@@ -1,4 +1,13 @@
-import { Apple, Boxes, CircleDot, Droplets, Hammer, MapPin, Sprout } from "lucide-react";
+import {
+  Apple,
+  Boxes,
+  CircleDot,
+  Droplets,
+  Hammer,
+  MapPin,
+  Sprout,
+  UsersRound,
+} from "lucide-react";
 import {
   useEffect,
   useId,
@@ -11,6 +20,7 @@ import {
 import { sameWorldRef, worldRefKey, type WorldRef } from "../focus";
 import type {
   CreatureView,
+  GroupView,
   ResourceView,
   StructureView,
   TimelineEventView,
@@ -20,9 +30,13 @@ import { identityGlyph } from "./pixi/visual-grammar";
 import { deriveTrafficTrails } from "./pixi/traffic-trails";
 import { humanize } from "./ui";
 
-export type WorldNavigatorFilter = "all" | "creatures" | "resources" | "structures";
+export type WorldNavigatorFilter =
+  "all" | "creatures" | "groups" | "resources" | "structures";
 
-type NavigableWorldRef = Extract<WorldRef, { kind: "creature" | "resource" | "structure" }>;
+type NavigableWorldRef = Extract<
+  WorldRef,
+  { kind: "creature" | "group" | "resource" | "structure" }
+>;
 
 interface WorldNavigatorItem {
   readonly ref: NavigableWorldRef;
@@ -36,6 +50,7 @@ interface WorldNavigatorItem {
   readonly accessibleName: string;
   readonly alerts: readonly string[];
   readonly creature?: CreatureView;
+  readonly group?: GroupView;
   readonly resource?: ResourceView;
   readonly structure?: StructureView;
 }
@@ -46,6 +61,7 @@ const FILTERS: ReadonlyArray<{
 }> = [
   { id: "all", label: "All" },
   { id: "creatures", label: "Creatures" },
+  { id: "groups", label: "Groups" },
   { id: "resources", label: "Resources" },
   { id: "structures", label: "Structures" },
 ];
@@ -63,10 +79,35 @@ const resourceTitle = (resource: ResourceView): string =>
 
 const structureTitle = (structure: StructureView): string => humanize(structure.kind);
 
-const structureState = (structure: StructureView): string =>
-  structure.progress >= 99
+const structureState = (structure: StructureView): string => {
+  if (structure.kind === "SHELTER_SITE") {
+    return `${Math.max(0, Math.min(100, Math.round(structure.progress)))} percent built; selected communal shelter site`;
+  }
+  if (structure.kind === "ABANDONED_SHELTER") {
+    return `abandoned shelter; condition ${Math.round(structure.condition ?? 0)} percent`;
+  }
+  if (structure.kind === "SHELTER") {
+    return [
+      `condition ${Math.round(structure.condition ?? 0)} percent`,
+      `${structure.restingCreatures ?? 0} resting and ${structure.reservedSpaces ?? 0} reserved of ${structure.effectiveCapacity ?? 0} usable spaces`,
+      `${structure.memberOccupancy ?? 0} members and ${structure.guestOccupancy ?? 0} guests inside`,
+      structure.upkeepNeeded ? "upkeep needed" : "upkeep stable",
+    ].join("; ");
+  }
+  return structure.progress >= 99
     ? `complete, ${structure.stored} of ${structure.capacity} units stored`
     : `${Math.max(0, Math.min(100, Math.round(structure.progress)))} percent built`;
+};
+
+function structureAlerts(structure: StructureView): string[] {
+  if (structure.kind !== "SHELTER") return [];
+  return [
+    ...(structure.upkeepNeeded ? ["shelter needs upkeep"] : []),
+    ...((structure.reservedSpaces ?? 0) >= (structure.effectiveCapacity ?? 1)
+      ? ["all shelter spaces reserved"]
+      : []),
+  ];
+}
 
 function creatureAlerts(creature: CreatureView): string[] {
   return [
@@ -137,6 +178,35 @@ export function buildWorldNavigatorItems(view: WorldView): WorldNavigatorItem[] 
         creature,
       };
     });
+  const groups: WorldNavigatorItem[] = view.groups.flatMap((group) => {
+    if (!group.home) return [];
+    const activeShelter = view.structures.find(
+      (structure) => structure.id === group.activeShelterId,
+    );
+    const pendingShelter = view.structures.find(
+      (structure) => structure.id === group.pendingShelterId,
+    );
+    const shelterSummary = activeShelter
+      ? `home shelter ${Math.round(activeShelter.condition ?? 0)} percent condition`
+      : pendingShelter
+        ? `shelter ${Math.round(pendingShelter.progress)} percent built`
+        : "no communal shelter";
+    return [
+      {
+        ref: { kind: "group", id: group.id },
+        category: "groups",
+        id: group.id,
+        x: group.home.x,
+        y: group.home.y,
+        title: group.name,
+        kindLabel: group.stage === "PERSISTENT" ? "Persistent group" : "Group",
+        detail: `${group.memberIds.length} members; ${shelterSummary}`,
+        alerts: activeShelter ? structureAlerts(activeShelter) : [],
+        accessibleName: `${group.name}, group at ${locationLabel(group.home.x, group.home.y)}, ${group.memberIds.length} members, ${shelterSummary}`,
+        group,
+      },
+    ];
+  });
   const resources: WorldNavigatorItem[] = view.resources.map((resource) => {
     const alerts = resourceAlerts(resource);
     const access = resourceAccessSummary(resource);
@@ -162,29 +232,42 @@ export function buildWorldNavigatorItems(view: WorldView): WorldNavigatorItem[] 
       resource,
     };
   });
-  const structures: WorldNavigatorItem[] = view.structures.map((structure) => ({
-    ref: { kind: "structure", id: structure.id },
-    category: "structures",
-    id: structure.id,
-    x: structure.x,
-    y: structure.y,
-    title: structureTitle(structure),
-    kindLabel: structure.progress >= 99 ? "Structure" : "Construction",
-    detail: structureState(structure),
-    alerts: [],
-    accessibleName: `${structureTitle(structure)} ${structure.id}, at ${locationLabel(
-      structure.x,
-      structure.y,
-    )}, ${structureState(structure)}`,
-    structure,
-  }));
+  const structures: WorldNavigatorItem[] = view.structures.map((structure) => {
+    const alerts = structureAlerts(structure);
+    return {
+      ref: { kind: "structure", id: structure.id },
+      category: "structures",
+      id: structure.id,
+      x: structure.x,
+      y: structure.y,
+      title: structureTitle(structure),
+      kindLabel:
+        structure.kind === "SHELTER_SITE" || structure.progress < 99
+          ? "Construction"
+          : structure.kind === "ABANDONED_SHELTER"
+            ? "Former home"
+            : "Structure",
+      detail: structureState(structure),
+      alerts,
+      accessibleName: [
+        `${structureTitle(structure)} ${structure.id}`,
+        `at ${locationLabel(structure.x, structure.y)}`,
+        structureState(structure),
+        alerts.length > 0 ? `alert: ${alerts.join(", ")}` : null,
+      ]
+        .filter((part): part is string => part !== null)
+        .join(", "),
+      structure,
+    };
+  });
   const kindOrder: Record<NavigableWorldRef["kind"], number> = {
     creature: 0,
-    resource: 1,
-    structure: 2,
+    group: 1,
+    resource: 2,
+    structure: 3,
   };
 
-  return [...creatures, ...resources, ...structures].sort(
+  return [...creatures, ...groups, ...resources, ...structures].sort(
     (left, right) =>
       left.y - right.y ||
       left.x - right.x ||
@@ -211,6 +294,19 @@ export function worldTextSummary(view: WorldView): string {
   const busiestTrail = trafficTrails[0];
   const completed = view.structures.filter((structure) => structure.progress >= 99).length;
   const construction = view.structures.length - completed;
+  const activeShelters = view.structures.filter(
+    (structure) => structure.kind === "SHELTER",
+  );
+  const shelterSites = view.structures.filter(
+    (structure) => structure.kind === "SHELTER_SITE",
+  ).length;
+  const abandonedShelters = view.structures.filter(
+    (structure) => structure.kind === "ABANDONED_SHELTER",
+  ).length;
+  const shelterOccupancy = activeShelters.reduce(
+    (total, shelter) => total + (shelter.restingCreatures ?? 0),
+    0,
+  );
   const creatureNoun = living.length === 1 ? "creature" : "creatures";
   const tileNoun = occupiedTiles === 1 ? "tile" : "tiles";
   const resourceNoun = view.resources.length === 1 ? "site" : "sites";
@@ -218,7 +314,7 @@ export function worldTextSummary(view: WorldView): string {
   const structureNoun = completed === 1 ? "structure" : "structures";
   const startingConditions = view.scenario.startingFacts.join(" ");
   const landmarks = view.scenario.landmarks.map((landmark) => landmark.label).join(", ");
-  return `${view.scenario.name}, seed ${view.scenario.reference.seed}. ${view.scenario.dramaticQuestion} Starting conditions: ${startingConditions} ${landmarks ? `Named places: ${landmarks}. ` : ""}Current dish: ${view.width} by ${view.height}. ${living.length} living ${creatureNoun} across ${occupiedTiles} occupied ${tileNoun}. ${view.resources.length} resource ${resourceNoun} ${resourceVerb} ${resourceStock} units. ${waterSources.length} water ${waterSources.length === 1 ? "source holds" : "sources hold"} ${waterStock} units. Recent route history contains ${trafficTrails.length} traffic ${trafficTrails.length === 1 ? "trail" : "trails"}${busiestTrail ? `; the busiest was crossed ${busiestTrail.count} times` : ""}. ${completed} complete ${structureNoun} and ${construction} under construction.`;
+  return `${view.scenario.name}, seed ${view.scenario.reference.seed}. ${view.scenario.dramaticQuestion} Starting conditions: ${startingConditions} ${landmarks ? `Named places: ${landmarks}. ` : ""}Current dish: ${view.width} by ${view.height}. ${living.length} living ${creatureNoun} across ${occupiedTiles} occupied ${tileNoun}. ${view.resources.length} resource ${resourceNoun} ${resourceVerb} ${resourceStock} units. ${waterSources.length} water ${waterSources.length === 1 ? "source holds" : "sources hold"} ${waterStock} units. Recent route history contains ${trafficTrails.length} traffic ${trafficTrails.length === 1 ? "trail" : "trails"}${busiestTrail ? `; the busiest was crossed ${busiestTrail.count} times` : ""}. ${completed} complete ${structureNoun} and ${construction} under construction. Settlement: ${activeShelters.length} active shelters with ${shelterOccupancy} creatures resting, ${shelterSites} sites under construction, and ${abandonedShelters} abandoned shelters.`;
 }
 
 export function selectedWorldSummary(view: WorldView, selected: WorldRef | null): string {
@@ -243,6 +339,17 @@ export function selectedWorldSummary(view: WorldView, selected: WorldRef | null)
     const structure = view.structures.find((candidate) => candidate.id === selected.id);
     if (!structure) return "The selected structure is no longer present in the dish.";
     return `${structureTitle(structure)} ${structure.id} at ${locationLabel(structure.x, structure.y)}. ${structureState(structure)}.`;
+  }
+  if (selected.kind === "group") {
+    const group = view.groups.find((candidate) => candidate.id === selected.id);
+    if (!group) return "The selected group is no longer present in the dish.";
+    const active = view.structures.find(
+      (structure) => structure.id === group.activeShelterId,
+    );
+    const pending = view.structures.find(
+      (structure) => structure.id === group.pendingShelterId,
+    );
+    return `${group.name} has ${group.memberIds.length} members and ${Math.round(group.cohesion)} cohesion. ${active ? `Its active shelter has ${Math.round(active.condition ?? 0)} percent condition and ${active.restingCreatures ?? 0} creatures resting.` : pending ? `Its shelter site is ${Math.round(pending.progress)} percent built.` : "It has no communal shelter."}`;
   }
   return "The current evidence selection is outside the world-object navigator.";
 }
@@ -353,6 +460,16 @@ function NavigatorMark({ item }: { item: WorldNavigatorItem }) {
       </span>
     );
   }
+  if (item.group) {
+    return (
+      <span
+        className="world-navigator__mark world-navigator__mark--group"
+        aria-hidden="true"
+      >
+        <UsersRound size={15} />
+      </span>
+    );
+  }
   if (item.resource) {
     return (
       <span
@@ -429,6 +546,7 @@ export function WorldNavigator({
     if (
       keyboardFocusedRef === null ||
       (keyboardFocusedRef.kind !== "creature" &&
+        keyboardFocusedRef.kind !== "group" &&
         keyboardFocusedRef.kind !== "resource" &&
         keyboardFocusedRef.kind !== "structure") ||
       filteredItems.some((item) => worldRefKey(item.ref) === keyboardFocusedKey)

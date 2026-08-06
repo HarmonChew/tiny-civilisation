@@ -52,6 +52,12 @@ function GroupLedger({
             const stores = view.structures.filter((structure) =>
               group.storageIds.includes(structure.id),
             );
+            const activeShelter = view.structures.find(
+              (structure) => structure.id === group.activeShelterId,
+            );
+            const pendingShelter = view.structures.find(
+              (structure) => structure.id === group.pendingShelterId,
+            );
             return (
               <div className="group-line" key={group.id}>
                 <div className="group-line__identity">
@@ -73,7 +79,15 @@ function GroupLedger({
                 </div>
                 <div className="group-line__facts">
                   <span>{Math.round(group.cohesion)} cohesion</span>
-                  <span>{stores.length > 0 ? `${stores.length} store` : "no store"}</span>
+                  <span>
+                    {activeShelter
+                      ? `${Math.round(activeShelter.condition ?? 0)}% shelter`
+                      : pendingShelter
+                        ? `${Math.round(pendingShelter.progress)}% shelter site`
+                        : stores.length > 0
+                          ? "ready to settle"
+                          : "no store"}
+                  </span>
                 </div>
               </div>
             );

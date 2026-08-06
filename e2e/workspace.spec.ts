@@ -2,13 +2,17 @@ import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import {
   advanceSimulation,
+  assertCompatibleSimulationState,
   createExperiment,
   createScenarioReference,
   createSimulation,
   hashSimulationState,
+  rankShelterSites,
   serializeExperiment,
+  serializeSimulationSave,
   setExperimentBranchResult,
   type ScenarioId,
+  type ShelterStructureState,
   type SimulationState,
 } from "@tiny-civ/sim-core";
 
@@ -104,6 +108,15 @@ interface ExperimentFixture {
   readonly state: SimulationState;
 }
 
+interface RelocationCompatibilityFixture {
+  readonly serializedWorkspace: string;
+  readonly hash: string;
+  readonly tick: number;
+  readonly groupId: number;
+  readonly activeShelterId: number;
+  readonly abandonedShelterId: number;
+}
+
 const experimentFixtures = new Map<string, ExperimentFixture>();
 
 function currentExperimentFixture(
@@ -140,6 +153,74 @@ function storyExperimentBuffer(scene: StoryScene): Buffer {
 
 function phase4ScenarioExperimentBuffer(scenario: Phase4Scenario, tick: number): Buffer {
   return currentExperimentFixture(scenario.id, scenario.seed, tick).buffer;
+}
+
+/**
+ * A contract-valid state-rendering fixture for a lifecycle state that canonical
+ * release seeds do not reach within 10,000 ticks. It deliberately adds no
+ * relocation event, so the journey verifies current-state rendering only and
+ * never presents the fixture as naturally observed history.
+ */
+function relocationCompatibilityFixture(): RelocationCompatibilityFixture {
+  const state = createSimulation(createScenarioReference("split-banks", 7_319));
+  advanceSimulation(state, 923);
+  const group = state.groups.find((candidate) => candidate.activeShelterId !== null);
+  if (!group) throw new Error("The relocation fixture requires an active shelter.");
+  const active = state.structures.find(
+    (structure): structure is ShelterStructureState =>
+      structure.id === group.activeShelterId && structure.kind === "SHELTER",
+  );
+  if (!active) throw new Error("The relocation fixture lost its active shelter.");
+  const replacementSite = rankShelterSites(state, group, true)[0];
+  if (!replacementSite)
+    throw new Error("The relocation fixture has no legal replacement site.");
+
+  const replacementId = state.nextEntityId++;
+  const replacement: ShelterStructureState = {
+    ...active,
+    id: replacementId,
+    kind: "SHELTER",
+    tileIndex: replacementSite.tileIndex,
+    completedTick: state.tick,
+    siteAssessment: {
+      ...replacementSite.assessment,
+      selectedAtTick: state.tick,
+    },
+    builtFromShelterId: active.id,
+    lastUsedTick: null,
+  };
+  active.kind = "ABANDONED_SHELTER";
+  state.structures.push(replacement);
+  group.activeShelterId = replacement.id;
+  group.pendingShelterId = null;
+  group.homeTileIndex = replacement.tileIndex;
+  group.shelterRelocations = 1;
+  group.shelterCommitUntilTick = state.tick + 1_500;
+  group.shelterRelocationCandidate = null;
+  state.metrics.shelterRelocations += 1;
+
+  assertCompatibleSimulationState(state);
+  const hash = hashSimulationState(state);
+  const experiment = setExperimentBranchResult(
+    createExperiment(state.scenario),
+    "baseline",
+    state.tick,
+    hash,
+  );
+  return {
+    serializedWorkspace: JSON.stringify({
+      kind: "tiny-civilisation/workspace",
+      schemaVersion: 4,
+      activeBranchId: experiment.rootBranchId,
+      experiment,
+      simulationSave: serializeSimulationSave(state),
+    }),
+    hash,
+    tick: state.tick,
+    groupId: group.id,
+    activeShelterId: replacement.id,
+    abandonedShelterId: active.id,
+  };
 }
 
 function collectBrowserErrors(page: Page): string[] {
@@ -307,9 +388,9 @@ async function waitForRenderedDish(page: Page): Promise<void> {
 }
 
 async function dismissRetainedMoments(page: Page): Promise<void> {
-  const momentQueue = page.getByRole("heading", { name: "Moment queue" });
+  const momentQueue = page.getByRole("region", { name: "Moment queue" });
   for (let index = 0; index < 16 && (await momentQueue.isVisible()); index++) {
-    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
+    await momentQueue.getByRole("button", { name: "Dismiss", exact: true }).click();
   }
   await expect(momentQueue).toBeHidden();
 }
@@ -391,6 +472,30 @@ async function loadCurrentScenarioAtTick(
   await expect(page.locator(".status-rail__hash")).toContainText(fixture.hash.slice(0, 12));
   await waitForRenderedDish(page);
   return fixture;
+}
+
+async function loadRelocationCompatibilityState(
+  page: Page,
+  fixture: RelocationCompatibilityFixture,
+): Promise<void> {
+  await openNotebook(page);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText(/Saved locally in this browser/)).toBeVisible();
+  await page.evaluate((serializedWorkspace) => {
+    localStorage.setItem("tiny-civilisation/active-experiment/v1", serializedWorkspace);
+    localStorage.setItem(
+      "tiny-civilisation/active-experiment/fallback-authoritative/v1",
+      "true",
+    );
+  }, fixture.serializedWorkspace);
+  await page.getByRole("button", { name: "Load saved", exact: true }).click();
+  await expect(
+    page.getByText(`Restored tick ${fixture.tick.toString()} without changing its hash.`),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".status-rail__hash")).toContainText(fixture.hash.slice(0, 12));
+  await closeNotebook(page);
+  await dismissRetainedMoments(page);
+  await waitForRenderedDish(page);
 }
 
 async function showQueuedMoment(page: Page, title: string) {
@@ -505,6 +610,223 @@ test("runs the real Worker, renderer, observation controls, and causal trail @re
   expect(browserErrors).toEqual([]);
 });
 
+test("adds and removes material as observed supply changes @release", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  await openPausedWorkspace(page);
+
+  await page.getByRole("button", { name: "Add material" }).click();
+  await clickWorldTile(page, 16, 10);
+  await expect(
+    page.getByText("Material addition of 12 units scheduled at 16, 10 for tick 0."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /Advance one tick/ }).click();
+
+  await page.getByRole("button", { name: "Remove material" }).click();
+  await clickWorldTile(page, 16, 10);
+  await expect(
+    page.getByText("Material removal of 12 units scheduled at 16, 10 for tick 2."),
+  ).toBeVisible();
+  await dismissRetainedMoments(page);
+
+  await page.getByRole("button", { name: "You", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: /Material appeared\. Inspect causal evidence\./ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Material vanished\. Inspect causal evidence\./ }),
+  ).toBeVisible();
+  expect(browserErrors).toEqual([]);
+});
+
+test("inspects a shelter site, construction, and active responsive home @release", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const browserErrors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await openPausedWorkspace(page);
+  await loadCurrentScenarioAtTick(page, "split-banks", "Split Banks", 7_319, 744);
+  await dismissRetainedMoments(page);
+
+  await showRegion(page, "Chronicle");
+  await page.getByRole("button", { name: "Structures", exact: true }).click();
+  const site = page.getByRole("button", { name: /^Shelter site 14,/i });
+  await expect(site).toHaveAttribute("aria-label", /0 percent built/i);
+  await site.click();
+  await showRegion(page, "Subject");
+  await expect(page.getByRole("heading", { name: "Shelter site" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Why this site" })).toBeVisible();
+  await expect(page.getByText("0 of 18 units")).toBeVisible();
+  await expect(page.getByText("10000 work units")).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-site-wide.png"),
+    fullPage: true,
+  });
+
+  await loadCurrentScenarioAtTick(page, "split-banks", "Split Banks", 7_319, 782);
+  await dismissRetainedMoments(page);
+  await showRegion(page, "Chronicle");
+  await page.getByRole("button", { name: "Structures", exact: true }).click();
+  const constructionSite = page.getByRole("button", { name: /^Shelter site 14,/i });
+  await expect(constructionSite).toHaveAttribute("aria-label", /16 percent built/i);
+  await constructionSite.click();
+  await showRegion(page, "Subject");
+  await expect(page.getByText("1 of 18 units")).toBeVisible();
+  await expect(page.getByText("16 percent", { exact: true }).first()).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-construction-wide.png"),
+    fullPage: true,
+  });
+
+  await loadCurrentScenarioAtTick(page, "split-banks", "Split Banks", 7_319, 923);
+  await dismissRetainedMoments(page);
+  await showRegion(page, "Chronicle");
+  const shelter = page.getByRole("button", { name: /^Shelter 14,/i });
+  await expect(shelter).toHaveAttribute("aria-label", /condition 100 percent/i);
+  await shelter.click();
+  await showRegion(page, "Subject");
+  await expect(page.getByRole("heading", { name: "Shelter", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Use and upkeep" })).toBeVisible();
+  await expect(page.getByText("6 of 6")).toBeVisible();
+
+  await showRegion(page, "Chronicle");
+  await page
+    .locator(".world-navigator")
+    .getByRole("button", { name: "All", exact: true })
+    .click();
+  await page.getByRole("button", { name: /^Iri,/ }).click();
+  await showRegion(page, "Dish");
+  await clickWorldTile(page, 16, 7);
+  await showRegion(page, "Subject");
+  await expect(page.getByRole("heading", { name: "Shelter", exact: true })).toBeVisible();
+
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-active-wide.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await showRegion(page, "Subject");
+  await expectNoPageOverflow(page);
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-active-medium.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await showRegion(page, "Subject");
+  await expectNoPageOverflow(page);
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-active-narrow.png"),
+    fullPage: true,
+  });
+
+  expect(browserErrors).toEqual([]);
+});
+
+test("inspects shelter occupancy and degradation @release", async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
+  const browserErrors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await openPausedWorkspace(page);
+  await loadCurrentScenarioAtTick(page, "split-banks", "Split Banks", 7_319, 977);
+  await dismissRetainedMoments(page);
+  await showRegion(page, "Chronicle");
+  await page.getByRole("button", { name: "Structures", exact: true }).click();
+  await page.getByRole("button", { name: /^Shelter 14,/i }).click();
+  await showRegion(page, "Subject");
+  await expect(page.getByText("1 / 1", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 members; 0 guests", { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-occupied-wide.png"),
+    fullPage: true,
+  });
+
+  await showRegion(page, "Chronicle");
+  await page
+    .locator(".world-navigator")
+    .getByRole("button", { name: "All", exact: true })
+    .click();
+  await page.getByRole("button", { name: /^Pela,/ }).click();
+  await showRegion(page, "Subject");
+  const pelaShelterAccess = page.getByLabel("Pela shelter access");
+  await expect(pelaShelterAccess).toContainText("Shelter 14");
+  await expect(pelaShelterAccess).toContainText("Member");
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-resting-creature-wide.png"),
+    fullPage: true,
+  });
+
+  await loadCurrentScenarioAtTick(page, "split-banks", "Split Banks", 7_319, 3_337);
+  await dismissRetainedMoments(page);
+  await showRegion(page, "Chronicle");
+  await page.getByRole("button", { name: "Structures", exact: true }).click();
+  await page.getByRole("button", { name: /^Shelter 14,/i }).click();
+  await showRegion(page, "Subject");
+  await expect(page.getByText("Active; upkeep needed", { exact: true })).toBeVisible();
+  await expect(page.getByText("4 of 6", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Material maintenance needed", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-degraded-wide.png"),
+    fullPage: true,
+  });
+
+  expect(browserErrors).toEqual([]);
+});
+
+test("inspects shelter relocation compatibility state @release", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(90_000);
+  const browserErrors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await openPausedWorkspace(page);
+  const relocationFixture = relocationCompatibilityFixture();
+  await loadRelocationCompatibilityState(page, relocationFixture);
+  await showRegion(page, "Chronicle");
+  await page
+    .locator(".world-navigator")
+    .getByRole("button", { name: "Groups", exact: true })
+    .click();
+  await page.getByRole("button", { name: /^Mossrest,/ }).click();
+  await showRegion(page, "Subject");
+  await expect(page.getByText(/1 of 1 used/)).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-relocation-compat-group-wide.png"),
+    fullPage: true,
+  });
+
+  await page
+    .getByRole("button", {
+      name: new RegExp(`^Active shelter ${relocationFixture.activeShelterId.toString()}`),
+    })
+    .click();
+  await expect(page.getByText("Replaced former home", { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-relocation-compat-active-wide.png"),
+    fullPage: true,
+  });
+
+  await page
+    .getByRole("button", {
+      name: `Shelter ${relocationFixture.abandonedShelterId.toString()}`,
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Abandoned shelter", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Former home record" })).toBeVisible();
+  await expect(
+    page.getByText("Inspectable history only; no rest or upkeep claims", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("shelter-relocation-compat-abandoned-wide.png"),
+    fullPage: true,
+  });
+  expect(browserErrors).toEqual([]);
+});
+
 test("creates, preserves, replays, compares, exports, imports, and explains an experiment @release", async ({
   page,
 }) => {
@@ -576,6 +898,11 @@ test("creates, preserves, replays, compares, exports, imports, and explains an e
   await expect(page.getByText("Equal horizon: tick 2")).toBeVisible();
   await expect(page.getByRole("row", { name: /Thefts/ })).toBeVisible();
   await expect(page.getByRole("row", { name: /Confrontations/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /Sheltered rests completed/ })).toBeVisible();
+  await expect(
+    page.getByRole("row", { name: /Mean active-shelter condition/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("row", { name: /Shelter claims denied/ })).toBeVisible();
 
   await page.getByRole("button", { name: "Record", exact: true }).click();
   const downloadPromise = page.waitForEvent("download");
@@ -592,14 +919,19 @@ test("creates, preserves, replays, compares, exports, imports, and explains an e
   ).toBeVisible();
 
   await closeNotebook(page);
-  await page.getByLabel("Simulation speed").getByRole("button", { name: /^1/ }).click();
-  await page.getByRole("button", { name: /Play simulation/ }).click();
   const explainedOutcome = page
     .locator(".timeline-entry:not(.timeline-entry--player)")
     .getByRole("button", { name: /Food shared\. Inspect causal evidence\./ })
     .first();
-  await expect(explainedOutcome).toBeVisible({ timeout: 8_000 });
+  const oneTimesSpeed = page
+    .getByLabel("Simulation speed")
+    .getByRole("button", { name: /^1/ });
+  await oneTimesSpeed.click();
+  await expect(oneTimesSpeed).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: /Play simulation/ }).click();
+  await expect(explainedOutcome).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: /Pause simulation/ }).click();
+  expect(await displayedTickFloor(page)).toBeGreaterThanOrEqual(50);
   await explainedOutcome.click();
   await expect(page.getByRole("heading", { name: "Causal explorer" })).toBeVisible();
   await expect(
@@ -1002,7 +1334,7 @@ test("water depletion at medium viewport", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
   await page.setViewportSize({ width: medium.width, height: medium.height });
-  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 903);
+  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 919);
 
   const queue = await showQueuedMoment(page, "Water source depleted");
   await expect(queue).toContainText(/drew the potable water source empty/i);

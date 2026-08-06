@@ -27,6 +27,10 @@ export const PLAN_KINDS = [
   "FETCH_WATER",
   "WITHDRAW_SHARED_FOOD",
   "REST_SAFELY",
+  "ESTABLISH_SHELTER",
+  "BUILD_COMMUNAL_SHELTER",
+  "REST_IN_SHELTER",
+  "MAINTAIN_COMMUNAL_SHELTER",
   "BUILD_PRIVATE_RESERVE",
   "SHARE_WITH_OTHER",
   "SHARE_WATER_WITH_OTHER",
@@ -48,6 +52,10 @@ const PLAN_BY_ACTION = {
   EAT: "EAT_CARRIED_FOOD",
   DRINK: "DRINK_CARRIED_WATER",
   REST: "REST_SAFELY",
+  ESTABLISH_SHELTER_SITE: "ESTABLISH_SHELTER",
+  BUILD_SHELTER: "BUILD_COMMUNAL_SHELTER",
+  REST_SHELTERED: "REST_IN_SHELTER",
+  MAINTAIN_SHELTER: "MAINTAIN_COMMUNAL_SHELTER",
   SHARE: "SHARE_WITH_OTHER",
   SHARE_WATER: "SHARE_WATER_WITH_OTHER",
   KEEP: "BUILD_PRIVATE_RESERVE",
@@ -64,14 +72,21 @@ const PLAN_BY_ACTION = {
 const ACTIONS_BY_DESIRE: Record<DesireKind, readonly ActionKind[]> = {
   RELIEVE_HUNGER: ["EAT", "GATHER_FOOD", "WITHDRAW", "STEAL"],
   RELIEVE_THIRST: ["DRINK", "GATHER_WATER"],
-  RECOVER_ENERGY: ["REST"],
+  RECOVER_ENERGY: ["REST", "REST_SHELTERED"],
   SECURE_PROVISIONS: ["GATHER_FOOD", "DEPOSIT", "EXPLORE"],
   PRESERVE_PRIVATE_RESERVE: ["KEEP", "GATHER_FOOD", "EAT", "EXPLORE"],
   BELONG: ["JOIN_GROUP", "SHARE", "SHARE_WATER", "BUILD_STORAGE", "GATHER_MATERIAL"],
   RECIPROCATE_OR_REPAIR: ["SHARE", "SHARE_WATER", "JOIN_GROUP"],
   PROTECT_PERSON_OR_GROUP: ["GUARD", "ATTACK"],
   AVOID_THREAT: ["FLEE", "REST"],
-  COMPLETE_SHARED_WORK: ["GATHER_MATERIAL", "BUILD_STORAGE", "DEPOSIT"],
+  COMPLETE_SHARED_WORK: [
+    "GATHER_MATERIAL",
+    "BUILD_STORAGE",
+    "DEPOSIT",
+    "ESTABLISH_SHELTER_SITE",
+    "BUILD_SHELTER",
+    "MAINTAIN_SHELTER",
+  ],
 };
 
 export function planForAction(action: ActionKind): PlanKind {
@@ -106,6 +121,7 @@ export function desireForAction(
           ? "PRESERVE_PRIVATE_RESERVE"
           : "SECURE_PROVISIONS";
     case "REST":
+    case "REST_SHELTERED":
       return "RECOVER_ENERGY";
     case "KEEP":
       return "PRESERVE_PRIVATE_RESERVE";
@@ -125,6 +141,9 @@ export function desireForAction(
       return "SECURE_PROVISIONS";
     case "GATHER_MATERIAL":
     case "BUILD_STORAGE":
+    case "ESTABLISH_SHELTER_SITE":
+    case "BUILD_SHELTER":
+    case "MAINTAIN_SHELTER":
       return "COMPLETE_SHARED_WORK";
     case "GUARD":
     case "ATTACK":
@@ -181,6 +200,10 @@ export const PLAN_LABELS: Record<PlanKind, string> = {
   FETCH_WATER: "fetch potable water",
   WITHDRAW_SHARED_FOOD: "draw from the shared store",
   REST_SAFELY: "rest somewhere safe",
+  ESTABLISH_SHELTER: "establish a communal shelter site",
+  BUILD_COMMUNAL_SHELTER: "build the communal shelter",
+  REST_IN_SHELTER: "rest in the communal shelter",
+  MAINTAIN_COMMUNAL_SHELTER: "maintain the communal shelter",
   BUILD_PRIVATE_RESERVE: "hold a small reserve",
   SHARE_WITH_OTHER: "share with another creature",
   SHARE_WATER_WITH_OTHER: "share water with another creature",

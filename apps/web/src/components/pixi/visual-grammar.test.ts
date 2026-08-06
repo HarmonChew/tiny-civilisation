@@ -51,6 +51,9 @@ describe("dish visual grammar", () => {
     expect(actionFamily("EAT")).toBe("eat");
     expect(actionFamily("DRINK")).toBe("drink");
     expect(actionFamily("BUILD_STORAGE")).toBe("build");
+    expect(actionFamily("ESTABLISH_SHELTER_SITE")).toBe("build");
+    expect(actionFamily("BUILD_SHELTER")).toBe("build");
+    expect(actionFamily("MAINTAIN_SHELTER")).toBe("maintenance");
     expect(actionFamily("SHARE")).toBe("share");
     expect(actionFamily("SHARE_WATER")).toBe("share");
     expect(actionFamily("GUARD")).toBe("guard");
@@ -58,6 +61,7 @@ describe("dish visual grammar", () => {
     expect(actionFamily("STEAL")).toBe("conflict");
     expect(actionFamily("FLEE")).toBe("flee");
     expect(actionFamily("REST")).toBe("rest");
+    expect(actionFamily("REST_SHELTERED")).toBe("rest");
     expect(actionFamily("DEPOSIT")).toBe("storage");
     expect(actionFamily("EXPLORE")).toBe("travel");
     expect(actionFamily("KEEP")).toBe("storage");

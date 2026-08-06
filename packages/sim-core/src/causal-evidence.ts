@@ -230,7 +230,16 @@ function structureName(
   structure: SimulationState["structures"][number],
 ): string {
   const owner = groupName(state, structure.groupId);
-  const kind = structure.kind === "STORAGE" ? "shared store" : "storage site";
+  const kind =
+    structure.kind === "STORAGE"
+      ? "shared store"
+      : structure.kind === "STORAGE_SITE"
+        ? "storage site"
+        : structure.kind === "SHELTER_SITE"
+          ? "shelter site"
+          : structure.kind === "SHELTER"
+            ? "communal shelter"
+            : "abandoned shelter";
   return owner
     ? `${owner}'s ${kind}`
     : `${humanize(kind)} at ${tileLabel(state, structure.tileIndex)}`;

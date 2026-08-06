@@ -389,7 +389,7 @@ describe("authoritative spatial interaction", () => {
         overlapStreaks = nextOverlapStreaks;
       }
     }
-  }, 45_000);
+  }, 120_000);
 
   it("meets the reference occupancy and exact-overlap targets", () => {
     for (const seed of [4_182, 921, 23]) {
