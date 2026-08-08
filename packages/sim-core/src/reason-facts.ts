@@ -19,6 +19,7 @@ export const REASON_FACT_KIND_ORDER = [
   "INTERVENTION",
   "TRAIT",
   "WORLD",
+  "LIFECYCLE",
 ] as const satisfies readonly ReasonFactKind[];
 
 const implementationOnly = new Set([
@@ -32,6 +33,11 @@ function humanize(value: string): string {
 }
 
 function kindForKey(key: string): ReasonFactKind {
+  if (
+    /family|child|parent|pregnan|birth|mourn|estate|heir|life stage|population/i.test(key)
+  ) {
+    return "LIFECYCLE";
+  }
   if (/hunger|thirst|fatigue|injury|health|rest|hydration/i.test(key)) return "NEED";
   if (/carried|reserve|surplus|inventory/i.test(key)) return "INVENTORY";
   if (/remember|grievance/i.test(key)) return "MEMORY";

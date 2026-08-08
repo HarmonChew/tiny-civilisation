@@ -369,6 +369,67 @@ describe("App isolated replay session", () => {
     );
   });
 
+  it("keeps a deceased creature selected as a permanent record and stops following it", async () => {
+    let updateRuntimeView: (updater: (current: WorldView) => WorldView) => void = () => {
+      throw new Error("Missing runtime view updater.");
+    };
+    mocks.useSimulationController.mockImplementation(() => {
+      const [runtimeView, setRuntimeView] = useState(testContext.view);
+      updateRuntimeView = (updater) => setRuntimeView(updater);
+      return {
+        ...simulationController(),
+        view: runtimeView,
+        scenario: runtimeView.scenario.reference,
+      };
+    });
+
+    render(<App />);
+    establishLiveContext();
+    const selected = testContext.view.creatures.find((creature) => creature.id === 2);
+    if (!selected) throw new Error("Missing selected creature fixture.");
+    const applyRuntimeView = updateRuntimeView;
+
+    act(() => {
+      applyRuntimeView((current) => ({
+        ...current,
+        creatures: current.creatures.filter((creature) => creature.id !== selected.id),
+        lifeRecords: [
+          ...(current.lifeRecords ?? []),
+          {
+            id: selected.id,
+            name: selected.name,
+            color: selected.color,
+            sex: selected.sex ?? "MALE",
+            childIds: [],
+            birthTick: selected.birthTick ?? -10_000,
+            deathTick: current.tick,
+            ageTicks: selected.ageTicks ?? 10_000,
+            finalLifeStage: selected.lifeStage ?? "ADULT",
+            deathCause: "INJURY",
+            inheritedTraits: selected.inheritedTraits ?? [],
+            skillPotential: selected.skillPotential ?? [],
+            majorEventIds: [],
+          },
+        ],
+        population: current.population - 1,
+      }));
+    });
+
+    await waitFor(() => {
+      expectStageState({
+        selected: "2",
+        focused: "1",
+        followed: "none",
+        replayEvent: "live",
+      });
+    });
+    expect(stage().getAttribute("data-selected-ref")).toBe("creature:2");
+    expect(screen.getByTestId("inspector").getAttribute("data-creature")).toBe("none");
+    expect(screen.getByTestId("inspector").getAttribute("data-subject-ref")).toBe(
+      "creature:2",
+    );
+  });
+
   it("resolves actorless settlement evidence to its structure or group subject", () => {
     const settlementView: WorldView = {
       ...testContext.view,

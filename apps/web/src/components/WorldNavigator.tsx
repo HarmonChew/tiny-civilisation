@@ -4,6 +4,7 @@ import {
   CircleDot,
   Droplets,
   Hammer,
+  HeartHandshake,
   MapPin,
   Sprout,
   UsersRound,
@@ -21,6 +22,8 @@ import { sameWorldRef, worldRefKey, type WorldRef } from "../focus";
 import type {
   CreatureView,
   GroupView,
+  LifeRecordView,
+  MemorialView,
   ResourceView,
   StructureView,
   TimelineEventView,
@@ -31,11 +34,11 @@ import { deriveTrafficTrails } from "./pixi/traffic-trails";
 import { humanize } from "./ui";
 
 export type WorldNavigatorFilter =
-  "all" | "creatures" | "groups" | "resources" | "structures";
+  "all" | "creatures" | "remembered" | "groups" | "resources" | "structures";
 
 type NavigableWorldRef = Extract<
   WorldRef,
-  { kind: "creature" | "group" | "resource" | "structure" }
+  { kind: "creature" | "life-record" | "memorial" | "group" | "resource" | "structure" }
 >;
 
 interface WorldNavigatorItem {
@@ -53,6 +56,8 @@ interface WorldNavigatorItem {
   readonly group?: GroupView;
   readonly resource?: ResourceView;
   readonly structure?: StructureView;
+  readonly memorial?: MemorialView;
+  readonly lifeRecord?: LifeRecordView;
 }
 
 const FILTERS: ReadonlyArray<{
@@ -61,6 +66,7 @@ const FILTERS: ReadonlyArray<{
 }> = [
   { id: "all", label: "All" },
   { id: "creatures", label: "Creatures" },
+  { id: "remembered", label: "Remembered" },
   { id: "groups", label: "Groups" },
   { id: "resources", label: "Resources" },
   { id: "structures", label: "Structures" },
@@ -158,7 +164,7 @@ export function buildWorldNavigatorItems(view: WorldView): WorldNavigatorItem[] 
         y: creature.y,
         title: creature.name,
         kindLabel: creature.role,
-        detail: `${humanize(creature.action)} · thirst ${Math.round(creature.thirst)}% · ${water} water carried`,
+        detail: `${humanize(creature.action)}; thirst ${Math.round(creature.thirst)}%; ${water} water carried`,
         accessibleName: [
           creature.name,
           creature.role,
@@ -206,6 +212,40 @@ export function buildWorldNavigatorItems(view: WorldView): WorldNavigatorItem[] 
         group,
       },
     ];
+  });
+  const memorials: WorldNavigatorItem[] = (view.memorials ?? []).map((memorial) => ({
+    ref: { kind: "memorial", id: memorial.id },
+    category: "remembered",
+    id: memorial.id,
+    x: memorial.x,
+    y: memorial.y,
+    title: `${memorial.deceasedName}'s memorial`,
+    kindLabel: "Temporary memorial",
+    detail: `${memorial.mournersRemaining} mourners remaining; estate ${memorial.estate.water} water, ${memorial.estate.food} food, ${memorial.estate.material} material`,
+    accessibleName: `${memorial.deceasedName}'s temporary memorial at ${locationLabel(memorial.x, memorial.y)}, expires at tick ${memorial.expiresTick}, ${memorial.mournersRemaining} mourners remaining`,
+    alerts: [],
+    memorial,
+  }));
+  const lifeRecords: WorldNavigatorItem[] = (view.lifeRecords ?? []).map((record) => {
+    const memorial = (view.memorials ?? []).find(
+      (candidate) => candidate.deceasedId === record.id,
+    );
+    const group = view.groups.find((candidate) => candidate.id === record.finalGroupId);
+    const x = memorial?.x ?? group?.home?.x ?? 0;
+    const y = memorial?.y ?? group?.home?.y ?? 0;
+    return {
+      ref: { kind: "life-record", id: record.id },
+      category: "remembered",
+      id: record.id,
+      x,
+      y,
+      title: record.name,
+      kindLabel: "Permanent life record",
+      detail: `${humanize(record.finalLifeStage)}; ${humanize(record.deathCause)} at tick ${record.deathTick}`,
+      accessibleName: `${record.name}, permanent life record, ${humanize(record.sex)}, ${humanize(record.finalLifeStage)}, died from ${humanize(record.deathCause)} at tick ${record.deathTick}`,
+      alerts: [],
+      lifeRecord: record,
+    };
   });
   const resources: WorldNavigatorItem[] = view.resources.map((resource) => {
     const alerts = resourceAlerts(resource);
@@ -262,12 +302,21 @@ export function buildWorldNavigatorItems(view: WorldView): WorldNavigatorItem[] 
   });
   const kindOrder: Record<NavigableWorldRef["kind"], number> = {
     creature: 0,
-    group: 1,
-    resource: 2,
-    structure: 3,
+    memorial: 1,
+    "life-record": 2,
+    group: 3,
+    resource: 4,
+    structure: 5,
   };
 
-  return [...creatures, ...groups, ...resources, ...structures].sort(
+  return [
+    ...creatures,
+    ...memorials,
+    ...lifeRecords,
+    ...groups,
+    ...resources,
+    ...structures,
+  ].sort(
     (left, right) =>
       left.y - right.y ||
       left.x - right.x ||
@@ -326,8 +375,30 @@ export function selectedWorldSummary(view: WorldView, selected: WorldRef | null)
   }
   if (selected.kind === "creature") {
     const creature = view.creatures.find((candidate) => candidate.id === selected.id);
-    if (!creature) return "The selected creature is no longer present in the dish.";
+    if (!creature) {
+      const record = (view.lifeRecords ?? []).find(
+        (candidate) => candidate.id === selected.id,
+      );
+      return record
+        ? `${record.name} has died; selection remains on their permanent life record. Cause: ${humanize(record.deathCause)} at tick ${record.deathTick}. Follow is off.`
+        : "The selected creature is no longer present in the dish.";
+    }
     return `${creature.name} at ${locationLabel(creature.x, creature.y)}. Thirst ${Math.round(creature.thirst)} percent; carrying ${carriedWater(creature)} water units. ${creature.summary.desire} ${creature.summary.plan} ${creature.summary.action} ${creature.summary.reason}`;
+  }
+  if (selected.kind === "life-record") {
+    const record = (view.lifeRecords ?? []).find(
+      (candidate) => candidate.id === selected.id,
+    );
+    if (!record) return "The selected permanent life record is not loaded.";
+    return `${record.name} is remembered permanently. ${humanize(record.sex)}; ${humanize(record.finalLifeStage)}; died from ${humanize(record.deathCause)} at tick ${record.deathTick}.`;
+  }
+  if (selected.kind === "memorial") {
+    const memorial = (view.memorials ?? []).find(
+      (candidate) => candidate.id === selected.id,
+    );
+    if (!memorial)
+      return "The selected memorial has expired; its life record remains available.";
+    return `${memorial.deceasedName}'s memorial at ${locationLabel(memorial.x, memorial.y)}. It expires at tick ${memorial.expiresTick}; ${memorial.mournersRemaining} mourners remain.`;
   }
   if (selected.kind === "resource") {
     const resource = view.resources.find((candidate) => candidate.id === selected.id);
@@ -470,6 +541,16 @@ function NavigatorMark({ item }: { item: WorldNavigatorItem }) {
       </span>
     );
   }
+  if (item.lifeRecord || item.memorial) {
+    return (
+      <span
+        className="world-navigator__mark world-navigator__mark--remembered"
+        aria-hidden="true"
+      >
+        <HeartHandshake size={15} />
+      </span>
+    );
+  }
   if (item.resource) {
     return (
       <span
@@ -546,6 +627,8 @@ export function WorldNavigator({
     if (
       keyboardFocusedRef === null ||
       (keyboardFocusedRef.kind !== "creature" &&
+        keyboardFocusedRef.kind !== "life-record" &&
+        keyboardFocusedRef.kind !== "memorial" &&
         keyboardFocusedRef.kind !== "group" &&
         keyboardFocusedRef.kind !== "resource" &&
         keyboardFocusedRef.kind !== "structure") ||
@@ -737,7 +820,9 @@ export function WorldNavigator({
         >
           {filteredItems.map((item, index) => {
             const key = worldRefKey(item.ref);
-            const selected = sameWorldRef(selectedRef, item.ref);
+            const selected =
+              sameWorldRef(selectedRef, item.ref) ||
+              (selectedRef?.kind === "creature" && item.lifeRecord?.id === selectedRef.id);
             const focused = sameWorldRef(focusedRef, item.ref);
             return (
               <li key={key}>
@@ -768,7 +853,7 @@ export function WorldNavigator({
                     <span>{item.detail}</span>
                     {item.alerts.length > 0 ? (
                       <em className="world-navigator__alert">
-                        Alert: {item.alerts.join(" · ")}
+                        Alert: {item.alerts.join(", ")}
                       </em>
                     ) : null}
                   </span>

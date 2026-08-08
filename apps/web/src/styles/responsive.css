@@ -161,6 +161,7 @@
   }
 
   .filter-strip button,
+  .lineage-links button,
   .relationship-line > button {
     min-height: 44px;
   }
@@ -238,6 +239,10 @@
   }
 
   .trait-list {
+    grid-template-columns: 1fr;
+  }
+
+  .life-record-facts {
     grid-template-columns: 1fr;
   }
 

@@ -908,7 +908,8 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
     (value.schemaVersion === 1 ||
       value.schemaVersion === 2 ||
       value.schemaVersion === 3 ||
-      value.schemaVersion === 4)
+      value.schemaVersion === 4 ||
+      value.schemaVersion === 5)
   ) {
     const legacySchemaVersion = value.schemaVersion;
     const legacy = exactObject(
@@ -934,12 +935,16 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
       legacySchemaVersion === 3 && legacyBehavior === 3 && legacyState === 3;
     const isPhaseFourBehavior =
       legacySchemaVersion === 4 && legacyBehavior === 4 && legacyState === 4;
+    const isPhaseFiveBehavior =
+      legacySchemaVersion === 5 && legacyBehavior === 5 && legacyState === 5;
     const supportedLegacyEnvelope =
-      legacySchemaVersion === 4
-        ? isPhaseFourBehavior
-        : legacySchemaVersion === 3
-          ? isPhaseThreeBehavior
-          : isBehaviorV1 || isPhaseTwoBehavior;
+      legacySchemaVersion === 5
+        ? isPhaseFiveBehavior
+        : legacySchemaVersion === 4
+          ? isPhaseFourBehavior
+          : legacySchemaVersion === 3
+            ? isPhaseThreeBehavior
+            : isBehaviorV1 || isPhaseTwoBehavior;
     if (!supportedLegacyEnvelope) {
       throw new Error(
         `Experiment schema version ${legacySchemaVersion.toString()} has incompatible behavior/state versions ${String(legacyBehavior)}/${String(legacyState)}.`,
@@ -947,7 +952,7 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
     }
     const scenario = exactObject(
       legacy.scenario,
-      isPhaseThreeBehavior || isPhaseFourBehavior
+      isPhaseThreeBehavior || isPhaseFourBehavior || isPhaseFiveBehavior
         ? [
             "kind",
             "schemaVersion",
@@ -968,9 +973,9 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
       "Scenario",
     );
     let migratedScenario: ScenarioReferenceV2;
-    if (isPhaseThreeBehavior || isPhaseFourBehavior) {
-      const expectedBehavior = isPhaseFourBehavior ? 4 : 3;
-      const expectedScenarioVersion = isPhaseFourBehavior ? 2 : 1;
+    if (isPhaseThreeBehavior || isPhaseFourBehavior || isPhaseFiveBehavior) {
+      const expectedBehavior = isPhaseFiveBehavior ? 5 : isPhaseFourBehavior ? 4 : 3;
+      const expectedScenarioVersion = isPhaseThreeBehavior ? 1 : 2;
       if (
         scenario.kind !== "tiny-civilisation/scenario" ||
         scenario.schemaVersion !== 2 ||
@@ -979,7 +984,7 @@ export function migrateExperiment(value: unknown): ExperimentV1 {
         scenario.mapGenerationVersion !== 1 ||
         !isScenarioId(scenario.scenarioId)
       ) {
-        throw new Error("Phase 3 experiment uses an unsupported scenario definition.");
+        throw new Error("Legacy experiment uses an unsupported scenario definition.");
       }
       migratedScenario = createScenarioReference(
         scenario.scenarioId,

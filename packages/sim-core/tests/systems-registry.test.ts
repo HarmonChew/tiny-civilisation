@@ -30,6 +30,10 @@ const EXPECTED_ACTIONS = [
   "ATTACK",
   "FLEE",
   "JOIN_GROUP",
+  "FORM_FAMILY",
+  "CARE_FOR_YOUNG",
+  "MOURN",
+  "CLAIM_ESTATE",
 ] as const;
 
 describe("action registry", () => {

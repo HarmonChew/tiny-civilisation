@@ -54,10 +54,13 @@ function selectLeader(
   state: SimulationState,
   group: GroupState,
   recordHistory: boolean,
+  succession?: { previousLeaderId: number; deathEventId: number; previousName: string },
 ): void {
   const members = group.memberIds
     .map((id) => getCreature(state, id))
-    .filter((creature): creature is CreatureState => Boolean(creature?.alive));
+    .filter((creature): creature is CreatureState =>
+      Boolean(creature?.alive && creature.lifeStage !== "JUVENILE"),
+    );
   if (members.length === 0) {
     group.leaderId = null;
     return;
@@ -72,7 +75,7 @@ function selectLeader(
     );
   const selected = ranked[0]?.creature ?? members[0];
   if (!selected || group.leaderId === selected.id) return;
-  const previous = group.leaderId;
+  const previous = succession?.previousLeaderId ?? group.leaderId;
   group.leaderId = selected.id;
   const event = emitDomainEvent(state, {
     type: "LEADER_SELECTED",
@@ -80,9 +83,11 @@ function selectLeader(
     targetIds: previous === null ? [] : [previous],
     groupIds: [group.id],
     locationTileIndex: group.homeTileIndex,
+    causedByEventIds: succession ? [succession.deathEventId] : [],
     importance: 65,
-    summary:
-      previous === null
+    summary: succession
+      ? `${selected.name} succeeded ${succession.previousName} after their death as leader of ${group.name}.`
+      : previous === null
         ? `${selected.name} became the first leader of ${group.name}.`
         : `${selected.name} replaced ${getCreature(state, previous)?.name ?? "the former leader"} as leader of ${group.name}.`,
   });
@@ -93,12 +98,26 @@ function selectLeader(
       "LEADERSHIP",
       `${selected.name} became leader`,
       event.summary,
-      [event.id],
+      succession ? [event.id, succession.deathEventId] : [event.id],
       previous === null ? [selected.id] : [selected.id, previous],
       [group.id],
       65,
     );
   }
+}
+
+export function selectSuccessorAfterLeaderDeath(
+  state: SimulationState,
+  group: GroupState,
+  previousLeader: CreatureState,
+  deathEventId: number,
+): void {
+  group.leaderId = null;
+  selectLeader(state, group, true, {
+    previousLeaderId: previousLeader.id,
+    deathEventId,
+    previousName: previousLeader.name,
+  });
 }
 
 function formGroup(state: SimulationState, members: CreatureState[]): void {
@@ -122,6 +141,8 @@ function formGroup(state: SimulationState, members: CreatureState[]): void {
   const group: GroupState = {
     id,
     name: groupName(state, id),
+    status: "ACTIVE",
+    extinctTick: null,
     stage: "PROVISIONAL",
     foundedTick: state.tick,
     memberIds: members.map((member) => member.id).sort((a, b) => a - b),
@@ -171,7 +192,10 @@ export function updateGroups(state: SimulationState): void {
   const eligible = state.creatures
     .filter(
       (creature) =>
-        creature.alive && creature.groupId === null && creature.traits.sociability >= 3_500,
+        creature.alive &&
+        creature.lifeStage !== "JUVENILE" &&
+        creature.groupId === null &&
+        creature.traits.sociability >= 3_500,
     )
     .sort((left, right) => left.id - right.id);
   const unvisited = new Set(eligible.map((creature) => creature.id));
@@ -212,7 +236,7 @@ export function updateGroups(state: SimulationState): void {
     }
   }
 
-  for (const group of state.groups) {
+  for (const group of state.groups.filter((candidate) => candidate.status === "ACTIVE")) {
     const members = group.memberIds
       .map((id) => getCreature(state, id))
       .filter((creature): creature is CreatureState => Boolean(creature?.alive));

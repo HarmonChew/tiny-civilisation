@@ -3,7 +3,7 @@ import type { ActionKind } from "../types.js";
 export interface ActionDefinition {
   readonly kind: ActionKind;
   readonly duration: number;
-  readonly family: "survival" | "resource" | "social" | "group" | "conflict";
+  readonly family: "survival" | "resource" | "social" | "group" | "conflict" | "lifecycle";
 }
 
 export const ACTION_DEFINITIONS = [
@@ -29,6 +29,10 @@ export const ACTION_DEFINITIONS = [
   { kind: "ATTACK", duration: 4, family: "conflict" },
   { kind: "FLEE", duration: 3, family: "conflict" },
   { kind: "JOIN_GROUP", duration: 5, family: "social" },
+  { kind: "FORM_FAMILY", duration: 8, family: "lifecycle" },
+  { kind: "CARE_FOR_YOUNG", duration: 12, family: "lifecycle" },
+  { kind: "MOURN", duration: 30, family: "lifecycle" },
+  { kind: "CLAIM_ESTATE", duration: 10, family: "lifecycle" },
 ] as const satisfies readonly ActionDefinition[];
 
 const durations = new Map<ActionKind, number>(

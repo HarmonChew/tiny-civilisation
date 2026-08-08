@@ -18,6 +18,9 @@ export const DESIRE_KINDS = [
   "PROTECT_PERSON_OR_GROUP",
   "AVOID_THREAT",
   "COMPLETE_SHARED_WORK",
+  "RAISE_FAMILY",
+  "HONOUR_THE_DEAD",
+  "SETTLE_ESTATE",
 ] as const satisfies readonly DesireKind[];
 
 export const PLAN_KINDS = [
@@ -42,6 +45,10 @@ export const PLAN_KINDS = [
   "COMPLETE_STORAGE",
   "EXPLORE_SURROUNDINGS",
   "TAKE_FOOD",
+  "FORM_A_FAMILY",
+  "CARE_FOR_CHILD",
+  "MOURN_A_LIFE",
+  "CLAIM_AN_ESTATE",
 ] as const satisfies readonly PlanKind[];
 
 const PLAN_BY_ACTION = {
@@ -67,6 +74,10 @@ const PLAN_BY_ACTION = {
   ATTACK: "CONFRONT_THREAT",
   FLEE: "ESCAPE_THREAT",
   JOIN_GROUP: "JOIN_COMMUNITY",
+  FORM_FAMILY: "FORM_A_FAMILY",
+  CARE_FOR_YOUNG: "CARE_FOR_CHILD",
+  MOURN: "MOURN_A_LIFE",
+  CLAIM_ESTATE: "CLAIM_AN_ESTATE",
 } as const satisfies Record<ActionKind, PlanKind>;
 
 const ACTIONS_BY_DESIRE: Record<DesireKind, readonly ActionKind[]> = {
@@ -87,6 +98,9 @@ const ACTIONS_BY_DESIRE: Record<DesireKind, readonly ActionKind[]> = {
     "BUILD_SHELTER",
     "MAINTAIN_SHELTER",
   ],
+  RAISE_FAMILY: ["FORM_FAMILY", "CARE_FOR_YOUNG"],
+  HONOUR_THE_DEAD: ["MOURN"],
+  SETTLE_ESTATE: ["CLAIM_ESTATE"],
 };
 
 export function planForAction(action: ActionKind): PlanKind {
@@ -137,6 +151,13 @@ export function desireForAction(
     }
     case "JOIN_GROUP":
       return "BELONG";
+    case "FORM_FAMILY":
+    case "CARE_FOR_YOUNG":
+      return "RAISE_FAMILY";
+    case "MOURN":
+      return "HONOUR_THE_DEAD";
+    case "CLAIM_ESTATE":
+      return "SETTLE_ESTATE";
     case "DEPOSIT":
       return "SECURE_PROVISIONS";
     case "GATHER_MATERIAL":
@@ -177,6 +198,12 @@ export function desireStrength(creature: CreatureState, desire: DesireKind): num
       return 10_000 - creature.health;
     case "COMPLETE_SHARED_WORK":
       return Math.max(creature.traits.loyalty, creature.inventory.material * 2_000);
+    case "RAISE_FAMILY":
+      return Math.max(creature.traits.sociability, creature.traits.loyalty);
+    case "HONOUR_THE_DEAD":
+      return creature.traits.loyalty;
+    case "SETTLE_ESTATE":
+      return 6_000;
   }
 }
 
@@ -191,6 +218,9 @@ export const DESIRE_LABELS: Record<DesireKind, string> = {
   PROTECT_PERSON_OR_GROUP: "keep their people safe",
   AVOID_THREAT: "get clear of danger",
   COMPLETE_SHARED_WORK: "finish shared work",
+  RAISE_FAMILY: "raise a family",
+  HONOUR_THE_DEAD: "honour the dead",
+  SETTLE_ESTATE: "settle an estate",
 };
 
 export const PLAN_LABELS: Record<PlanKind, string> = {
@@ -215,4 +245,8 @@ export const PLAN_LABELS: Record<PlanKind, string> = {
   COMPLETE_STORAGE: "continue the shared store",
   EXPLORE_SURROUNDINGS: "look for an opportunity",
   TAKE_FOOD: "take food under pressure",
+  FORM_A_FAMILY: "form a family",
+  CARE_FOR_CHILD: "care for a child",
+  MOURN_A_LIFE: "mourn a life",
+  CLAIM_AN_ESTATE: "claim an estate",
 };

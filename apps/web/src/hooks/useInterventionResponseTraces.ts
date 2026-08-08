@@ -14,7 +14,9 @@ interface InterventionResponseTraceOptions {
   readonly onMaterialChange?: (commandId: number, trace: InterventionResponseTrace) => void;
 }
 
-function materialSignature(trace: InterventionResponseTrace): string {
+export function interventionResponseMaterialSignature(
+  trace: InterventionResponseTrace,
+): string {
   return JSON.stringify({
     schemaVersion: trace.schemaVersion,
     phase: trace.phase,
@@ -26,6 +28,29 @@ function materialSignature(trace: InterventionResponseTrace): string {
     responses: trace.responses,
     unclassifiedParticipantIds: trace.unclassifiedParticipantIds,
   });
+}
+
+interface TraceStreamToken {
+  readonly key: string;
+  readonly epoch: number;
+}
+
+interface RenderedTraceStream extends TraceStreamToken {
+  readonly tick: number;
+}
+
+interface QueuedTrace {
+  readonly stream: TraceStreamToken;
+  readonly trace: InterventionResponseTrace;
+}
+
+interface QueuedPublication {
+  readonly stream: TraceStreamToken;
+  readonly traces: ReadonlyMap<number, InterventionResponseTrace>;
+}
+
+function sameStream(left: TraceStreamToken, right: TraceStreamToken): boolean {
+  return left.key === right.key && left.epoch === right.epoch;
 }
 
 function persistedTraces(
@@ -51,7 +76,42 @@ export function useInterventionResponseTraces({
   );
   const workingRef = useRef(persistedTraces(commandLog));
   const pendingPersistenceRef = useRef(new Map<number, string>());
+  const persistenceQueueRef = useRef(new Map<number, QueuedTrace>());
+  const publicationRef = useRef<QueuedPublication | null>(null);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const materialChangeCallbackRef = useRef(onMaterialChange);
   const streamRef = useRef({ key: streamKey, tick: view.tick });
+  const renderedStreamRef = useRef<RenderedTraceStream>({
+    key: streamKey,
+    epoch: 0,
+    tick: view.tick,
+  });
+  const renderedBefore = renderedStreamRef.current;
+  const renderedStream: RenderedTraceStream = {
+    key: streamKey,
+    epoch:
+      renderedBefore.key !== streamKey || view.tick < renderedBefore.tick
+        ? renderedBefore.epoch + 1
+        : renderedBefore.epoch,
+    tick: view.tick,
+  };
+  renderedStreamRef.current = renderedStream;
+  materialChangeCallbackRef.current = onMaterialChange;
+
+  useEffect(
+    () => () => {
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      for (const commandId of persistenceQueueRef.current.keys()) {
+        pendingPersistenceRef.current.delete(commandId);
+      }
+      persistenceQueueRef.current.clear();
+      publicationRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     const reset = streamRef.current.key !== streamKey || view.tick < streamRef.current.tick;
@@ -59,7 +119,15 @@ export function useInterventionResponseTraces({
     const working = reset
       ? persistedTraces(commandLog)
       : new Map<number, InterventionResponseTrace>(workingRef.current);
-    if (reset) pendingPersistenceRef.current.clear();
+    if (reset) {
+      pendingPersistenceRef.current.clear();
+      persistenceQueueRef.current.clear();
+      publicationRef.current = null;
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+    }
 
     const retainedCommandIds = new Set(commandLog.map((entry) => entry.command.commandId));
     let publish = reset;
@@ -67,6 +135,7 @@ export function useInterventionResponseTraces({
       if (retainedCommandIds.has(commandId)) continue;
       working.delete(commandId);
       pendingPersistenceRef.current.delete(commandId);
+      persistenceQueueRef.current.delete(commandId);
       publish = true;
     }
 
@@ -81,7 +150,8 @@ export function useInterventionResponseTraces({
     )) {
       const commandId = entry.command.commandId;
       const persisted = entry.responseTrace;
-      const persistedSignature = persisted === null ? null : materialSignature(persisted);
+      const persistedSignature =
+        persisted === null ? null : interventionResponseMaterialSignature(persisted);
       const pendingSignature = pendingPersistenceRef.current.get(commandId);
       let previous = working.get(commandId);
 
@@ -90,7 +160,10 @@ export function useInterventionResponseTraces({
           pendingPersistenceRef.current.delete(commandId);
         }
       } else if (persisted !== null) {
-        if (!previous || materialSignature(previous) !== persistedSignature) {
+        if (
+          !previous ||
+          interventionResponseMaterialSignature(previous) !== persistedSignature
+        ) {
           previous = persisted;
           working.set(commandId, persisted);
           publish = true;
@@ -113,8 +186,11 @@ export function useInterventionResponseTraces({
       working.set(commandId, observed);
       if (!previous) publish = true;
 
-      if (materialSignature(observed) !== materialSignature(before)) {
-        const signature = materialSignature(observed);
+      if (
+        interventionResponseMaterialSignature(observed) !==
+        interventionResponseMaterialSignature(before)
+      ) {
+        const signature = interventionResponseMaterialSignature(observed);
         pendingPersistenceRef.current.set(commandId, signature);
         materialChanges.push([commandId, observed]);
         publish = true;
@@ -122,9 +198,42 @@ export function useInterventionResponseTraces({
     }
 
     workingRef.current = working;
-    if (publish) setTraces(new Map(working));
+    const stream = { key: renderedStream.key, epoch: renderedStream.epoch };
+    if (publish) {
+      publicationRef.current = { stream, traces: new Map(working) };
+    }
     for (const [commandId, trace] of materialChanges) {
-      onMaterialChange?.(commandId, trace);
+      persistenceQueueRef.current.set(commandId, { stream, trace });
+    }
+    if (
+      (publicationRef.current !== null ||
+        (onMaterialChange && persistenceQueueRef.current.size > 0)) &&
+      flushTimerRef.current === null
+    ) {
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null;
+        const currentStream = renderedStreamRef.current;
+        const publication = publicationRef.current;
+        publicationRef.current = null;
+        if (publication && sameStream(publication.stream, currentStream)) {
+          setTraces(publication.traces);
+        }
+
+        const queued = [...persistenceQueueRef.current.entries()].sort(
+          ([left], [right]) => left - right,
+        );
+        const callback = materialChangeCallbackRef.current;
+        for (const [commandId, queuedTrace] of queued) {
+          if (!sameStream(queuedTrace.stream, currentStream)) {
+            persistenceQueueRef.current.delete(commandId);
+            pendingPersistenceRef.current.delete(commandId);
+            continue;
+          }
+          if (!callback) continue;
+          persistenceQueueRef.current.delete(commandId);
+          callback(commandId, queuedTrace.trace);
+        }
+      }, 0);
     }
   }, [
     commandLog,

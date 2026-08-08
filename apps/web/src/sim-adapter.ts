@@ -14,6 +14,7 @@ import {
   type DecisionRecord,
   type DomainEvent,
   type HistoricalEvent,
+  type LifeRecord,
   type PlayerCommand,
   type RenderSnapshot,
   type RenderStructure,
@@ -27,6 +28,8 @@ import type {
   GroupView,
   InventoryView,
   InterventionTool,
+  LifeRecordView,
+  MemorialView,
   MemoryView,
   Point,
   RelationshipView,
@@ -58,6 +61,52 @@ const pointForTile = (tileIndex: number, width: number): Point => ({
   x: tileIndex % width,
   y: Math.floor(tileIndex / width),
 });
+
+type LifeRecordProjectionSource = Readonly<Omit<LifeRecord, "majorEventIds">> & {
+  readonly majorEventIds: readonly number[];
+};
+
+export function makeLifeRecordViews(
+  records: readonly LifeRecordProjectionSource[],
+  living: readonly {
+    readonly id: EntityId;
+    readonly motherId?: EntityId | null | undefined;
+    readonly fatherId?: EntityId | null | undefined;
+  }[] = [],
+): LifeRecordView[] {
+  const identities = [...living, ...records];
+  return records.map((record) => ({
+    id: record.id,
+    name: record.name,
+    color: record.color,
+    sex: record.sex,
+    ...(record.motherId === null ? {} : { motherId: record.motherId }),
+    ...(record.fatherId === null ? {} : { fatherId: record.fatherId }),
+    childIds: identities
+      .filter(
+        (candidate) => candidate.motherId === record.id || candidate.fatherId === record.id,
+      )
+      .map((candidate) => candidate.id),
+    birthTick: record.birthTick,
+    deathTick: record.deathTick,
+    ageTicks: record.ageTicks,
+    finalLifeStage: record.finalLifeStage,
+    deathCause: record.deathCause,
+    ...(record.finalGroupId === null ? {} : { finalGroupId: record.finalGroupId }),
+    inheritedTraits: Object.entries(traitLabels).map(([key, label]) => ({
+      key,
+      label,
+      value: percent(record.traitPotential[key as keyof typeof traitLabels]),
+    })),
+    skillPotential: Object.entries(skillLabels).map(([key, label]) => ({
+      key,
+      label,
+      value: percent(record.skillPotential[key as keyof typeof skillLabels]),
+    })),
+    majorEventIds: [...record.majorEventIds],
+    ...(record.heirId === null ? {} : { heirId: record.heirId }),
+  }));
+}
 
 function mapScenario(
   snapshot: RenderSnapshot,
@@ -101,6 +150,11 @@ const traitLabels = {
   aggression: "Aggression",
   sociability: "Sociability",
   loyalty: "Loyalty",
+} as const;
+
+const skillLabels = {
+  foraging: "Foraging",
+  combat: "Combat",
 } as const;
 
 const MAX_VISIBLE_FACTORS_PER_CANDIDATE = 3;
@@ -274,6 +328,13 @@ function eventCategory(
   playerCaused: boolean,
 ): Exclude<TimelineCategory, "all"> {
   if (playerCaused || /PLAYER|INTERVENTION|TERRAIN/i.test(type)) return "player";
+  if (
+    /LIFECYCLE|LIFE_STAGE|CRITICAL_HEALTH|BIRTH|BORN|PREGNAN|FAMILY|CARE|ADULT|ELDER|DEATH|DIED|MOURN|MEMORIAL|ESTATE|INHERIT|EXTINCT|SUCCESSION/i.test(
+      type,
+    )
+  ) {
+    return "lifecycle";
+  }
   if (/FIGHT|ATTACK|DAMAGE|HARM|THEFT|CONFLICT|CONFRONT|FLEE|FLED/i.test(type)) {
     return "conflict";
   }
@@ -500,6 +561,19 @@ function mapStructure(
   };
 }
 
+function tileViewsFromSnapshot(
+  snapshot: Pick<RenderSnapshot, "tiles" | "width">,
+): TileView[] {
+  return snapshot.tiles.map((tile, index) => ({
+    ...tile,
+    index,
+    x: index % snapshot.width,
+    y: Math.floor(index / snapshot.width),
+    fertility: 0,
+    hazard: 0,
+  }));
+}
+
 export const makeWorldView = (state: SimulationState): WorldView => {
   const snapshot = createRenderSnapshot(state);
   if (
@@ -513,11 +587,7 @@ export const makeWorldView = (state: SimulationState): WorldView => {
 
   const width = snapshot.width;
   const names = new Map(state.creatures.map((creature) => [creature.id, creature.name]));
-  const tiles: TileView[] = snapshot.tiles.map((tile) => ({
-    ...tile,
-    fertility: 0,
-    hazard: 0,
-  }));
+  const tiles = tileViewsFromSnapshot(snapshot);
 
   const creatures: CreatureView[] = state.creatures.map((creature) => {
     const rendered = snapshot.creatures.find((item) => item.id === creature.id);
@@ -534,6 +604,32 @@ export const makeWorldView = (state: SimulationState): WorldView => {
       x: rendered?.x ?? pointForTile(creature.tileIndex, width).x,
       y: rendered?.y ?? pointForTile(creature.tileIndex, width).y,
       alive: creature.alive,
+      sex: creature.sex,
+      ageTicks: creature.ageTicks,
+      lifeStage: creature.lifeStage,
+      naturalLifespanTicks: creature.naturalLifespanTicks,
+      birthTick: creature.birthTick,
+      ...(creature.motherId === null ? {} : { motherId: creature.motherId }),
+      ...(creature.fatherId === null ? {} : { fatherId: creature.fatherId }),
+      childIds: [...state.creatures, ...state.lifeRecords]
+        .filter(
+          (candidate) =>
+            candidate.motherId === creature.id || candidate.fatherId === creature.id,
+        )
+        .map((candidate) => candidate.id),
+      ...(creature.caregiverId === null ? {} : { caregiverId: creature.caregiverId }),
+      dependent:
+        creature.lifeStage === "JUVENILE" &&
+        creature.dependentUntilTick !== null &&
+        creature.dependentUntilTick > state.tick,
+      pregnant: creature.pregnancy !== null,
+      ...(creature.pregnancy === null
+        ? {}
+        : { pregnancyDueTick: creature.pregnancy.dueTick }),
+      ...(creature.criticalSinceTick === null
+        ? {}
+        : { criticalSinceTick: creature.criticalSinceTick }),
+      mourning: creature.activeAction?.kind === "MOURN",
       ...(creature.groupId === null ? {} : { groupId: creature.groupId }),
       role: humanize(creature.role),
       desire: creature.activeDesire?.kind ?? "Considering",
@@ -588,6 +684,16 @@ export const makeWorldView = (state: SimulationState): WorldView => {
       fatigue: percent(creature.needs.fatigue),
       thirst: percent(creature.needs.thirst),
       traits: mapTraits(state, creature.id),
+      inheritedTraits: Object.entries(traitLabels).map(([key, label]) => ({
+        key,
+        label,
+        value: percent(creature.traitPotential[key as keyof typeof traitLabels]),
+      })),
+      skillPotential: Object.entries(skillLabels).map(([key, label]) => ({
+        key,
+        label,
+        value: percent(creature.skillPotential[key as keyof typeof skillLabels]),
+      })),
       inventory: mapInventory(state, creature.id),
       candidates: decision ? candidatesFromDecision(decision) : [],
       memories: mapMemories(state, creature.id),
@@ -617,6 +723,8 @@ export const makeWorldView = (state: SimulationState): WorldView => {
     id: group.id,
     name: group.name,
     stage: group.stage,
+    status: group.status,
+    ...(group.extinctTick === null ? {} : { extinctTick: group.extinctTick }),
     memberIds: [...group.memberIds],
     ...(group.leaderId === null ? {} : { leaderId: group.leaderId }),
     home: {
@@ -637,6 +745,16 @@ export const makeWorldView = (state: SimulationState): WorldView => {
       ? {}
       : { shelterRelocationCandidate: { ...group.shelterRelocationCandidate } }),
   }));
+
+  const memorials: MemorialView[] = snapshot.memorials.map((memorial) => {
+    const { heirId, ...retained } = memorial;
+    return {
+      ...retained,
+      ...pointForTile(memorial.tileIndex, width),
+      ...(heirId === null ? {} : { heirId }),
+    };
+  });
+  const lifeRecords = makeLifeRecordViews(state.lifeRecords, state.creatures);
 
   const promotedDomainEventIds = new Set(
     snapshot.historyEvents.flatMap((event) => event.sourceEventIds),
@@ -659,6 +777,8 @@ export const makeWorldView = (state: SimulationState): WorldView => {
     height: snapshot.height,
     tiles,
     creatures,
+    memorials,
+    lifeRecords,
     resources,
     structures,
     groups,
@@ -690,7 +810,7 @@ export const makeWorldViewFromSnapshot = (
   const names = new Map(snapshot.creatures.map((creature) => [creature.id, creature.name]));
   const tiles: TileView[] =
     snapshot.tiles.length > 0
-      ? snapshot.tiles.map((tile) => ({ ...tile, fertility: 0, hazard: 0 }))
+      ? tileViewsFromSnapshot(snapshot)
       : retainedTiles.map((tile) => ({ ...tile }));
   const decisions = snapshot.creatures
     .map((creature) => creature.latestDecision)
@@ -754,6 +874,32 @@ export const makeWorldViewFromSnapshot = (
       x: creature.x,
       y: creature.y,
       alive: creature.alive,
+      sex: creature.sex,
+      ageTicks: creature.ageTicks,
+      lifeStage: creature.lifeStage,
+      birthTick: creature.birthTick,
+      naturalLifespanTicks: creature.naturalLifespanTicks,
+      ...(creature.motherId === null ? {} : { motherId: creature.motherId }),
+      ...(creature.fatherId === null ? {} : { fatherId: creature.fatherId }),
+      childIds: snapshot.creatures
+        .filter(
+          (candidate) =>
+            candidate.motherId === creature.id || candidate.fatherId === creature.id,
+        )
+        .map((candidate) => candidate.id),
+      dependent:
+        creature.lifeStage === "JUVENILE" &&
+        creature.dependentUntilTick !== null &&
+        creature.dependentUntilTick > snapshot.tick,
+      ...(creature.caregiverId === null ? {} : { caregiverId: creature.caregiverId }),
+      pregnant: creature.pregnant,
+      ...(creature.pregnancyDueTick === null
+        ? {}
+        : { pregnancyDueTick: creature.pregnancyDueTick }),
+      ...(creature.criticalSinceTick === null
+        ? {}
+        : { criticalSinceTick: creature.criticalSinceTick }),
+      mourning: creature.action === "MOURN",
       ...(creature.groupId === null ? {} : { groupId: creature.groupId }),
       role: humanize(creature.role),
       desire: creature.desire ?? "Considering",
@@ -801,6 +947,16 @@ export const makeWorldViewFromSnapshot = (
         label,
         value: percent(creature.traits[key as keyof typeof traitLabels]),
       })),
+      inheritedTraits: Object.entries(traitLabels).map(([key, label]) => ({
+        key,
+        label,
+        value: percent(creature.traitPotential[key as keyof typeof traitLabels]),
+      })),
+      skillPotential: Object.entries(skillLabels).map(([key, label]) => ({
+        key,
+        label,
+        value: percent(creature.skillPotential[key as keyof typeof skillLabels]),
+      })),
       inventory: [
         { kind: "food", quantity: creature.inventory.food },
         { kind: "material", quantity: creature.inventory.material },
@@ -839,6 +995,8 @@ export const makeWorldViewFromSnapshot = (
     id: group.id,
     name: group.name,
     stage: group.stage,
+    status: group.status,
+    ...(group.extinctTick === null ? {} : { extinctTick: group.extinctTick }),
     memberIds: [...group.memberIds],
     ...(group.leaderId === null ? {} : { leaderId: group.leaderId }),
     home: {
@@ -951,6 +1109,14 @@ export const makeWorldViewFromSnapshot = (
           : {}),
       };
     });
+  const memorials: MemorialView[] = snapshot.memorials.map((memorial) => {
+    const { heirId, ...retained } = memorial;
+    return {
+      ...retained,
+      ...pointForTile(memorial.tileIndex, width),
+      ...(heirId === null ? {} : { heirId }),
+    };
+  });
   return {
     scenario: mapScenario(snapshot, retainedScenario),
     tick: snapshot.tick,
@@ -961,6 +1127,8 @@ export const makeWorldViewFromSnapshot = (
     height: snapshot.height,
     tiles,
     creatures,
+    memorials,
+    lifeRecords: [],
     resources,
     structures,
     groups,

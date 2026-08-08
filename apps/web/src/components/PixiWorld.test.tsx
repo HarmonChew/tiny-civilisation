@@ -41,6 +41,7 @@ vi.mock("./pixi/runtime", () => ({
     intentions: {},
     resources: {},
     structures: {},
+    memorials: {},
     interaction: {},
     interventionPreview: {},
     creatures: {},
@@ -190,12 +191,72 @@ describe("PixiWorld replay camera", () => {
     );
 
     const dish = await screen.findByRole("application", {
-      name: /click a creature or structure/i,
+      name: /click a creature, memorial, or structure/i,
     });
     fireEvent.pointerDown(dish, { pointerId: 4, button: 0, clientX: 120, clientY: 90 });
     fireEvent.pointerUp(dish, { pointerId: 4, button: 0, clientX: 120, clientY: 90 });
 
     expect(onSelectSubject).toHaveBeenCalledWith({ kind: "structure", id: 900 });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("selects a memorial through the same typed world focus callback", async () => {
+    const baseView = makeWorldView(createSimulation(4_182));
+    const view = {
+      ...baseView,
+      creatures: [],
+      structures: [],
+      memorials: [
+        {
+          id: 910,
+          deceasedId: 90,
+          deceasedName: "Aro",
+          tileIndex: 0,
+          x: 1,
+          y: 1,
+          createdTick: 10,
+          expiresTick: 610,
+          estate: { food: 1, material: 2, water: 3 },
+          mournersRemaining: 1,
+        },
+      ],
+    };
+    camera.screenToWorld.mockReturnValue({ x: 1.5, y: 1.5 });
+    camera.tileAtPoint.mockReturnValue(view.tiles[0]);
+    const onSelect = vi.fn();
+    const onSelectSubject = vi.fn();
+    render(
+      <PixiWorld
+        view={view}
+        selectedId={null}
+        focusedId={null}
+        followedId={null}
+        tool="inspect"
+        overlays={{ resources: true, intentions: false, groups: true, traffic: true }}
+        onSelect={onSelect}
+        onSelectSubject={onSelectSubject}
+        onHover={vi.fn()}
+        onWorldAction={vi.fn()}
+      />,
+    );
+
+    const dish = await screen.findByRole("application", {
+      name: /click a creature, memorial, or structure/i,
+    });
+    fireEvent.pointerDown(dish, {
+      pointerId: 5,
+      button: 0,
+      clientX: 120,
+      clientY: 90,
+    });
+    fireEvent.pointerUp(dish, {
+      pointerId: 5,
+      button: 0,
+      clientX: 120,
+      clientY: 90,
+    });
+
+    expect(onSelectSubject).toHaveBeenCalledWith({ kind: "memorial", id: 910 });
     expect(onSelect).not.toHaveBeenCalled();
   });
 });

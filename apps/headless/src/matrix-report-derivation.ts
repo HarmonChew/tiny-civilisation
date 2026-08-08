@@ -50,6 +50,14 @@ export interface Phase42DefinitionEvidence {
   readonly analysisDefinitions?: Phase42AnalysisDefinitionOverride;
 }
 
+export interface Phase43DefinitionEvidence {
+  readonly contractSchemaVersion: number;
+  readonly fingerprintAlgorithm: string;
+  readonly status: "CANDIDATE" | "FROZEN";
+  readonly fingerprint: string;
+  readonly contract: unknown;
+}
+
 export interface MatrixReportDerivationInput {
   readonly corpus: ScenarioCorpusName;
   readonly seeds: readonly number[];
@@ -58,6 +66,7 @@ export interface MatrixReportDerivationInput {
   readonly runs: readonly DeterministicMatrixRun[];
   readonly determinismComparisons: readonly MatrixDeterminismComparison[];
   readonly phase42Definition?: Phase42DefinitionEvidence;
+  readonly phase43Definition?: Phase43DefinitionEvidence;
 }
 
 interface ReportedMatrixRun extends DeterministicMatrixRun {
@@ -161,6 +170,17 @@ export function deriveMatrixEvidenceReport(
             phase42DefinitionStatus: input.phase42Definition.status,
             phase42DefinitionFingerprint: input.phase42Definition.fingerprint,
             phase42DefinitionContract: input.phase42Definition.contract,
+          }),
+      ...(input.phase43Definition === undefined
+        ? {}
+        : {
+            phase43DefinitionContractSchemaVersion:
+              input.phase43Definition.contractSchemaVersion,
+            phase43DefinitionFingerprintAlgorithm:
+              input.phase43Definition.fingerprintAlgorithm,
+            phase43DefinitionStatus: input.phase43Definition.status,
+            phase43DefinitionFingerprint: input.phase43Definition.fingerprint,
+            phase43DefinitionContract: input.phase43Definition.contract,
           }),
     },
     runs: reportedRuns,

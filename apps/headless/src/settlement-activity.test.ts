@@ -142,6 +142,8 @@ describe("settlement activity collector", () => {
     state.groups.push({
       id: groupId,
       name: "Settlers",
+      status: "ACTIVE",
+      extinctTick: null,
       stage: "PERSISTENT",
       foundedTick: 0,
       memberIds: [member.id],

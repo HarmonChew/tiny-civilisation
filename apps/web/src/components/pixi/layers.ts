@@ -17,7 +17,7 @@ import {
 } from "./runtime";
 import { actionFamily } from "./visual-grammar";
 import { deriveTrafficTrails, trafficTrailStyle } from "./traffic-trails";
-import { drawResourceMark, drawStructureMark } from "./world-marks";
+import { drawMemorialMark, drawResourceMark, drawStructureMark } from "./world-marks";
 
 const terrainColor = (tile: TileView): number => {
   if (/WATER/i.test(tile.terrain)) return PALETTE.shallowWater;
@@ -255,6 +255,19 @@ export const drawWorld = (
     drawStructureMark(mark, structure);
   }
   removeMissingMarks(runtime.structureMarks, structureIds);
+
+  const memorialIds = new Set<number>();
+  for (const memorial of view.memorials ?? []) {
+    memorialIds.add(memorial.id);
+    let mark = runtime.memorialMarks.get(memorial.id);
+    if (!mark) {
+      mark = new Graphics();
+      runtime.memorialMarks.set(memorial.id, mark);
+      layers.memorials.addChild(mark);
+    }
+    drawMemorialMark(mark, memorial);
+  }
+  removeMissingMarks(runtime.memorialMarks, memorialIds);
 
   layers.intentions.clear();
   for (const creature of view.creatures) {

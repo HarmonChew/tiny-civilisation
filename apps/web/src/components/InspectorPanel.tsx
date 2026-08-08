@@ -12,6 +12,8 @@ import type {
   CreatureView,
   EntityId,
   GroupView,
+  LifeRecordView,
+  MemorialView,
   MemoryView,
   RelationshipView,
   StructureView,
@@ -156,6 +158,7 @@ function CreatureNotebook({
   followed,
   onFollow,
   onSelect,
+  onSelectSubject,
 }: {
   creature: CreatureView | null;
   view: WorldView;
@@ -163,6 +166,7 @@ function CreatureNotebook({
   followed: boolean;
   onFollow: () => void;
   onSelect: (id: EntityId) => void;
+  onSelectSubject?: ((ref: WorldRef) => void) | undefined;
 }) {
   if (!creature) {
     return (
@@ -179,6 +183,21 @@ function CreatureNotebook({
   }
 
   const group = view.groups.find((item) => item.id === creature.groupId);
+  const remembered = view.lifeRecords ?? [];
+  const nameFor = (id: EntityId | undefined): string | null => {
+    if (id === undefined) return null;
+    return (
+      view.creatures.find((candidate) => candidate.id === id)?.name ??
+      remembered.find((candidate) => candidate.id === id)?.name ??
+      `Identity ${id}`
+    );
+  };
+  const parentNames = [nameFor(creature.motherId), nameFor(creature.fatherId)].filter(
+    (name): name is string => name !== null,
+  );
+  const childNames = (creature.childIds ?? [])
+    .map((id) => nameFor(id))
+    .filter((name): name is string => name !== null);
   const evidenceCandidates = evidenceEvent?.decisionCandidates ?? [];
   const shownCandidates =
     evidenceCandidates.length > 0 ? evidenceCandidates : creature.candidates;
@@ -232,6 +251,79 @@ function CreatureNotebook({
           <Meter label="Thirst" value={creature.thirst} tone="water" inverse />
           <Meter label="Fatigue" value={creature.fatigue} tone="gold" inverse />
         </div>
+        <details className="subject-summary subject-summary--lifecycle" open>
+          <summary>Lifecycle and lineage</summary>
+          <dl>
+            <div>
+              <dt>Biological sex / stage</dt>
+              <dd>
+                {humanize(creature.sex ?? "UNKNOWN")} /{" "}
+                {humanize(creature.lifeStage ?? "UNKNOWN")}
+              </dd>
+            </div>
+            <div>
+              <dt>Age</dt>
+              <dd>{creature.ageTicks ?? 0} ticks</dd>
+            </div>
+            <div>
+              <dt>Parents</dt>
+              <dd>
+                {parentNames.length > 0 ? parentNames.join(" and ") : "No recorded parents"}
+              </dd>
+            </div>
+            <div>
+              <dt>Children</dt>
+              <dd>{childNames.length > 0 ? childNames.join(", ") : "None recorded"}</dd>
+            </div>
+            {creature.pregnant ? (
+              <div>
+                <dt>Pregnancy</dt>
+                <dd>Due at tick {creature.pregnancyDueTick}</dd>
+              </div>
+            ) : null}
+            {creature.dependent ? (
+              <div>
+                <dt>Dependent youth</dt>
+                <dd>
+                  {creature.caregiverId === undefined
+                    ? "Caregiver assignment pending"
+                    : `Caregiver: ${nameFor(creature.caregiverId)}`}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+          {(creature.inheritedTraits?.length ?? 0) > 0 ? (
+            <div className="inherited-potential">
+              <span className="eyebrow">Inherited trait / skill potential</span>
+              <p>
+                {[...(creature.inheritedTraits ?? []), ...(creature.skillPotential ?? [])]
+                  .map((trait) => `${trait.label} ${Math.round(trait.value)}%`)
+                  .join(" / ")}
+              </p>
+            </div>
+          ) : null}
+          {(creature.motherId !== undefined || creature.fatherId !== undefined) &&
+          onSelectSubject ? (
+            <div className="lineage-links" aria-label="Recorded parent links">
+              {[creature.motherId, creature.fatherId]
+                .filter((id): id is number => id !== undefined)
+                .map((id) => {
+                  const living = view.creatures.some((candidate) => candidate.id === id);
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() =>
+                        onSelectSubject({ kind: living ? "creature" : "life-record", id })
+                      }
+                    >
+                      Open {nameFor(id)}
+                    </button>
+                  );
+                })}
+            </div>
+          ) : null}
+        </details>
         <div className="subject-summary" aria-label={`${creature.name} water access`}>
           <span className="eyebrow">Nearest potable source</span>
           {creature.waterAccess ? (
@@ -418,6 +510,193 @@ function CreatureNotebook({
             ))}
           </ol>
         )}
+      </section>
+    </div>
+  );
+}
+
+function LifeRecordNotebook({
+  record,
+  view,
+  onSelectSubject,
+}: {
+  record: LifeRecordView;
+  view: WorldView;
+  onSelectSubject?: ((ref: WorldRef) => void) | undefined;
+}) {
+  const allRecords = view.lifeRecords ?? [];
+  const nameFor = (id: EntityId | undefined): string =>
+    id === undefined
+      ? "Not recorded"
+      : (view.creatures.find((candidate) => candidate.id === id)?.name ??
+        allRecords.find((candidate) => candidate.id === id)?.name ??
+        `Identity ${id}`);
+  const group = view.groups.find((candidate) => candidate.id === record.finalGroupId);
+  return (
+    <div className="inspector-scroll">
+      <section
+        className="subject-header subject-header--remembered"
+        aria-labelledby="subject-heading"
+      >
+        <div className="subject-header__top">
+          <div className="subject-avatar subject-avatar--remembered" aria-hidden="true">
+            <BookOpen size={18} />
+          </div>
+          <div>
+            <span className="eyebrow">Permanent life record</span>
+            <h2 id="subject-heading">{record.name}</h2>
+          </div>
+        </div>
+        <p className="empty-copy">
+          This compact record remains after the full actor state has left the living set.
+        </p>
+        <dl className="life-record-facts">
+          <div>
+            <dt>Biological sex</dt>
+            <dd>{humanize(record.sex)}</dd>
+          </div>
+          <div>
+            <dt>Life span</dt>
+            <dd>
+              {record.deathTick < 0
+                ? `${record.ageTicks} ticks; exact death tick not recorded`
+                : `Tick ${record.birthTick} to ${record.deathTick} (${record.ageTicks} ticks)`}
+            </dd>
+          </div>
+          <div>
+            <dt>Final stage</dt>
+            <dd>{humanize(record.finalLifeStage)}</dd>
+          </div>
+          <div>
+            <dt>Death cause</dt>
+            <dd>{humanize(record.deathCause)}</dd>
+          </div>
+          <div>
+            <dt>Parents</dt>
+            <dd>
+              {[record.motherId, record.fatherId]
+                .filter((id) => id !== undefined)
+                .map((id) => nameFor(id))
+                .join(" and ") || "No recorded parents"}
+            </dd>
+          </div>
+          <div>
+            <dt>Children</dt>
+            <dd>
+              {record.childIds.map((id) => nameFor(id)).join(", ") || "None recorded"}
+            </dd>
+          </div>
+          <div>
+            <dt>Heir</dt>
+            <dd>{nameFor(record.heirId)}</dd>
+          </div>
+          <div>
+            <dt>Final group</dt>
+            <dd>{group?.name ?? "No final group"}</dd>
+          </div>
+          <div>
+            <dt>Inherited traits</dt>
+            <dd>
+              {record.inheritedTraits
+                .map((trait) => `${trait.label} ${Math.round(trait.value)}%`)
+                .join(", ")}
+            </dd>
+          </div>
+          <div>
+            <dt>Skill potential</dt>
+            <dd>
+              {record.skillPotential
+                .map((skill) => `${skill.label} ${Math.round(skill.value)}%`)
+                .join(", ")}
+            </dd>
+          </div>
+        </dl>
+        {onSelectSubject ? (
+          <div className="lineage-links" aria-label="Permanent lineage links">
+            {[record.motherId, record.fatherId, ...record.childIds, record.heirId]
+              .filter((id): id is number => id !== undefined)
+              .filter((id, index, values) => values.indexOf(id) === index)
+              .map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() =>
+                    onSelectSubject({
+                      kind: view.creatures.some((candidate) => candidate.id === id)
+                        ? "creature"
+                        : "life-record",
+                      id,
+                    })
+                  }
+                >
+                  Open {nameFor(id)}
+                </button>
+              ))}
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function MemorialNotebook({
+  memorial,
+  view,
+  onSelectSubject,
+}: {
+  memorial: MemorialView;
+  view: WorldView;
+  onSelectSubject?: ((ref: WorldRef) => void) | undefined;
+}) {
+  const record = (view.lifeRecords ?? []).find(
+    (candidate) => candidate.id === memorial.deceasedId,
+  );
+  const heirName =
+    memorial.heirId === undefined
+      ? "No recorded heir"
+      : (view.creatures.find((candidate) => candidate.id === memorial.heirId)?.name ??
+        (view.lifeRecords ?? []).find((candidate) => candidate.id === memorial.heirId)
+          ?.name ??
+        `Identity ${memorial.heirId.toString()}`);
+  return (
+    <div className="inspector-scroll">
+      <section
+        className="subject-header subject-header--remembered"
+        aria-labelledby="subject-heading"
+      >
+        <span className="eyebrow">Temporary memorial</span>
+        <h2 id="subject-heading">{memorial.deceasedName}</h2>
+        <dl className="life-record-facts">
+          <div>
+            <dt>Visible until</dt>
+            <dd>Tick {memorial.expiresTick}</dd>
+          </div>
+          <div>
+            <dt>Mourners remaining</dt>
+            <dd>{memorial.mournersRemaining}</dd>
+          </div>
+          <div>
+            <dt>Heir</dt>
+            <dd>{heirName}</dd>
+          </div>
+          <div>
+            <dt>Estate</dt>
+            <dd>
+              {memorial.estate.water} water, {memorial.estate.food} food,{" "}
+              {memorial.estate.material} material
+            </dd>
+          </div>
+        </dl>
+        {record && onSelectSubject ? (
+          <div className="lineage-links">
+            <button
+              type="button"
+              onClick={() => onSelectSubject({ kind: "life-record", id: record.id })}
+            >
+              Open permanent life record for {record.name}
+            </button>
+          </div>
+        ) : null}
       </section>
     </div>
   );
@@ -916,6 +1195,41 @@ export function InspectorPanel({
   onSelectSubject?: ((ref: WorldRef) => void) | undefined;
   onInspectEvent?: ((event: TimelineEventView) => void) | undefined;
 }) {
+  if (subjectRef?.kind === "life-record") {
+    const record = (view.lifeRecords ?? []).find(
+      (candidate) => candidate.id === subjectRef.id,
+    );
+    if (record) {
+      return (
+        <LifeRecordNotebook record={record} view={view} onSelectSubject={onSelectSubject} />
+      );
+    }
+  }
+  if (subjectRef?.kind === "memorial") {
+    const memorial = (view.memorials ?? []).find(
+      (candidate) => candidate.id === subjectRef.id,
+    );
+    if (memorial) {
+      return (
+        <MemorialNotebook
+          memorial={memorial}
+          view={view}
+          onSelectSubject={onSelectSubject}
+        />
+      );
+    }
+  }
+  if (subjectRef?.kind === "creature") {
+    const record = (view.lifeRecords ?? []).find(
+      (candidate) => candidate.id === subjectRef.id,
+    );
+    const living = view.creatures.some((candidate) => candidate.id === subjectRef.id);
+    if (!living && record) {
+      return (
+        <LifeRecordNotebook record={record} view={view} onSelectSubject={onSelectSubject} />
+      );
+    }
+  }
   if (subjectRef?.kind === "group") {
     const group = view.groups.find((candidate) => candidate.id === subjectRef.id);
     if (group) {
@@ -955,6 +1269,7 @@ export function InspectorPanel({
       followed={followed}
       onFollow={onFollow}
       onSelect={onSelect}
+      onSelectSubject={onSelectSubject}
     />
   );
 }

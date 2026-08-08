@@ -54,6 +54,32 @@ export interface CreatureSkills {
   combat: Unit;
 }
 
+export type ReproductiveSex = "FEMALE" | "MALE";
+/** Backward-friendly descriptive alias; authoritative contracts use ReproductiveSex. */
+export type BiologicalSex = ReproductiveSex;
+export type LifeStage = "JUVENILE" | "ADULT" | "ELDER";
+export type DeathCause =
+  "STARVATION" | "DEHYDRATION" | "EXHAUSTION" | "INJURY" | "OLD_AGE" | "LEGACY_UNKNOWN";
+
+export interface PregnancyState {
+  fatherId: EntityId;
+  conceivedTick: Tick;
+  dueTick: Tick;
+}
+
+export interface CreatureDeathState {
+  tick: Tick;
+  cause: DeathCause;
+  eventId: number;
+}
+
+export interface CriticalDamageFacts {
+  starvation: number;
+  dehydration: number;
+  exhaustion: number;
+  injury: number;
+}
+
 export type ActionKind =
   | "EXPLORE"
   | "GATHER_FOOD"
@@ -76,7 +102,11 @@ export type ActionKind =
   | "GUARD"
   | "ATTACK"
   | "FLEE"
-  | "JOIN_GROUP";
+  | "JOIN_GROUP"
+  | "FORM_FAMILY"
+  | "CARE_FOR_YOUNG"
+  | "MOURN"
+  | "CLAIM_ESTATE";
 
 export type ActionPhase = "MOVING" | "WORKING";
 
@@ -90,7 +120,10 @@ export type DesireKind =
   | "RECIPROCATE_OR_REPAIR"
   | "PROTECT_PERSON_OR_GROUP"
   | "AVOID_THREAT"
-  | "COMPLETE_SHARED_WORK";
+  | "COMPLETE_SHARED_WORK"
+  | "RAISE_FAMILY"
+  | "HONOUR_THE_DEAD"
+  | "SETTLE_ESTATE";
 
 export type PlanKind =
   | "EAT_CARRIED_FOOD"
@@ -113,7 +146,11 @@ export type PlanKind =
   | "ESCAPE_THREAT"
   | "COMPLETE_STORAGE"
   | "EXPLORE_SURROUNDINGS"
-  | "TAKE_FOOD";
+  | "TAKE_FOOD"
+  | "FORM_A_FAMILY"
+  | "CARE_FOR_CHILD"
+  | "MOURN_A_LIFE"
+  | "CLAIM_AN_ESTATE";
 
 export type ReasonFactKind =
   | "NEED"
@@ -128,7 +165,8 @@ export type ReasonFactKind =
   | "TRAVEL"
   | "CROWDING"
   | "INTERVENTION"
-  | "WORLD";
+  | "WORLD"
+  | "LIFECYCLE";
 
 /** A value captured at decision time. UI prose may format it but may not infer beyond it. */
 export interface ReasonFact {
@@ -203,7 +241,11 @@ export type InteractionPurpose =
   | "MAINTENANCE"
   | "GUARD"
   | "CONFLICT"
-  | "FLIGHT";
+  | "FLIGHT"
+  | "FAMILY"
+  | "CARE"
+  | "MOURNING"
+  | "ESTATE";
 
 export interface InteractionClaim {
   anchorKind: "RESOURCE" | "STRUCTURE" | "GROUP_HOME" | "CREATURE" | "TILE";
@@ -288,6 +330,24 @@ export interface CreatureState {
   name: string;
   color: number;
   alive: boolean;
+  sex: ReproductiveSex;
+  ageTicks: Tick;
+  lifeStage: LifeStage;
+  naturalLifespanTicks: Tick;
+  birthTick: Tick;
+  motherId: EntityId | null;
+  fatherId: EntityId | null;
+  caregiverId: EntityId | null;
+  dependentUntilTick: Tick | null;
+  criticalSinceTick: Tick | null;
+  criticalDamage: CriticalDamageFacts | null;
+  traitPotential: CreatureTraits;
+  skillPotential: CreatureSkills;
+  pregnancy: PregnancyState | null;
+  reproductionCooldownUntilTick: Tick;
+  death: CreatureDeathState | null;
+  mournedLifeRecordIds: EntityId[];
+  majorLifeEventIds: number[];
   tileIndex: number;
   x: FixedPosition;
   y: FixedPosition;
@@ -321,7 +381,7 @@ export interface ResourceNode {
   regenerationAmount: number;
 }
 
-export type StorageStructureKind = "STORAGE" | "STORAGE_SITE";
+export type StorageStructureKind = "STORAGE" | "STORAGE_SITE" | "ABANDONED_STORAGE";
 export type ShelterStructureKind = "SHELTER_SITE" | "SHELTER" | "ABANDONED_SHELTER";
 export type StructureKind = StorageStructureKind | ShelterStructureKind;
 
@@ -384,6 +444,8 @@ export interface ShelterRelocationCandidate {
 export interface GroupState {
   id: GroupId;
   name: string;
+  status: "ACTIVE" | "EXTINCT";
+  extinctTick: Tick | null;
   stage: "PROVISIONAL" | "PERSISTENT";
   foundedTick: Tick;
   memberIds: EntityId[];
@@ -401,7 +463,51 @@ export interface GroupState {
 }
 
 export type MemoryKind =
-  "HELP_RECEIVED" | "THEFT_OBSERVED" | "HARM_RECEIVED" | "RESOURCE_FOUND" | "GROUP_FOUNDED";
+  | "HELP_RECEIVED"
+  | "THEFT_OBSERVED"
+  | "HARM_RECEIVED"
+  | "RESOURCE_FOUND"
+  | "GROUP_FOUNDED"
+  | "CARE_RECEIVED"
+  | "BIRTH_WITNESSED"
+  | "DEATH_MOURNED";
+
+export interface LifeRecord {
+  id: EntityId;
+  name: string;
+  color: number;
+  sex: ReproductiveSex;
+  motherId: EntityId | null;
+  fatherId: EntityId | null;
+  birthTick: Tick;
+  deathTick: Tick;
+  ageTicks: Tick;
+  finalLifeStage: LifeStage;
+  deathCause: DeathCause;
+  finalGroupId: GroupId | null;
+  traitPotential: CreatureTraits;
+  skillPotential: CreatureSkills;
+  majorEventIds: number[];
+  heirId: EntityId | null;
+}
+
+export interface EstateInventory {
+  food: number;
+  material: number;
+  water: number;
+}
+
+export interface MemorialState {
+  id: EntityId;
+  deceasedId: EntityId;
+  tileIndex: number;
+  createdTick: Tick;
+  expiresTick: Tick;
+  heirId: EntityId | null;
+  estate: EstateInventory;
+  mournerIds: EntityId[];
+  completedMournerIds: EntityId[];
+}
 
 export interface EpisodicMemory {
   id: number;
@@ -432,6 +538,7 @@ export type DomainEventType =
   | "SIMULATION_STARTED"
   | "HYDRATION_RULES_ENABLED"
   | "SHELTER_RULES_ENABLED"
+  | "LIFECYCLE_RULES_ENABLED"
   | "PLAYER_ADDED_FOOD"
   | "PLAYER_REMOVED_FOOD"
   | "PLAYER_ADDED_MATERIAL"
@@ -481,7 +588,21 @@ export type DomainEventType =
   | "CREATURE_GUARDED"
   | "CREATURE_JOINED_GROUP"
   | "GROUP_FOUNDED"
-  | "LEADER_SELECTED";
+  | "LEADER_SELECTED"
+  | "LIFE_STAGE_CHANGED"
+  | "CRITICAL_HEALTH_STARTED"
+  | "CRITICAL_HEALTH_RECOVERED"
+  | "FAMILY_FORMED"
+  | "PREGNANCY_STARTED"
+  | "PREGNANCY_LOST"
+  | "CREATURE_BORN"
+  | "CARE_GIVEN"
+  | "CREATURE_DIED"
+  | "MEMORIAL_CREATED"
+  | "MOURNING_COMPLETED"
+  | "ESTATE_CLAIMED"
+  | "ESTATE_CLOSED"
+  | "GROUP_EXTINCT";
 
 export type AttentionTier = "ROUTINE" | "NOTABLE" | "SIGNIFICANT" | "CRITICAL";
 
@@ -520,7 +641,12 @@ export type HistoricalEventType =
   | "SETTLEMENT_RELOCATED"
   | "SOCIAL_BOND"
   | "THEFT"
-  | "CONFRONTATION";
+  | "CONFRONTATION"
+  | "HEALTH_CRISIS"
+  | "BIRTH"
+  | "DEATH"
+  | "MOURNING"
+  | "GROUP_EXTINCTION";
 
 export interface HistoricalEvent {
   id: number;
@@ -554,6 +680,14 @@ export interface SimulationMetrics {
   shelterDeniedClaims: number;
   shelterGuestUses: number;
   shelterRelocations: number;
+  births: number;
+  deaths: number;
+  pregnanciesStarted: number;
+  pregnanciesLost: number;
+  careActions: number;
+  mournings: number;
+  estatesClaimed: number;
+  groupsExtinct: number;
   playerInterventions: number;
   invalidPathFailures: number;
   /** Claim attempts that encountered at least one occupied interaction slot. */
@@ -571,6 +705,7 @@ export interface SimulationConfiguration {
   maxRelationshipsPerCreature: number;
   maxIntentHistoryPerCreature: number;
   maxRouteSamplesPerCreature: number;
+  maxLifeRecords: number;
 }
 
 export interface SimulationState {
@@ -596,6 +731,8 @@ export interface SimulationState {
   resourceNodes: ResourceNode[];
   structures: StructureState[];
   groups: GroupState[];
+  lifeRecords: LifeRecord[];
+  memorials: MemorialState[];
   relationships: RelationshipEdge[];
   memories: EpisodicMemory[];
   commandQueue: ScheduledPlayerCommand[];
@@ -690,9 +827,6 @@ export interface ScheduledPlayerCommand {
 }
 
 export interface RenderTile {
-  index: number;
-  x: number;
-  y: number;
   terrain: TerrainKind;
   blocked: boolean;
 }
@@ -702,6 +836,21 @@ export interface RenderCreature {
   name: string;
   color: number;
   alive: boolean;
+  sex: ReproductiveSex;
+  ageTicks: Tick;
+  lifeStage: LifeStage;
+  naturalLifespanTicks: Tick;
+  birthTick: Tick;
+  motherId: EntityId | null;
+  fatherId: EntityId | null;
+  caregiverId: EntityId | null;
+  dependentUntilTick: Tick | null;
+  criticalSinceTick: Tick | null;
+  criticalDamage: CriticalDamageFacts | null;
+  traitPotential: CreatureTraits;
+  skillPotential: CreatureSkills;
+  pregnant: boolean;
+  pregnancyDueTick: Tick | null;
   x: number;
   y: number;
   tileIndex: number;
@@ -799,6 +948,18 @@ export interface RenderStructure {
   builtFromShelterId: EntityId | null;
 }
 
+export interface RenderMemorial {
+  id: EntityId;
+  deceasedId: EntityId;
+  deceasedName: string;
+  tileIndex: number;
+  createdTick: Tick;
+  expiresTick: Tick;
+  heirId: EntityId | null;
+  estate: EstateInventory;
+  mournersRemaining: number;
+}
+
 export interface RenderScenario {
   reference: ScenarioReferenceV2;
   compiledMapHash: string;
@@ -830,6 +991,7 @@ export interface RenderSnapshot {
   creatures: RenderCreature[];
   resourceNodes: RenderResourceNode[];
   structures: RenderStructure[];
+  memorials: RenderMemorial[];
   groups: GroupState[];
   recentEvents: DomainEvent[];
   historyEvents: HistoricalEvent[];

@@ -9,6 +9,7 @@ import {
   deserializeSimulationSave,
   hashSimulationState,
   queuePlayerCommand,
+  queryLifeRecords,
   serializeSimulationSave,
   type CausalEvidenceQueryOptions,
   type CausalEvidenceRef,
@@ -29,6 +30,8 @@ import type {
   RuntimeCheckpoint,
   RuntimeEntityDetail,
   RuntimeInterventionOutcomeProjection,
+  RuntimeLifeRecordPage,
+  RuntimeLifeRecordQuery,
   RuntimeProgress,
   RuntimeQueryOptions,
   RuntimeReplay,
@@ -339,6 +342,16 @@ export class CoreSimulationRuntime implements SimulationRuntime {
       ref,
       node: projection.nodes[0] ?? null,
     });
+  }
+
+  getLifeRecords(
+    query: RuntimeLifeRecordQuery = {},
+    options: RuntimeQueryOptions = {},
+  ): RuntimeLifeRecordPage {
+    this.assertReadyForQuery(options);
+    const page = queryLifeRecords(this.requireSimulation(), detachedClone(query));
+    throwIfAborted(options.signal);
+    return detachedClone(page);
   }
 
   getInterventionOutcomes(

@@ -11,7 +11,7 @@ export interface InterventionResponsePoint {
 
 export const DEFAULT_INTERVENTION_RESPONSE_WINDOW_TICKS = 120;
 export const MAX_INTERVENTION_RESPONSE_WINDOW_TICKS = 5_000;
-export const INTERVENTION_RESPONSE_SCHEMA_VERSION = 3 as const;
+export const INTERVENTION_RESPONSE_SCHEMA_VERSION = 4 as const;
 
 export const INTERVENTION_RESPONSE_STATUSES = [
   "NOTICED",

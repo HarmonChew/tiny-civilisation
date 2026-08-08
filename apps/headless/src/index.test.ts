@@ -248,6 +248,8 @@ describe("headless scenario CLI", () => {
     ["holdout", 64, 10_000, 1_001, 1_064],
     ["phase-4.2-calibration", 64, 10_000, 1, 64],
     ["phase-4.2-holdout", 64, 10_000, 2_001, 2_064],
+    ["phase-4.3-calibration", 64, 10_000, 1, 64],
+    ["phase-4.3-holdout", 64, 10_000, 3_001, 3_064],
   ] as const)(
     "resolves the locked %s corpus",
     (corpus, seedCount, ticks, firstSeed, lastSeed) => {
@@ -321,6 +323,24 @@ describe("headless scenario CLI", () => {
     ).toThrow("must use canonical path docs/baselines/phase-4.2-calibration-v2.json.gz");
   });
 
+  it("locks Phase 4.3 corpora and keeps the lifecycle holdout sealed", () => {
+    expect(parseMatrixOptions(["--corpus", "phase-4.3-calibration"])).toMatchObject({
+      ticks: 10_000,
+      outputPath: "docs/baselines/phase-4.3-lifecycle-calibration-v1.json.gz",
+    });
+    const holdout = parseMatrixOptions(["--corpus", "phase-4.3-holdout"]);
+    expect(holdout).toMatchObject({
+      ticks: 10_000,
+      outputPath: "docs/baselines/phase-4.3-lifecycle-holdout-v1.json.gz",
+    });
+    expect(() =>
+      parseMatrixOptions(["--corpus", "phase-4.3-calibration", "--ticks", "10000"]),
+    ).toThrow("--ticks is forbidden");
+    expect(() => runMatrix(holdout)).toThrow(
+      "sealed until reviewed frozen verification, final unified NVDA",
+    );
+  });
+
   it("protects every reserved seed at the holdout horizon through generic commands", () => {
     expect(() => parseRunOptions(["--seed", "2001", "--ticks", "0"])).toThrow(
       "Reserved Phase 4.2 holdout seeds",
@@ -354,6 +374,12 @@ describe("headless scenario CLI", () => {
         outputPath: "docs/baselines/phase-4.2-holdout-v1.json.gz",
       }),
     ).toThrow("already recorded and cannot be rerun");
+    expect(() => parseRunOptions(["--seed", "3001", "--ticks", "0"])).toThrow(
+      "Reserved Phase 4.3 holdout seeds",
+    );
+    expect(() => runMatrix({ corpus: "nightly", seeds: [3_064], ticks: 1 })).toThrow(
+      "Reserved Phase 4.3 holdout seeds",
+    );
   });
 
   it("orders matrix cases by catalog and then numeric seed", () => {

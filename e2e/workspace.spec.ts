@@ -1,19 +1,39 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import {
+  DEFAULT_INTERVENTION_RESPONSE_WINDOW_TICKS,
+  SHELTER_BASE_CAPACITY,
+  SHELTER_MATERIAL_REQUIRED,
+  SHELTER_MINIMUM_COMMITMENT_TICKS,
+  SHELTER_WORK_REQUIRED,
   advanceSimulation,
   assertCompatibleSimulationState,
+  availableInteractionSlots,
+  completeCareForYoung,
+  completeEstateClaim,
+  completeMourning,
+  createRenderSnapshot,
   createExperiment,
   createScenarioReference,
   createSimulation,
+  finalizeLifecycleDeaths,
   hashSimulationState,
+  processPregnanciesAndBirths,
   rankShelterSites,
+  recordCriticalDamage,
   serializeExperiment,
   serializeSimulationSave,
   setExperimentBranchResult,
+  shelterConditionBand,
+  tileCoordinates,
+  transitionToDead,
+  updateLifecycleGroupExtinction,
+  type ActiveAction,
+  type GroupState,
   type ScenarioId,
   type ShelterStructureState,
   type SimulationState,
+  type StorageStructureState,
 } from "@tiny-civ/sim-core";
 
 const STORY_SEED = 4_182;
@@ -108,16 +128,60 @@ interface ExperimentFixture {
   readonly state: SimulationState;
 }
 
-interface RelocationCompatibilityFixture {
+interface ShelterCompatibilityFixture {
   readonly serializedWorkspace: string;
   readonly hash: string;
   readonly tick: number;
   readonly groupId: number;
-  readonly activeShelterId: number;
-  readonly abandonedShelterId: number;
+  readonly groupName: string;
+  readonly shelterId: number;
+  readonly shelterX: number;
+  readonly shelterY: number;
+  readonly restingCreatureName: string | null;
+  readonly abandonedShelterId: number | null;
+}
+
+type ShelterCompatibilityMode =
+  "EMPTY_SITE" | "BUILDING_SITE" | "ACTIVE" | "OCCUPIED" | "DEGRADED" | "RELOCATED";
+
+type WaterStoryKind = "CONTENTION" | "SHARING" | "DEPLETION";
+
+interface WaterStoryFixture extends ExperimentFixture {
+  readonly kind: WaterStoryKind;
+  readonly eventSummary: string | null;
+  readonly sourceId: number | null;
+  readonly sourceCapacity: number | null;
+}
+
+interface LifecycleBirthFixture {
+  readonly serializedWorkspace: string;
+  readonly hash: string;
+  readonly tick: number;
+  readonly childId: number;
+  readonly childName: string;
+  readonly childSex: "FEMALE" | "MALE";
+  readonly motherName: string;
+  readonly fatherName: string;
+  readonly caregiverName: string;
+  readonly loyaltyPotentialPercent: number;
+  readonly foragingPotentialPercent: number;
+}
+
+interface LifecycleExtinctionFixture {
+  readonly serializedWorkspace: string;
+  readonly hash: string;
+  readonly tick: number;
+  readonly deceasedName: string;
+  readonly deceasedId: number;
+  readonly memorialId: number;
+  readonly heirName: string;
+  readonly inheritedQuantity: number;
+  readonly lifeRecordCount: number;
+  readonly extinctGroupName: string;
 }
 
 const experimentFixtures = new Map<string, ExperimentFixture>();
+const waterStoryFixtures = new Map<WaterStoryKind, WaterStoryFixture>();
 
 function currentExperimentFixture(
   scenarioId: ScenarioId,
@@ -155,50 +219,282 @@ function phase4ScenarioExperimentBuffer(scenario: Phase4Scenario, tick: number):
   return currentExperimentFixture(scenario.id, scenario.seed, tick).buffer;
 }
 
+function waterStoryFixture(kind: WaterStoryKind): WaterStoryFixture {
+  const cached = waterStoryFixtures.get(kind);
+  if (cached) return cached;
+
+  const state = createSimulation(createScenarioReference("unequal-table", 4));
+  for (let elapsed = 0; elapsed <= 2_000; elapsed++) {
+    if (elapsed > 0) advanceSimulation(state, 1);
+    const snapshot = createRenderSnapshot(state);
+    const waterNodes = snapshot.resourceNodes.filter((node) => node.kind === "WATER");
+    const gatherers = snapshot.creatures.filter(
+      (creature) => creature.action === "GATHER_WATER",
+    );
+    const shareEvent = state.domainEvents.find((event) => event.type === "WATER_SHARED");
+    const drinkEvent = state.domainEvents.find((event) => event.type === "WATER_DRUNK");
+    const depletionEvent = state.domainEvents.find(
+      (event) => event.type === "WATER_SOURCE_DEPLETED",
+    );
+    const depletedSourceId = depletionEvent?.targetIds[0] ?? null;
+    const depletedSource =
+      depletedSourceId === null
+        ? undefined
+        : waterNodes.find((node) => node.id === depletedSourceId);
+    const matches =
+      kind === "CONTENTION"
+        ? waterNodes.filter(
+            (node) =>
+              node.waterAccess !== null &&
+              node.waterAccess.claimedInteractionSlots ===
+                node.waterAccess.interactionCapacity,
+          ).length === 2 && gatherers.length === 6
+        : kind === "SHARING"
+          ? shareEvent !== undefined &&
+            drinkEvent !== undefined &&
+            state.tick >= shareEvent.tick + 21 &&
+            gatherers.length > 0 &&
+            snapshot.creatures.some((creature) => creature.inventory.water > 0)
+          : depletionEvent !== undefined && depletedSource?.currentStock === 0;
+    if (!matches) continue;
+
+    const experimentFixture = currentExperimentFixture("unequal-table", 4, state.tick);
+    const fixture: WaterStoryFixture = {
+      ...experimentFixture,
+      kind,
+      eventSummary:
+        kind === "SHARING"
+          ? (shareEvent?.summary ?? null)
+          : kind === "DEPLETION"
+            ? (depletionEvent?.summary ?? null)
+            : null,
+      sourceId: kind === "DEPLETION" ? depletedSourceId : null,
+      sourceCapacity: kind === "DEPLETION" ? (depletedSource?.maximumStock ?? null) : null,
+    };
+    waterStoryFixtures.set(kind, fixture);
+    return fixture;
+  }
+
+  throw new Error(`The semantic ${kind.toLowerCase()} water state was not reached.`);
+}
+
 /**
  * A contract-valid state-rendering fixture for a lifecycle state that canonical
  * release seeds do not reach within 10,000 ticks. It deliberately adds no
  * relocation event, so the journey verifies current-state rendering only and
  * never presents the fixture as naturally observed history.
  */
-function relocationCompatibilityFixture(): RelocationCompatibilityFixture {
+function shelterCompatibilityFixture(
+  mode: ShelterCompatibilityMode,
+): ShelterCompatibilityFixture {
   const state = createSimulation(createScenarioReference("split-banks", 7_319));
-  advanceSimulation(state, 923);
-  const group = state.groups.find((candidate) => candidate.activeShelterId !== null);
-  if (!group) throw new Error("The relocation fixture requires an active shelter.");
-  const active = state.structures.find(
-    (structure): structure is ShelterStructureState =>
-      structure.id === group.activeShelterId && structure.kind === "SHELTER",
-  );
-  if (!active) throw new Error("The relocation fixture lost its active shelter.");
-  const replacementSite = rankShelterSites(state, group, true)[0];
-  if (!replacementSite)
-    throw new Error("The relocation fixture has no legal replacement site.");
+  const members = [...state.creatures];
+  const leader = members[0];
+  if (!leader) throw new Error("The shelter fixture requires a living founder.");
 
-  const replacementId = state.nextEntityId++;
-  const replacement: ShelterStructureState = {
-    ...active,
-    id: replacementId,
-    kind: "SHELTER",
-    tileIndex: replacementSite.tileIndex,
+  const groupId = state.nextGroupId++;
+  const storage: StorageStructureState = {
+    id: state.nextEntityId++,
+    kind: "STORAGE",
+    tileIndex: leader.tileIndex,
+    groupId,
+    material: 8,
+    materialRequired: 8,
+    progress: 10_000,
+    workRequired: 10_000,
+    inventory: { capacity: 100, food: 24, material: 24, water: 0 },
+    guardIds: [],
     completedTick: state.tick,
-    siteAssessment: {
-      ...replacementSite.assessment,
-      selectedAtTick: state.tick,
-    },
-    builtFromShelterId: active.id,
-    lastUsedTick: null,
   };
-  active.kind = "ABANDONED_SHELTER";
-  state.structures.push(replacement);
-  group.activeShelterId = replacement.id;
-  group.pendingShelterId = null;
-  group.homeTileIndex = replacement.tileIndex;
-  group.shelterRelocations = 1;
-  group.shelterCommitUntilTick = state.tick + 1_500;
-  group.shelterRelocationCandidate = null;
-  state.metrics.shelterRelocations += 1;
+  const group: GroupState = {
+    id: groupId,
+    name: "Test settlement",
+    status: "ACTIVE",
+    extinctTick: null,
+    stage: "PERSISTENT",
+    foundedTick: state.tick,
+    memberIds: members.map((member) => member.id),
+    leaderId: leader.id,
+    homeTileIndex: storage.tileIndex,
+    storageStructureId: storage.id,
+    activeShelterId: null,
+    pendingShelterId: null,
+    shelterRelocations: 0,
+    shelterCommitUntilTick: 0,
+    shelterRelocationCandidate: null,
+    cohesion: 5_000,
+    sharingNorm: 1_000,
+    majorEventIds: [],
+  };
+  for (const member of members) member.groupId = group.id;
+  state.structures.push(storage);
+  state.groups.push(group);
 
+  const rankedSite = rankShelterSites(state, group, false)[0];
+  if (!rankedSite) throw new Error("The shelter fixture has no legal site.");
+  const complete = !["EMPTY_SITE", "BUILDING_SITE"].includes(mode);
+  const condition = mode === "DEGRADED" ? 5_000 : 10_000;
+  const shelter: ShelterStructureState = {
+    id: state.nextEntityId++,
+    kind: complete ? "SHELTER" : "SHELTER_SITE",
+    tileIndex: rankedSite.tileIndex,
+    groupId: group.id,
+    material: mode === "BUILDING_SITE" ? 1 : complete ? SHELTER_MATERIAL_REQUIRED : 0,
+    materialRequired: SHELTER_MATERIAL_REQUIRED,
+    progress: mode === "BUILDING_SITE" ? 1_600 : complete ? SHELTER_WORK_REQUIRED : 0,
+    workRequired: SHELTER_WORK_REQUIRED,
+    inventory: { capacity: 0, food: 0, material: 0, water: 0 },
+    guardIds: [],
+    completedTick: complete ? state.tick : null,
+    condition,
+    baseCapacity: SHELTER_BASE_CAPACITY,
+    siteAssessment: rankedSite.assessment,
+    builtFromShelterId: null,
+    maintenanceMaterialSpent: 0,
+    lastMaintainedTick: null,
+    lastUsedTick: null,
+    conditionBand: shelterConditionBand(condition),
+  };
+  state.structures.push(shelter);
+  if (complete) {
+    group.activeShelterId = shelter.id;
+    group.homeTileIndex = shelter.tileIndex;
+    group.shelterCommitUntilTick = state.tick + SHELTER_MINIMUM_COMMITMENT_TICKS;
+  } else {
+    group.pendingShelterId = shelter.id;
+  }
+
+  let restingCreatureName: string | null = null;
+  let abandonedShelterId: number | null = null;
+  let selectedShelter = shelter;
+  if (mode === "OCCUPIED") {
+    const restingCreature = members.find((member) => member.name === "Pela");
+    if (!restingCreature) throw new Error("The occupied fixture requires Pela.");
+    const claim = availableInteractionSlots(
+      state,
+      "REST_SHELTERED",
+      shelter.id,
+      shelter.tileIndex,
+      restingCreature.id,
+    )[0];
+    if (!claim) throw new Error("The occupied fixture has no shelter rest place.");
+    restingCreature.tileIndex = claim.tileIndex;
+    restingCreature.x = claim.targetX;
+    restingCreature.y = claim.targetY;
+    const decisionId = state.nextDecisionId++;
+    state.decisionRecords.push({
+      id: decisionId,
+      tick: state.tick,
+      actorId: restingCreature.id,
+      previousAction: null,
+      selectedAction: "REST_SHELTERED",
+      selectedDesire: "RECOVER_ENERGY",
+      selectedPlan: "REST_IN_SHELTER",
+      selectedTargetId: shelter.id,
+      strongestReason: null,
+      switchReason: "NO_ACTIVE_GOAL",
+      candidates: [],
+    });
+    restingCreature.activeDesire = {
+      kind: "RECOVER_ENERGY",
+      subjectEntityId: restingCreature.id,
+      startedAtTick: state.tick,
+      minimumCommitUntilTick: state.tick,
+      nextReconsiderationTick: state.tick + 100,
+      strength: restingCreature.needs.fatigue,
+      selectedByDecisionId: decisionId,
+    };
+    restingCreature.activePlan = {
+      kind: "REST_IN_SHELTER",
+      desireKind: "RECOVER_ENERGY",
+      targetEntityId: shelter.id,
+      targetTileIndex: claim.tileIndex,
+      startedAtTick: state.tick,
+      status: "ACTIVE",
+      selectedByDecisionId: decisionId,
+      expectedUtility: 1_000,
+      strongestReason: null,
+      interactionClaim: claim,
+    };
+    const action: ActiveAction = {
+      kind: "REST_SHELTERED",
+      phase: "WORKING",
+      startedAtTick: state.tick,
+      targetEntityId: shelter.id,
+      targetTileIndex: claim.tileIndex,
+      path: [claim.tileIndex],
+      pathIndex: 1,
+      progress: 0,
+      workRequired: 1,
+      navigationRevision: state.world.navigationRevision,
+      interactionClaim: claim,
+    };
+    restingCreature.activeAction = action;
+    shelter.lastUsedTick = state.tick;
+    restingCreatureName = restingCreature.name;
+  } else if (mode === "RELOCATED") {
+    state.tick = SHELTER_MINIMUM_COMMITMENT_TICKS;
+    const replacementSite = rankShelterSites(state, group, true)[0];
+    if (!replacementSite)
+      throw new Error("The relocation fixture has no replacement site.");
+    const replacement: ShelterStructureState = {
+      ...shelter,
+      id: state.nextEntityId++,
+      tileIndex: replacementSite.tileIndex,
+      completedTick: state.tick,
+      siteAssessment: {
+        ...replacementSite.assessment,
+        selectedAtTick: state.tick,
+      },
+      builtFromShelterId: shelter.id,
+      lastUsedTick: null,
+    };
+    shelter.kind = "ABANDONED_SHELTER";
+    state.structures.push(replacement);
+    group.activeShelterId = replacement.id;
+    group.pendingShelterId = null;
+    group.homeTileIndex = replacement.tileIndex;
+    group.shelterRelocations = 1;
+    group.shelterCommitUntilTick = state.tick + SHELTER_MINIMUM_COMMITMENT_TICKS;
+    group.shelterRelocationCandidate = null;
+    state.metrics.shelterRelocations += 1;
+    selectedShelter = replacement;
+    abandonedShelterId = shelter.id;
+  }
+
+  assertCompatibleSimulationState(state);
+  const hash = hashSimulationState(state);
+  const experiment = setExperimentBranchResult(
+    createExperiment(state.scenario),
+    "baseline",
+    state.tick,
+    hash,
+  );
+  const coordinates = tileCoordinates(state.world, selectedShelter.tileIndex);
+  return {
+    serializedWorkspace: JSON.stringify({
+      kind: "tiny-civilisation/workspace",
+      schemaVersion: 5,
+      activeBranchId: experiment.rootBranchId,
+      experiment,
+      simulationSave: serializeSimulationSave(state),
+    }),
+    hash,
+    tick: state.tick,
+    groupId: group.id,
+    groupName: group.name,
+    shelterId: selectedShelter.id,
+    shelterX: coordinates.x,
+    shelterY: coordinates.y,
+    restingCreatureName,
+    abandonedShelterId,
+  };
+}
+
+function serializedLifecycleWorkspace(state: SimulationState): {
+  serializedWorkspace: string;
+  hash: string;
+} {
   assertCompatibleSimulationState(state);
   const hash = hashSimulationState(state);
   const experiment = setExperimentBranchResult(
@@ -210,16 +506,203 @@ function relocationCompatibilityFixture(): RelocationCompatibilityFixture {
   return {
     serializedWorkspace: JSON.stringify({
       kind: "tiny-civilisation/workspace",
-      schemaVersion: 4,
+      schemaVersion: 5,
       activeBranchId: experiment.rootBranchId,
       experiment,
       simulationSave: serializeSimulationSave(state),
     }),
     hash,
+  };
+}
+
+/**
+ * A contract-valid Phase 4.3 rendering and interaction fixture. The pregnancy,
+ * birth, and care completion are assembled through authoritative sim-core
+ * lifecycle functions; this is not a claim that the configured seed naturally
+ * produced the story.
+ */
+function lifecycleBirthFixture(): LifecycleBirthFixture {
+  const state = createSimulation(createScenarioReference("petri-world", 8_104));
+  const mother = state.creatures.find((creature) => creature.name === "Iri");
+  const father = state.creatures.find((creature) => creature.name === "Nalo");
+  if (!mother || !father) throw new Error("The lifecycle birth fixture lost its parents.");
+
+  const identitiesBeforeBirth = new Set(state.creatures.map((creature) => creature.id));
+  mother.pregnancy = {
+    fatherId: father.id,
+    conceivedTick: state.tick - 1_000,
+    dueTick: state.tick,
+  };
+  processPregnanciesAndBirths(state);
+  const child = state.creatures.find((creature) => !identitiesBeforeBirth.has(creature.id));
+  if (!child) throw new Error("The lifecycle birth fixture did not create one child.");
+
+  child.caregiverId = mother.id;
+  child.needs.hunger = 3_000;
+  child.needs.thirst = 3_000;
+  mother.inventory = {
+    ...mother.inventory,
+    food: 1,
+    material: 0,
+    water: 1,
+  };
+  if (!completeCareForYoung(state, mother, child.id)) {
+    throw new Error("The lifecycle birth fixture could not record dependent care.");
+  }
+  if (
+    !state.domainEvents.some(
+      (event) => event.type === "CREATURE_BORN" && event.targetIds.includes(child.id),
+    ) ||
+    !state.domainEvents.some(
+      (event) => event.type === "CARE_GIVEN" && event.targetIds.includes(child.id),
+    )
+  ) {
+    throw new Error("The lifecycle birth fixture lost its retained birth or care fact.");
+  }
+
+  const workspace = serializedLifecycleWorkspace(state);
+  return {
+    ...workspace,
     tick: state.tick,
-    groupId: group.id,
-    activeShelterId: replacement.id,
-    abandonedShelterId: active.id,
+    childId: child.id,
+    childName: child.name,
+    childSex: child.sex,
+    motherName: mother.name,
+    fatherName: father.name,
+    caregiverName: mother.name,
+    loyaltyPotentialPercent: Math.round(child.traitPotential.loyalty / 100),
+    foragingPotentialPercent: Math.round(child.skillPotential.foraging / 100),
+  };
+}
+
+/**
+ * A contract-valid Phase 4.3 rendering and interaction fixture. It invokes the
+ * authoritative death, mourning, estate, archival, and extinction transitions
+ * to expose their final UI states. The forced deaths are fixture setup, not
+ * naturally observed evidence for this seed.
+ */
+function lifecycleExtinctionFixture(): LifecycleExtinctionFixture {
+  const state = createSimulation(createScenarioReference("split-banks", 7_319));
+  const mother = state.creatures.find(
+    (creature) => creature.alive && creature.name === "Iri",
+  );
+  const father = state.creatures.find(
+    (creature) => creature.alive && creature.name === "Nalo",
+  );
+  if (!mother || !father) {
+    throw new Error("The lifecycle extinction fixture lost its recorded parents.");
+  }
+  const groupId = state.nextGroupId++;
+  const fixtureMembers = state.creatures
+    .filter((creature) => creature.alive)
+    .map((creature) => creature.id)
+    .sort((left, right) => left - right);
+  state.groups.push({
+    id: groupId,
+    name: "Fixture Hollow",
+    status: "ACTIVE",
+    extinctTick: null,
+    stage: "PROVISIONAL",
+    foundedTick: state.tick,
+    memberIds: fixtureMembers,
+    leaderId: mother.id,
+    homeTileIndex: mother.tileIndex,
+    storageStructureId: null,
+    activeShelterId: null,
+    pendingShelterId: null,
+    shelterRelocations: 0,
+    shelterCommitUntilTick: 0,
+    shelterRelocationCandidate: null,
+    cohesion: 5_000,
+    sharingNorm: 1_000,
+    majorEventIds: [],
+  });
+  for (const creature of state.creatures) creature.groupId = groupId;
+  state.metrics.groupsFormed += 1;
+  const activeGroup = state.groups.find((group) => group.status === "ACTIVE");
+  if (!activeGroup) {
+    throw new Error("The lifecycle extinction fixture requires a historical group.");
+  }
+
+  const identitiesBeforeBirth = new Set(state.creatures.map((creature) => creature.id));
+  mother.pregnancy = {
+    fatherId: father.id,
+    conceivedTick: state.tick - 1_000,
+    dueTick: state.tick,
+  };
+  processPregnanciesAndBirths(state);
+  const child = state.creatures.find((creature) => !identitiesBeforeBirth.has(creature.id));
+  if (!child) throw new Error("The lifecycle extinction fixture did not create an heir.");
+
+  father.inventory = { ...father.inventory, food: 0, material: 0, water: 0 };
+  mother.inventory = { ...mother.inventory, food: 1, material: 1, water: 1 };
+  mother.health = 1_000;
+  recordCriticalDamage(state, mother, { dehydration: 900 });
+  const criticalEvent = [...state.domainEvents]
+    .reverse()
+    .find(
+      (event) =>
+        event.type === "CRITICAL_HEALTH_STARTED" && event.actorIds.includes(mother.id),
+    );
+  if (
+    !transitionToDead(state, mother, "DEHYDRATION", criticalEvent ? [criticalEvent.id] : [])
+  ) {
+    throw new Error("The lifecycle extinction fixture could not archive its subject.");
+  }
+
+  const memorial = state.memorials.find((candidate) => candidate.deceasedId === mother.id);
+  if (!memorial || memorial.heirId !== father.id) {
+    throw new Error("The lifecycle extinction fixture did not retain the expected heir.");
+  }
+  if (!completeMourning(state, father, memorial.id)) {
+    throw new Error("The lifecycle extinction fixture could not retain mourning.");
+  }
+  const estateBeforeClaim =
+    memorial.estate.water + memorial.estate.food + memorial.estate.material;
+  if (!completeEstateClaim(state, father, memorial.id)) {
+    throw new Error("The lifecycle extinction fixture could not retain inheritance.");
+  }
+  const estateAfterClaim =
+    memorial.estate.water + memorial.estate.food + memorial.estate.material;
+  const inheritedQuantity = estateBeforeClaim - estateAfterClaim;
+
+  for (const creature of [...state.creatures].filter((candidate) => candidate.alive)) {
+    if (!transitionToDead(state, creature, "OLD_AGE")) {
+      throw new Error(
+        `The lifecycle extinction fixture could not archive ${creature.name}.`,
+      );
+    }
+  }
+  updateLifecycleGroupExtinction(state);
+  finalizeLifecycleDeaths(state);
+  const extinctGroup = state.groups.find((group) => group.status === "EXTINCT");
+  if (!extinctGroup || state.creatures.some((creature) => creature.alive)) {
+    throw new Error("The lifecycle extinction fixture did not reach an extinct world.");
+  }
+  if (
+    !state.domainEvents.some(
+      (event) => event.type === "MOURNING_COMPLETED" && event.actorIds.includes(father.id),
+    ) ||
+    !state.domainEvents.some(
+      (event) => event.type === "ESTATE_CLAIMED" && event.actorIds.includes(father.id),
+    )
+  ) {
+    throw new Error(
+      "The lifecycle extinction fixture lost mourning or inheritance evidence.",
+    );
+  }
+
+  const workspace = serializedLifecycleWorkspace(state);
+  return {
+    ...workspace,
+    tick: state.tick,
+    deceasedName: mother.name,
+    deceasedId: mother.id,
+    memorialId: memorial.id,
+    heirName: father.name,
+    inheritedQuantity,
+    lifeRecordCount: state.lifeRecords.length,
+    extinctGroupName: extinctGroup.name,
   };
 }
 
@@ -474,9 +957,9 @@ async function loadCurrentScenarioAtTick(
   return fixture;
 }
 
-async function loadRelocationCompatibilityState(
+async function loadShelterCompatibilityState(
   page: Page,
-  fixture: RelocationCompatibilityFixture,
+  fixture: Pick<ShelterCompatibilityFixture, "serializedWorkspace" | "hash" | "tick">,
 ): Promise<void> {
   await openNotebook(page);
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -495,6 +978,32 @@ async function loadRelocationCompatibilityState(
   await expect(page.locator(".status-rail__hash")).toContainText(fixture.hash.slice(0, 12));
   await closeNotebook(page);
   await dismissRetainedMoments(page);
+  await waitForRenderedDish(page);
+}
+
+async function loadLifecycleCompatibilityState(
+  page: Page,
+  fixture: Pick<
+    LifecycleBirthFixture | LifecycleExtinctionFixture,
+    "serializedWorkspace" | "hash" | "tick"
+  >,
+): Promise<void> {
+  await openNotebook(page);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText(/Saved locally in this browser/)).toBeVisible();
+  await page.evaluate((serializedWorkspace) => {
+    localStorage.setItem("tiny-civilisation/active-experiment/v1", serializedWorkspace);
+    localStorage.setItem(
+      "tiny-civilisation/active-experiment/fallback-authoritative/v1",
+      "true",
+    );
+  }, fixture.serializedWorkspace);
+  await page.getByRole("button", { name: "Load saved", exact: true }).click();
+  await expect(
+    page.getByText(`Restored tick ${fixture.tick.toString()} without changing its hash.`),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".status-rail__hash")).toContainText(fixture.hash.slice(0, 12));
+  await closeNotebook(page);
   await waitForRenderedDish(page);
 }
 
@@ -645,12 +1154,16 @@ test("inspects a shelter site, construction, and active responsive home @release
   const browserErrors = collectBrowserErrors(page);
   await page.setViewportSize({ width: 1440, height: 960 });
   await openPausedWorkspace(page);
-  await loadCurrentScenarioAtTick(page, "split-banks", "Split Banks", 7_319, 744);
-  await dismissRetainedMoments(page);
+  const emptySiteFixture = shelterCompatibilityFixture("EMPTY_SITE");
+  await loadShelterCompatibilityState(page, emptySiteFixture);
 
   await showRegion(page, "Chronicle");
-  await page.getByRole("button", { name: "Structures", exact: true }).click();
-  const site = page.getByRole("button", { name: /^Shelter site 14,/i });
+  const navigator = page.locator(".world-navigator");
+  await navigator.getByRole("button", { name: "Structures", exact: true }).click();
+  const site = navigator.getByRole("button", {
+    name: new RegExp(`^Shelter site ${emptySiteFixture.shelterId.toString()},`, "i"),
+  });
+  await expect(site).toBeVisible();
   await expect(site).toHaveAttribute("aria-label", /0 percent built/i);
   await site.click();
   await showRegion(page, "Subject");
@@ -663,11 +1176,14 @@ test("inspects a shelter site, construction, and active responsive home @release
     fullPage: true,
   });
 
-  await loadCurrentScenarioAtTick(page, "split-banks", "Split Banks", 7_319, 782);
-  await dismissRetainedMoments(page);
+  const buildingSiteFixture = shelterCompatibilityFixture("BUILDING_SITE");
+  await loadShelterCompatibilityState(page, buildingSiteFixture);
   await showRegion(page, "Chronicle");
-  await page.getByRole("button", { name: "Structures", exact: true }).click();
-  const constructionSite = page.getByRole("button", { name: /^Shelter site 14,/i });
+  await navigator.getByRole("button", { name: "Structures", exact: true }).click();
+  const constructionSite = navigator.getByRole("button", {
+    name: new RegExp(`^Shelter site ${buildingSiteFixture.shelterId.toString()},`, "i"),
+  });
+  await expect(constructionSite).toBeVisible();
   await expect(constructionSite).toHaveAttribute("aria-label", /16 percent built/i);
   await constructionSite.click();
   await showRegion(page, "Subject");
@@ -678,10 +1194,14 @@ test("inspects a shelter site, construction, and active responsive home @release
     fullPage: true,
   });
 
-  await loadCurrentScenarioAtTick(page, "split-banks", "Split Banks", 7_319, 923);
-  await dismissRetainedMoments(page);
+  const activeFixture = shelterCompatibilityFixture("ACTIVE");
+  await loadShelterCompatibilityState(page, activeFixture);
   await showRegion(page, "Chronicle");
-  const shelter = page.getByRole("button", { name: /^Shelter 14,/i });
+  await navigator.getByRole("button", { name: "Structures", exact: true }).click();
+  const shelter = navigator.getByRole("button", {
+    name: new RegExp(`^Shelter ${activeFixture.shelterId.toString()},`, "i"),
+  });
+  await expect(shelter).toBeVisible();
   await expect(shelter).toHaveAttribute("aria-label", /condition 100 percent/i);
   await shelter.click();
   await showRegion(page, "Subject");
@@ -696,7 +1216,7 @@ test("inspects a shelter site, construction, and active responsive home @release
     .click();
   await page.getByRole("button", { name: /^Iri,/ }).click();
   await showRegion(page, "Dish");
-  await clickWorldTile(page, 16, 7);
+  await clickWorldTile(page, activeFixture.shelterX, activeFixture.shelterY);
   await showRegion(page, "Subject");
   await expect(page.getByRole("heading", { name: "Shelter", exact: true })).toBeVisible();
 
@@ -727,11 +1247,16 @@ test("inspects shelter occupancy and degradation @release", async ({ page }, tes
   const browserErrors = collectBrowserErrors(page);
   await page.setViewportSize({ width: 1440, height: 960 });
   await openPausedWorkspace(page);
-  await loadCurrentScenarioAtTick(page, "split-banks", "Split Banks", 7_319, 977);
-  await dismissRetainedMoments(page);
+  const occupiedFixture = shelterCompatibilityFixture("OCCUPIED");
+  await loadShelterCompatibilityState(page, occupiedFixture);
   await showRegion(page, "Chronicle");
-  await page.getByRole("button", { name: "Structures", exact: true }).click();
-  await page.getByRole("button", { name: /^Shelter 14,/i }).click();
+  const navigator = page.locator(".world-navigator");
+  await navigator.getByRole("button", { name: "Structures", exact: true }).click();
+  const occupiedShelter = navigator.getByRole("button", {
+    name: new RegExp(`^Shelter ${occupiedFixture.shelterId.toString()},`, "i"),
+  });
+  await expect(occupiedShelter).toBeVisible();
+  await occupiedShelter.click();
   await showRegion(page, "Subject");
   await expect(page.getByText("1 / 1", { exact: true })).toBeVisible();
   await expect(page.getByText("1 members; 0 guests", { exact: true })).toBeVisible();
@@ -745,21 +1270,34 @@ test("inspects shelter occupancy and degradation @release", async ({ page }, tes
     .locator(".world-navigator")
     .getByRole("button", { name: "All", exact: true })
     .click();
-  await page.getByRole("button", { name: /^Pela,/ }).click();
+  const restingCreatureName = occupiedFixture.restingCreatureName;
+  if (restingCreatureName === null)
+    throw new Error("The occupied fixture lost its member.");
+  const restingCreature = navigator.getByRole("button", {
+    name: new RegExp(`^${restingCreatureName},`),
+  });
+  await expect(restingCreature).toBeVisible();
+  await restingCreature.click();
   await showRegion(page, "Subject");
-  const pelaShelterAccess = page.getByLabel("Pela shelter access");
-  await expect(pelaShelterAccess).toContainText("Shelter 14");
-  await expect(pelaShelterAccess).toContainText("Member");
+  const shelterAccess = page.getByLabel(`${restingCreatureName} shelter access`);
+  await expect(shelterAccess).toContainText(
+    `Shelter ${occupiedFixture.shelterId.toString()}`,
+  );
+  await expect(shelterAccess).toContainText("Member");
   await page.screenshot({
     path: testInfo.outputPath("shelter-resting-creature-wide.png"),
     fullPage: true,
   });
 
-  await loadCurrentScenarioAtTick(page, "split-banks", "Split Banks", 7_319, 3_337);
-  await dismissRetainedMoments(page);
+  const degradedFixture = shelterCompatibilityFixture("DEGRADED");
+  await loadShelterCompatibilityState(page, degradedFixture);
   await showRegion(page, "Chronicle");
-  await page.getByRole("button", { name: "Structures", exact: true }).click();
-  await page.getByRole("button", { name: /^Shelter 14,/i }).click();
+  await navigator.getByRole("button", { name: "Structures", exact: true }).click();
+  const degradedShelter = navigator.getByRole("button", {
+    name: new RegExp(`^Shelter ${degradedFixture.shelterId.toString()},`, "i"),
+  });
+  await expect(degradedShelter).toBeVisible();
+  await degradedShelter.click();
   await showRegion(page, "Subject");
   await expect(page.getByText("Active; upkeep needed", { exact: true })).toBeVisible();
   await expect(page.getByText("4 of 6", { exact: true })).toBeVisible();
@@ -781,14 +1319,16 @@ test("inspects shelter relocation compatibility state @release", async ({
   const browserErrors = collectBrowserErrors(page);
   await page.setViewportSize({ width: 1440, height: 960 });
   await openPausedWorkspace(page);
-  const relocationFixture = relocationCompatibilityFixture();
-  await loadRelocationCompatibilityState(page, relocationFixture);
+  const relocationFixture = shelterCompatibilityFixture("RELOCATED");
+  await loadShelterCompatibilityState(page, relocationFixture);
   await showRegion(page, "Chronicle");
-  await page
-    .locator(".world-navigator")
-    .getByRole("button", { name: "Groups", exact: true })
-    .click();
-  await page.getByRole("button", { name: /^Mossrest,/ }).click();
+  const navigator = page.locator(".world-navigator");
+  await navigator.getByRole("button", { name: "Groups", exact: true }).click();
+  const group = navigator.getByRole("button", {
+    name: new RegExp(`^${relocationFixture.groupName},`),
+  });
+  await expect(group).toBeVisible();
+  await group.click();
   await showRegion(page, "Subject");
   await expect(page.getByText(/1 of 1 used/)).toBeVisible();
   await page.screenshot({
@@ -798,7 +1338,7 @@ test("inspects shelter relocation compatibility state @release", async ({
 
   await page
     .getByRole("button", {
-      name: new RegExp(`^Active shelter ${relocationFixture.activeShelterId.toString()}`),
+      name: new RegExp(`^Active shelter ${relocationFixture.shelterId.toString()}`),
     })
     .click();
   await expect(page.getByText("Replaced former home", { exact: true })).toBeVisible();
@@ -807,12 +1347,15 @@ test("inspects shelter relocation compatibility state @release", async ({
     fullPage: true,
   });
 
-  await page
-    .getByRole("button", {
-      name: `Shelter ${relocationFixture.abandonedShelterId.toString()}`,
-      exact: true,
-    })
-    .click();
+  const abandonedShelterId = relocationFixture.abandonedShelterId;
+  if (abandonedShelterId === null)
+    throw new Error("The relocation fixture lost its old home.");
+  const abandonedShelter = page.getByRole("button", {
+    name: `Shelter ${abandonedShelterId.toString()}`,
+    exact: true,
+  });
+  await expect(abandonedShelter).toBeVisible();
+  await abandonedShelter.click();
   await expect(
     page.getByRole("heading", { name: "Abandoned shelter", exact: true }),
   ).toBeVisible();
@@ -950,7 +1493,14 @@ test("follows water pressure from routes through intervention evidence @release"
   const browserErrors = collectBrowserErrors(page);
   await page.setViewportSize({ width: 1024, height: 768 });
 
-  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 49);
+  const contentionFixture = waterStoryFixture("CONTENTION");
+  await loadCurrentScenarioAtTick(
+    page,
+    "unequal-table",
+    "Unequal Table",
+    4,
+    contentionFixture.state.tick,
+  );
   await dismissRetainedMoments(page);
   await expect(page.getByRole("button", { name: "Toggle traffic trails" })).toHaveAttribute(
     "aria-pressed",
@@ -965,21 +1515,28 @@ test("follows water pressure from routes through intervention evidence @release"
     page.locator(".world-navigator__item").filter({ hasText: /Gather water/i }),
   ).toHaveCount(6);
 
+  const sharingFixture = waterStoryFixture("SHARING");
   const sharedFixture = await loadCurrentScenarioAtTick(
     page,
     "unequal-table",
     "Unequal Table",
     4,
-    200,
+    sharingFixture.state.tick,
   );
   let queue = await showQueuedMoment(page, "First water sharing");
-  await expect(queue).toContainText("Aro shared water with Meka.");
+  if (sharingFixture.eventSummary === null) {
+    throw new Error("The sharing fixture lost its retained event summary.");
+  }
+  await expect(queue).toContainText(sharingFixture.eventSummary);
   await expect(
     page.locator(".timeline-entry").filter({ hasText: "Routine drinking" }).first(),
   ).toBeVisible();
   await expect(
-    page.locator(".world-navigator__item").filter({ hasText: /Gather water/i }),
-  ).toHaveCount(1);
+    page
+      .locator(".world-navigator__item")
+      .filter({ hasText: /Gather water/i })
+      .first(),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: /carrying [1-9]\d* water units/ }).first(),
   ).toBeVisible();
@@ -988,7 +1545,13 @@ test("follows water pressure from routes through intervention evidence @release"
   expect(liveHash).toContain(sharedFixture.hash.slice(0, 12));
   const speedControl = page.getByLabel("Simulation speed");
   for (const speed of [1, 2, 4] as const) {
-    await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 200);
+    await loadCurrentScenarioAtTick(
+      page,
+      "unequal-table",
+      "Unequal Table",
+      4,
+      sharingFixture.state.tick,
+    );
     const speedButton = speedControl.getByRole("button", {
       name: new RegExp(`^${speed.toString()}`),
     });
@@ -1025,20 +1588,33 @@ test("follows water pressure from routes through intervention evidence @release"
   await closeNotebook(page);
 
   await page.getByRole("button", { name: "Drain water" }).click();
-  await clickWorldTile(page, 34, 18);
+  const drainSource = sharingFixture.state.resourceNodes.find(
+    (node) => node.kind === "WATER" && node.currentStock > 0,
+  );
+  if (!drainSource) throw new Error("The sharing fixture has no positive water source.");
+  const drainCoordinates = tileCoordinates(
+    sharingFixture.state.world,
+    drainSource.tileIndex,
+  );
+  const expectedDrain = Math.min(12, drainSource.currentStock);
+  await clickWorldTile(page, drainCoordinates.x, drainCoordinates.y);
   await expect(page.locator(".feedback-line")).toContainText(
-    "Water drainage of 12 units scheduled at 34, 18",
+    `Water drainage of 12 units scheduled at ${drainCoordinates.x.toString()}, ${drainCoordinates.y.toString()}`,
   );
   await page.getByRole("button", { name: /Advance one tick/ }).click();
   const drainedMoment = await showQueuedMoment(page, "A water source was drained");
-  await expect(drainedMoment).toContainText("The observer drained 11 water units.");
+  await expect(drainedMoment).toContainText(
+    `The observer drained ${expectedDrain.toString()} water units.`,
+  );
   await drainedMoment.getByRole("button", { name: "Continue", exact: true }).click();
 
   await page.getByLabel("Simulation speed").getByRole("button", { name: /^4/ }).click();
   await page.getByRole("button", { name: /Play simulation/ }).click();
   await expect
     .poll(() => displayedTickFloor(page), { timeout: 15_000 })
-    .toBeGreaterThanOrEqual(330);
+    .toBeGreaterThanOrEqual(
+      sharingFixture.state.tick + DEFAULT_INTERVENTION_RESPONSE_WINDOW_TICKS + 2,
+    );
   await page.getByRole("button", { name: /Pause simulation/ }).click();
 
   await openNotebook(page);
@@ -1066,6 +1642,163 @@ test("follows water pressure from routes through intervention evidence @release"
   await expect(
     page.getByText(/observed differences, not scores, winners, or scripted endings/i),
   ).toBeVisible();
+  expect(browserErrors).toEqual([]);
+});
+
+test("navigates a contract-valid birth, dependent care, and inherited potential fixture @release", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const browserErrors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  const fixture = lifecycleBirthFixture();
+
+  await openPausedWorkspace(page);
+  await loadLifecycleCompatibilityState(page, fixture);
+
+  const birthMoment = await showQueuedMoment(page, `${fixture.childName} was born`);
+  await expect(birthMoment).toContainText(
+    `${fixture.childName} was born to ${fixture.motherName} and ${fixture.fatherName}.`,
+  );
+  await birthMoment.getByRole("button", { name: "Continue", exact: true }).click();
+  await dismissRetainedMoments(page);
+
+  await showRegion(page, "Chronicle");
+  const census = page.getByRole("region", { name: "The dish at a glance" });
+  await expect(census.getByText("9", { exact: true })).toBeVisible();
+  await expect(census.getByText("1J / 1E", { exact: true })).toBeVisible();
+  const navigator = page.locator(".world-navigator");
+  const childButton = navigator.getByRole("button", {
+    name: new RegExp(`^${fixture.childName},`),
+  });
+  await expect(childButton).toBeVisible();
+  await childButton.click();
+  await showRegion(page, "Subject");
+
+  const inspector = page.locator(".workspace-panel--inspector");
+  await expect(inspector.getByRole("heading", { name: fixture.childName })).toBeVisible();
+  const lifecycle = inspector.locator(".subject-summary--lifecycle");
+  await expect(lifecycle).toContainText(
+    `${fixture.childSex === "FEMALE" ? "Female" : "Male"} / Juvenile`,
+  );
+  await expect(lifecycle).toContainText(`${fixture.motherName} and ${fixture.fatherName}`);
+  await expect(lifecycle).toContainText(`Caregiver: ${fixture.caregiverName}`);
+  await expect(lifecycle).toContainText(
+    `Loyalty ${fixture.loyaltyPotentialPercent.toString()}%`,
+  );
+  await expect(lifecycle).toContainText(
+    `Foraging ${fixture.foragingPotentialPercent.toString()}%`,
+  );
+
+  await inspector
+    .getByRole("button", { name: `Open ${fixture.motherName}`, exact: true })
+    .click();
+  await expect(inspector.getByRole("heading", { name: fixture.motherName })).toBeVisible();
+  await expect(inspector.locator(".subject-summary--lifecycle")).toContainText(
+    fixture.childName,
+  );
+  expect(browserErrors).toEqual([]);
+});
+
+test("keeps a contract-valid extinct world remembered, navigable, saveable, and explainable @release", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const browserErrors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  const fixture = lifecycleExtinctionFixture();
+
+  await openPausedWorkspace(page);
+  await loadLifecycleCompatibilityState(page, fixture);
+  await dismissRetainedMoments(page);
+
+  await showRegion(page, "Chronicle");
+  const census = page.getByRole("region", { name: "The dish at a glance" });
+  await expect(
+    census
+      .getByText("Living", { exact: true })
+      .locator("..")
+      .getByText("0", { exact: true }),
+  ).toBeVisible();
+  const extinctGroup = page
+    .locator(".group-line")
+    .filter({ hasText: fixture.extinctGroupName });
+  await expect(extinctGroup).toContainText(`Extinct at tick ${fixture.tick.toString()}`);
+
+  const navigator = page.locator(".world-navigator");
+  await navigator
+    .getByRole("group", { name: "Filter world objects" })
+    .getByRole("button", { name: "Remembered", exact: true })
+    .click();
+  const rememberedNavigator = navigator.getByRole("list", {
+    name: "Remembered in spatial order",
+  });
+  await expect(rememberedNavigator.getByRole("listitem")).toHaveCount(
+    fixture.lifeRecordCount * 2,
+  );
+  await expect(
+    rememberedNavigator.getByRole("button", {
+      name: new RegExp(
+        `^${fixture.deceasedName}, permanent life record,.*died from dehydration`,
+        "i",
+      ),
+    }),
+  ).toBeVisible();
+  const memorialButton = rememberedNavigator.getByRole("button", {
+    name: new RegExp(`^${fixture.deceasedName}'s temporary memorial`),
+  });
+  await expect(memorialButton).toBeVisible();
+  await memorialButton.click();
+  await showRegion(page, "Subject");
+
+  const inspector = page.locator(".workspace-panel--inspector");
+  await expect(inspector.getByText("Temporary memorial", { exact: true })).toBeVisible();
+  await expect(
+    inspector.getByRole("heading", { name: fixture.deceasedName }),
+  ).toBeVisible();
+  await expect(inspector.locator(".life-record-facts")).toContainText(fixture.heirName);
+  await inspector
+    .getByRole("button", {
+      name: `Open permanent life record for ${fixture.deceasedName}`,
+      exact: true,
+    })
+    .click();
+  await expect(inspector.getByText("Permanent life record", { exact: true })).toBeVisible();
+  await expect(inspector.locator(".life-record-facts")).toContainText("Dehydration");
+  await expect(inspector.locator(".life-record-facts")).toContainText(fixture.heirName);
+
+  await showRegion(page, "Chronicle");
+  const lifecycleFilter = page
+    .locator(".filter-strip")
+    .getByRole("button", { name: "Lifecycle", exact: true });
+  await expect(lifecycleFilter).toBeVisible();
+  await lifecycleFilter.click();
+  const timeline = page.locator(".timeline-list");
+  await expect(timeline).toContainText(
+    `${fixture.heirName} mourned ${fixture.deceasedName} at the memorial.`,
+  );
+  await expect(timeline).toContainText(
+    `${fixture.heirName} inherited ${fixture.inheritedQuantity.toString()} provisions from ${fixture.deceasedName}.`,
+  );
+  const deathEntry = timeline
+    .locator(".timeline-entry")
+    .filter({ hasText: `${fixture.deceasedName} died from dehydration` });
+  await expect(deathEntry).toBeVisible();
+  const deathEvidence = deathEntry.getByRole("button", {
+    name: `${fixture.deceasedName} died. Inspect causal evidence.`,
+    exact: true,
+  });
+  await expect(deathEvidence).toBeVisible();
+  await deathEvidence.click();
+  await expect(page.getByRole("heading", { name: "Causal explorer" })).toBeVisible();
+  await expect(page.locator(".causal-sheet")).toContainText(
+    `${fixture.deceasedName} died from dehydration`,
+  );
+
+  await openNotebook(page);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText(/Saved locally in this browser/)).toBeVisible();
+  await closeNotebook(page);
   expect(browserErrors).toEqual([]);
 });
 
@@ -1291,7 +2024,14 @@ test("water contention at medium viewport", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
   await page.setViewportSize({ width: medium.width, height: medium.height });
-  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 49);
+  const fixture = waterStoryFixture("CONTENTION");
+  await loadCurrentScenarioAtTick(
+    page,
+    "unequal-table",
+    "Unequal Table",
+    4,
+    fixture.state.tick,
+  );
   await dismissRetainedMoments(page);
 
   const fullSources = page.getByRole("button", {
@@ -1316,10 +2056,20 @@ test("water sharing at medium viewport", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
   await page.setViewportSize({ width: medium.width, height: medium.height });
-  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 200);
+  const fixture = waterStoryFixture("SHARING");
+  await loadCurrentScenarioAtTick(
+    page,
+    "unequal-table",
+    "Unequal Table",
+    4,
+    fixture.state.tick,
+  );
 
   const queue = await showQueuedMoment(page, "First water sharing");
-  await expect(queue).toContainText("Aro shared water with Meka.");
+  if (fixture.eventSummary === null) {
+    throw new Error("The sharing fixture lost its retained event summary.");
+  }
+  await expect(queue).toContainText(fixture.eventSummary);
   await expect(
     page.getByRole("button", { name: /carrying [1-9]\d* water units/ }).first(),
   ).toBeVisible();
@@ -1334,13 +2084,30 @@ test("water depletion at medium viewport", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
   await page.setViewportSize({ width: medium.width, height: medium.height });
-  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 919);
+  const fixture = waterStoryFixture("DEPLETION");
+  await loadCurrentScenarioAtTick(
+    page,
+    "unequal-table",
+    "Unequal Table",
+    4,
+    fixture.state.tick,
+  );
 
   const queue = await showQueuedMoment(page, "Water source depleted");
-  await expect(queue).toContainText(/drew the potable water source empty/i);
+  if (
+    fixture.eventSummary === null ||
+    fixture.sourceId === null ||
+    fixture.sourceCapacity === null
+  ) {
+    throw new Error("The depletion fixture lost its retained source evidence.");
+  }
+  await expect(queue).toContainText(fixture.eventSummary);
   await expect(
     page.getByRole("button", {
-      name: /^Water source \d+.*0 of 28 units available.*water source depleted/,
+      name: new RegExp(
+        `^Water source ${fixture.sourceId.toString()}.*0 of ${fixture.sourceCapacity.toString()} units available.*water source depleted`,
+        "i",
+      ),
     }),
   ).toBeVisible();
   await expectNoPageOverflow(page);
@@ -1354,7 +2121,14 @@ test("water aftermath replay at medium viewport", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   const medium = STORY_VIEWPORTS.find((viewport) => viewport.name === "medium")!;
   await page.setViewportSize({ width: medium.width, height: medium.height });
-  await loadCurrentScenarioAtTick(page, "unequal-table", "Unequal Table", 4, 200);
+  const fixture = waterStoryFixture("SHARING");
+  await loadCurrentScenarioAtTick(
+    page,
+    "unequal-table",
+    "Unequal Table",
+    4,
+    fixture.state.tick,
+  );
 
   const queue = await showQueuedMoment(page, "First water sharing");
   await queue.getByRole("button", { name: "Replay", exact: true }).click();

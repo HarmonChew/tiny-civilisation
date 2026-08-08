@@ -16,6 +16,14 @@ import {
 } from "../interaction-slots.js";
 import { findNearestWalkable } from "../navigation.js";
 import {
+  eligibleCareDependents,
+  eligibleEstateMemorials,
+  eligibleFamilyPartners,
+  eligibleMemorialsForMourner,
+  isActionAllowedForLifeStage,
+  populationFamilyPressure,
+} from "../lifecycle.js";
+import {
   findPath,
   manhattanDistance,
   tileCoordinates,
@@ -61,6 +69,7 @@ import {
   inventorySpace,
   removeGuardAssignment,
 } from "./shared.js";
+import { getActionDuration } from "./registry.js";
 
 type FactorSource = "ACTOR" | "TARGET" | number | null;
 
@@ -1351,7 +1360,7 @@ function generateCandidates(
   }
 
   if (creature.groupId === null && creature.traits.sociability >= 3_500) {
-    for (const group of state.groups) {
+    for (const group of state.groups.filter((candidate) => candidate.status === "ACTIVE")) {
       const travel = estimateTravel("JOIN_GROUP", group.id, group.homeTileIndex);
       if (!travel || travel.cost > 140) {
         continue;
@@ -1388,6 +1397,145 @@ function generateCandidates(
           travelFactor(travel, 55),
         ]),
       );
+    }
+  }
+
+  if (creature.sex === "FEMALE") {
+    for (const partner of eligibleFamilyPartners(state, creature).slice(0, 2)) {
+      const travel = estimateTravel("FORM_FAMILY", partner.id, partner.tileIndex);
+      if (!travel || travel.cost > 100) continue;
+      const forward = relationshipFrom(state, creature.id, partner.id);
+      const backward = relationshipFrom(state, partner.id, creature.id);
+      candidates.push(
+        scoredCandidate(state, creature, "FORM_FAMILY", partner.id, partner.tileIndex, [
+          factor(
+            "population family pressure",
+            populationFamilyPressure(state),
+            [],
+            state.creatures.filter((candidate) => candidate.alive).length,
+            "COUNT",
+          ),
+          factor(
+            "mutual family trust",
+            ((forward?.trust ?? 0) + (backward?.trust ?? 0)) / 4,
+            recentEvidence(forward),
+            Math.min(forward?.trust ?? 0, backward?.trust ?? 0),
+            "UNIT",
+            "TARGET",
+          ),
+          factor(
+            "family sociability",
+            creature.traits.sociability / 4,
+            [],
+            creature.traits.sociability,
+            "UNIT",
+          ),
+          travelFactor(travel, 35),
+        ]),
+      );
+    }
+  }
+
+  for (const dependent of eligibleCareDependents(state, creature).slice(0, 2)) {
+    const need = Math.max(
+      dependent.needs.hunger,
+      dependent.needs.thirst,
+      dependent.needs.fatigue,
+    );
+    if (need < 2_500) continue;
+    const travel = estimateTravel("CARE_FOR_YOUNG", dependent.id, dependent.tileIndex);
+    if (!travel || travel.cost > 90) continue;
+    candidates.push(
+      scoredCandidate(
+        state,
+        creature,
+        "CARE_FOR_YOUNG",
+        dependent.id,
+        dependent.tileIndex,
+        [
+          factor("dependent child need", need / 2, [], need, "UNIT", "TARGET"),
+          factor(
+            "parent or caregiver bond",
+            dependent.caregiverId === creature.id ||
+              dependent.motherId === creature.id ||
+              dependent.fatherId === creature.id
+              ? 1_800
+              : 500,
+            [],
+            dependent.caregiverId === creature.id ? "CAREGIVER" : "GROUPMATE",
+            "LABEL",
+            "TARGET",
+          ),
+          factor(
+            "caregiver loyalty",
+            creature.traits.loyalty / 4,
+            [],
+            creature.traits.loyalty,
+            "UNIT",
+          ),
+          travelFactor(travel, 32),
+        ],
+      ),
+    );
+  }
+
+  for (const memorial of eligibleMemorialsForMourner(state, creature).slice(0, 1)) {
+    const travel = estimateTravel("MOURN", memorial.id, memorial.tileIndex);
+    if (!travel) continue;
+    candidates.push(
+      scoredCandidate(state, creature, "MOURN", memorial.id, memorial.tileIndex, [
+        factor(
+          "unmourned family death",
+          2_800,
+          [],
+          memorial.deceasedId,
+          "COUNT",
+          memorial.deceasedId,
+        ),
+        factor(
+          "mourning loyalty",
+          creature.traits.loyalty / 3,
+          [],
+          creature.traits.loyalty,
+          "UNIT",
+        ),
+        factor(
+          "survival pressure",
+          -Math.max(hunger, thirst, fatigue) / 3,
+          [],
+          Math.max(hunger, thirst, fatigue),
+          "UNIT",
+        ),
+        travelFactor(travel, 28),
+      ]),
+    );
+  }
+
+  for (const memorial of eligibleEstateMemorials(state, creature).slice(0, 1)) {
+    const travel = estimateTravel("CLAIM_ESTATE", memorial.id, memorial.tileIndex);
+    if (!travel) continue;
+    const quantity =
+      memorial.estate.food + memorial.estate.material + memorial.estate.water;
+    candidates.push(
+      scoredCandidate(state, creature, "CLAIM_ESTATE", memorial.id, memorial.tileIndex, [
+        factor(
+          "named estate heir",
+          2_200,
+          [],
+          memorial.deceasedId,
+          "COUNT",
+          memorial.deceasedId,
+        ),
+        factor("estate provisions", quantity * 450, [], quantity, "COUNT", "TARGET"),
+        travelFactor(travel, 30),
+      ]),
+    );
+  }
+
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const candidate = candidates[index];
+    if (candidate && !isActionAllowedForLifeStage(creature, candidate.action)) {
+      candidates.splice(index, 1);
     }
   }
 
@@ -1469,6 +1617,93 @@ function targetTileForCandidate(
     return getGroup(state, candidate.targetEntityId)?.homeTileIndex ?? null;
   }
   return entityTile(state, candidate.targetEntityId);
+}
+
+function beginPairedFamilyAction(
+  state: SimulationState,
+  female: CreatureState,
+  maleId: number | null,
+  decisionId: number,
+  candidate: DecisionCandidate,
+): boolean {
+  const male = state.creatures.find(
+    (creature) => creature.id === maleId && creature.alive && creature.sex === "MALE",
+  );
+  if (!male) return false;
+  const claimAttempt = attemptInteractionSlotClaim(
+    state,
+    male,
+    "FORM_FAMILY",
+    female.id,
+    female.tileIndex,
+  );
+  if (claimAttempt.contended) state.metrics.interactionContentions += 1;
+  if (claimAttempt.failed || !claimAttempt.claim) {
+    state.metrics.failedInteractionClaims += 1;
+    return false;
+  }
+  const claim = claimAttempt.claim;
+  const path = findPath(state.world, male.tileIndex, claim.tileIndex);
+  if (path.length === 0) return false;
+  if (male.activeAction?.kind === "GUARD") removeGuardAssignment(state, male);
+  if (male.activePlan?.status === "ACTIVE") recordPlanTransition(state, male, "ABANDONED");
+  const reason = selectStrongestReason(candidate.factors);
+  male.activeDesire = {
+    kind: "RAISE_FAMILY",
+    subjectEntityId: female.id,
+    startedAtTick: state.tick,
+    minimumCommitUntilTick: state.tick + getActionDuration("FORM_FAMILY"),
+    nextReconsiderationTick: state.tick + getActionDuration("FORM_FAMILY"),
+    strength: desireStrength(male, "RAISE_FAMILY"),
+    selectedByDecisionId: decisionId,
+  };
+  male.activePlan = {
+    kind: "FORM_A_FAMILY",
+    desireKind: "RAISE_FAMILY",
+    targetEntityId: female.id,
+    targetTileIndex: claim.tileIndex,
+    startedAtTick: state.tick,
+    status: "ACTIVE",
+    selectedByDecisionId: decisionId,
+    expectedUtility: candidate.utility,
+    strongestReason: reason,
+    interactionClaim: claim,
+  };
+  male.activeGoal = {
+    kind: "FORM_FAMILY",
+    targetEntityId: female.id,
+    targetTileIndex: claim.tileIndex,
+    selectedAtTick: state.tick,
+    minimumCommitUntilTick: state.tick + getActionDuration("FORM_FAMILY"),
+    nextReconsiderationTick: state.tick + getActionDuration("FORM_FAMILY"),
+    expectedUtility: candidate.utility,
+    decisionRecordId: decisionId,
+  };
+  male.activeAction = {
+    kind: "FORM_FAMILY",
+    phase: path.length <= 1 ? "WORKING" : "MOVING",
+    startedAtTick: state.tick,
+    targetEntityId: female.id,
+    targetTileIndex: claim.tileIndex,
+    path,
+    pathIndex: path.length <= 1 ? path.length : 1,
+    progress: 0,
+    workRequired: UNIT_MAX,
+    navigationRevision: state.world.navigationRevision,
+    interactionClaim: claim,
+  };
+  male.nextDecisionTick = state.tick + getActionDuration("FORM_FAMILY");
+  emitDomainEvent(state, {
+    type: "ACTION_STARTED",
+    actorIds: [male.id],
+    targetIds: [female.id],
+    groupIds: male.groupId === null ? [] : [male.groupId],
+    locationTileIndex: male.tileIndex,
+    decisionRecordIds: [decisionId],
+    importance: 8,
+    summary: `${male.name} joined ${female.name} in the paired family-forming action.`,
+  });
+  return true;
 }
 
 function beginAction(
@@ -1651,6 +1886,25 @@ function beginAction(
     navigationRevision: state.world.navigationRevision,
     interactionClaim: claim,
   };
+  if (
+    candidate.action === "FORM_FAMILY" &&
+    !beginPairedFamilyAction(
+      state,
+      creature,
+      candidate.targetEntityId,
+      decisionId,
+      candidate,
+    )
+  ) {
+    creature.activeAction = null;
+    creature.activeGoal = null;
+    if (creature.activePlan) {
+      creature.activePlan.interactionClaim = null;
+      recordPlanTransition(state, creature, "BLOCKED");
+    }
+    creature.nextDecisionTick = state.tick + 4;
+    return false;
+  }
   if (candidate.action === "GUARD" && candidate.targetEntityId !== null) {
     const structure = getStructure(state, candidate.targetEntityId);
     if (structure && !structure.guardIds.includes(creature.id)) {
@@ -1757,20 +2011,20 @@ function recordDecision(
 }
 
 function hasEmergency(creature: CreatureState): boolean {
-  if (!creature.activeGoal) {
-    return false;
-  }
   const survivalAction =
-    creature.activeGoal.kind === "EAT" ||
-    creature.activeGoal.kind === "GATHER_FOOD" ||
-    creature.activeGoal.kind === "WITHDRAW" ||
-    creature.activeGoal.kind === "STEAL" ||
-    creature.activeGoal.kind === "FLEE";
+    creature.activeGoal?.kind === "EAT" ||
+    creature.activeGoal?.kind === "GATHER_FOOD" ||
+    creature.activeGoal?.kind === "WITHDRAW" ||
+    creature.activeGoal?.kind === "STEAL" ||
+    creature.activeGoal?.kind === "FLEE";
   const hydrationAction =
-    creature.activeGoal.kind === "DRINK" || creature.activeGoal.kind === "GATHER_WATER";
+    creature.activeGoal?.kind === "DRINK" || creature.activeGoal?.kind === "GATHER_WATER";
+  const recoveryAction =
+    creature.activeGoal?.kind === "REST" || creature.activeGoal?.kind === "REST_SHELTERED";
   return (
     (creature.needs.hunger >= 9_200 && !survivalAction) ||
-    (creature.needs.thirst >= 9_000 && !hydrationAction)
+    (creature.needs.thirst >= 9_000 && !hydrationAction) ||
+    (creature.needs.fatigue >= 9_000 && !recoveryAction)
   );
 }
 

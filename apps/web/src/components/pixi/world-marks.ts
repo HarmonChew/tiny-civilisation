@@ -1,9 +1,33 @@
 import type { Graphics } from "pixi.js";
-import type { ResourceView, StructureView } from "../../model";
+import type { MemorialView, ResourceView, StructureView } from "../../model";
 import { PALETTE } from "./runtime";
 
 const boundedRatio = (value: number, capacity: number): number =>
   capacity > 0 ? Math.max(0, Math.min(1, value / capacity)) : 0;
+
+export function drawMemorialMark(mark: Graphics, memorial: MemorialView): void {
+  mark
+    .clear()
+    .moveTo(0, -0.45)
+    .lineTo(0.36, 0)
+    .lineTo(0, 0.45)
+    .lineTo(-0.36, 0)
+    .closePath()
+    .fill({ color: PALETTE.ink, alpha: 0.72 })
+    .stroke({ color: PALETTE.paper, width: 0.075, alpha: 0.95 })
+    .moveTo(-0.16, 0)
+    .lineTo(0.16, 0)
+    .moveTo(0, -0.16)
+    .lineTo(0, 0.16)
+    .stroke({ color: PALETTE.paper, width: 0.06, alpha: 0.95 });
+  if (memorial.mournersRemaining > 0) {
+    mark
+      .arc(0, 0, 0.58, 0, Math.PI * 2)
+      .stroke({ color: PALETTE.action, width: 0.05, alpha: 0.8 });
+  }
+  mark.position.set(memorial.x + 0.5, memorial.y + 0.5);
+  mark.visible = true;
+}
 
 export type ResourceDepletionLevel = "depleted" | "low" | "available" | "full";
 

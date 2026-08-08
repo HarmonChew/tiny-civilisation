@@ -7,6 +7,11 @@ import {
 import { DESIRE_KINDS, PLAN_KINDS } from "./desires.js";
 import { validateInteractionClaims } from "./interaction-slots.js";
 import {
+  MAX_LIVING_POPULATION,
+  MAX_TOTAL_IDENTITIES,
+  lifeStageForAge,
+} from "./lifecycle.js";
+import {
   UNREACHABLE_TRAVEL_COST,
   tileCoordinates,
   tileIndexAt,
@@ -58,9 +63,13 @@ const ACTION_KINDS = [
   "ATTACK",
   "FLEE",
   "JOIN_GROUP",
+  "FORM_FAMILY",
+  "CARE_FOR_YOUNG",
+  "MOURN",
+  "CLAIM_ESTATE",
 ] as const satisfies readonly ActionKind[];
 
-const ENTITY_KEYS = ["creatures", "resourceNodes", "structures"] as const;
+const ENTITY_KEYS = ["creatures", "resourceNodes", "structures", "memorials"] as const;
 const REASON_FACT_KINDS = [
   "NEED",
   "INVENTORY",
@@ -75,6 +84,7 @@ const REASON_FACT_KINDS = [
   "CROWDING",
   "INTERVENTION",
   "WORLD",
+  "LIFECYCLE",
 ] as const;
 const INTERACTION_PURPOSES = [
   "EXPLORE",
@@ -87,6 +97,10 @@ const INTERACTION_PURPOSES = [
   "GUARD",
   "CONFLICT",
   "FLIGHT",
+  "FAMILY",
+  "CARE",
+  "MOURNING",
+  "ESTATE",
 ] as const;
 
 function fail(path: string, message: string): never {
@@ -518,6 +532,24 @@ function validateCreatures(
       "name",
       "color",
       "alive",
+      "sex",
+      "ageTicks",
+      "lifeStage",
+      "naturalLifespanTicks",
+      "birthTick",
+      "motherId",
+      "fatherId",
+      "caregiverId",
+      "dependentUntilTick",
+      "criticalSinceTick",
+      "criticalDamage",
+      "traitPotential",
+      "skillPotential",
+      "pregnancy",
+      "reproductionCooldownUntilTick",
+      "death",
+      "mournedLifeRecordIds",
+      "majorLifeEventIds",
       "tileIndex",
       "x",
       "y",
@@ -544,6 +576,39 @@ function validateCreatures(
     string(creature.name, `${path}.name`);
     integer(creature.color, `${path}.color`, 0, 0xffffff);
     boolean(creature.alive, `${path}.alive`);
+    literal(creature.sex, `${path}.sex`, ["FEMALE", "MALE"]);
+    const ageTicks = integer(creature.ageTicks, `${path}.ageTicks`);
+    const lifeStage = literal(creature.lifeStage, `${path}.lifeStage`, [
+      "JUVENILE",
+      "ADULT",
+      "ELDER",
+    ]);
+    if (lifeStage !== lifeStageForAge(ageTicks)) {
+      fail(`${path}.lifeStage`, "does not match ageTicks");
+    }
+    integer(creature.naturalLifespanTicks, `${path}.naturalLifespanTicks`, 1);
+    integer(creature.birthTick, `${path}.birthTick`, -Number.MAX_SAFE_INTEGER);
+    nullableInteger(creature.motherId, `${path}.motherId`, 1);
+    nullableInteger(creature.fatherId, `${path}.fatherId`, 1);
+    nullableInteger(creature.caregiverId, `${path}.caregiverId`, 1);
+    nullableInteger(creature.dependentUntilTick, `${path}.dependentUntilTick`);
+    nullableInteger(creature.criticalSinceTick, `${path}.criticalSinceTick`);
+    if (creature.criticalDamage !== null) {
+      const criticalDamage = object(creature.criticalDamage, `${path}.criticalDamage`, [
+        "starvation",
+        "dehydration",
+        "exhaustion",
+        "injury",
+      ]);
+      for (const key of ["starvation", "dehydration", "exhaustion", "injury"] as const) {
+        integer(criticalDamage[key], `${path}.criticalDamage.${key}`);
+      }
+      if (creature.criticalSinceTick === null) {
+        fail(`${path}.criticalDamage`, "requires criticalSinceTick");
+      }
+    } else if (creature.criticalSinceTick !== null) {
+      fail(`${path}.criticalSinceTick`, "requires retained criticalDamage facts");
+    }
     integer(creature.tileIndex, `${path}.tileIndex`, 0, tileCount - 1);
     finite(creature.x, `${path}.x`, 0, width * TILE_FIXED_UNITS);
     finite(creature.y, `${path}.y`, 0, height * TILE_FIXED_UNITS);
@@ -564,6 +629,56 @@ function validateCreatures(
     const skills = object(creature.skills, `${path}.skills`, ["foraging", "combat"]);
     integer(skills.foraging, `${path}.skills.foraging`, 0, 10_000);
     integer(skills.combat, `${path}.skills.combat`, 0, 10_000);
+    const traitPotential = object(creature.traitPotential, `${path}.traitPotential`, [
+      "generosity",
+      "aggression",
+      "sociability",
+      "loyalty",
+    ]);
+    for (const key of ["generosity", "aggression", "sociability", "loyalty"] as const) {
+      integer(traitPotential[key], `${path}.traitPotential.${key}`, 0, 10_000);
+    }
+    const skillPotential = object(creature.skillPotential, `${path}.skillPotential`, [
+      "foraging",
+      "combat",
+    ]);
+    integer(skillPotential.foraging, `${path}.skillPotential.foraging`, 0, 10_000);
+    integer(skillPotential.combat, `${path}.skillPotential.combat`, 0, 10_000);
+    if (creature.pregnancy !== null) {
+      const pregnancy = object(creature.pregnancy, `${path}.pregnancy`, [
+        "fatherId",
+        "conceivedTick",
+        "dueTick",
+      ]);
+      integer(pregnancy.fatherId, `${path}.pregnancy.fatherId`, 1);
+      const conceivedTick = integer(
+        pregnancy.conceivedTick,
+        `${path}.pregnancy.conceivedTick`,
+      );
+      const dueTick = integer(pregnancy.dueTick, `${path}.pregnancy.dueTick`);
+      if (dueTick <= conceivedTick)
+        fail(`${path}.pregnancy.dueTick`, "must follow conception");
+      if (creature.sex !== "FEMALE") fail(`${path}.pregnancy`, "requires FEMALE sex");
+    }
+    integer(
+      creature.reproductionCooldownUntilTick,
+      `${path}.reproductionCooldownUntilTick`,
+    );
+    if (creature.death !== null) {
+      const death = object(creature.death, `${path}.death`, ["tick", "cause", "eventId"]);
+      integer(death.tick, `${path}.death.tick`);
+      literal(death.cause, `${path}.death.cause`, [
+        "STARVATION",
+        "DEHYDRATION",
+        "EXHAUSTION",
+        "INJURY",
+        "OLD_AGE",
+        "LEGACY_UNKNOWN",
+      ]);
+      integer(death.eventId, `${path}.death.eventId`, 1);
+    }
+    numberArray(creature.mournedLifeRecordIds, `${path}.mournedLifeRecordIds`, 1);
+    numberArray(creature.majorLifeEventIds, `${path}.majorLifeEventIds`, 1);
     validateInventory(creature.inventory, `${path}.inventory`);
     nullableInteger(creature.groupId, `${path}.groupId`, 1);
     literal(creature.role, `${path}.role`, [
@@ -651,10 +766,130 @@ function validateResourceNodes(value: unknown, tileCount: number): number[] {
     const currentStock = integer(node.currentStock, `${path}.currentStock`);
     const maximumStock = integer(node.maximumStock, `${path}.maximumStock`, 1);
     if (currentStock > maximumStock) fail(`${path}.currentStock`, "exceeds maximumStock");
-    integer(node.regenerationEveryTicks, `${path}.regenerationEveryTicks`, 1);
-    integer(node.regenerationAmount, `${path}.regenerationAmount`, 1);
+    integer(node.regenerationEveryTicks, `${path}.regenerationEveryTicks`, 0);
+    integer(node.regenerationAmount, `${path}.regenerationAmount`, 0);
   }
   assertUnique(ids, "resourceNodes");
+  return ids;
+}
+
+function validateLifeRecords(value: unknown): number[] {
+  const ids: number[] = [];
+  for (const [index, recordValue] of array(
+    value,
+    "lifeRecords",
+    MAX_TOTAL_IDENTITIES,
+  ).entries()) {
+    const path = `lifeRecords[${index.toString()}]`;
+    const record = object(recordValue, path, [
+      "id",
+      "name",
+      "color",
+      "sex",
+      "motherId",
+      "fatherId",
+      "birthTick",
+      "deathTick",
+      "ageTicks",
+      "finalLifeStage",
+      "deathCause",
+      "finalGroupId",
+      "traitPotential",
+      "skillPotential",
+      "majorEventIds",
+      "heirId",
+    ]);
+    ids.push(integer(record.id, `${path}.id`, 1));
+    string(record.name, `${path}.name`);
+    integer(record.color, `${path}.color`, 0, 0xffffff);
+    literal(record.sex, `${path}.sex`, ["FEMALE", "MALE"]);
+    nullableInteger(record.motherId, `${path}.motherId`, 1);
+    nullableInteger(record.fatherId, `${path}.fatherId`, 1);
+    integer(record.birthTick, `${path}.birthTick`, -Number.MAX_SAFE_INTEGER);
+    integer(record.deathTick, `${path}.deathTick`, -1);
+    const ageTicks = integer(record.ageTicks, `${path}.ageTicks`);
+    const stage = literal(record.finalLifeStage, `${path}.finalLifeStage`, [
+      "JUVENILE",
+      "ADULT",
+      "ELDER",
+    ]);
+    if (stage !== lifeStageForAge(ageTicks)) {
+      fail(`${path}.finalLifeStage`, "does not match ageTicks");
+    }
+    literal(record.deathCause, `${path}.deathCause`, [
+      "STARVATION",
+      "DEHYDRATION",
+      "EXHAUSTION",
+      "INJURY",
+      "OLD_AGE",
+      "LEGACY_UNKNOWN",
+    ]);
+    nullableInteger(record.finalGroupId, `${path}.finalGroupId`, 1);
+    const traitPotential = object(record.traitPotential, `${path}.traitPotential`, [
+      "generosity",
+      "aggression",
+      "sociability",
+      "loyalty",
+    ]);
+    for (const key of ["generosity", "aggression", "sociability", "loyalty"] as const) {
+      integer(traitPotential[key], `${path}.traitPotential.${key}`, 0, 10_000);
+    }
+    const skillPotential = object(record.skillPotential, `${path}.skillPotential`, [
+      "foraging",
+      "combat",
+    ]);
+    integer(skillPotential.foraging, `${path}.skillPotential.foraging`, 0, 10_000);
+    integer(skillPotential.combat, `${path}.skillPotential.combat`, 0, 10_000);
+    numberArray(record.majorEventIds, `${path}.majorEventIds`, 1);
+    nullableInteger(record.heirId, `${path}.heirId`, 1);
+  }
+  assertUnique(ids, "lifeRecords");
+  return ids;
+}
+
+function validateMemorials(value: unknown, tileCount: number): number[] {
+  const ids: number[] = [];
+  for (const [index, memorialValue] of array(
+    value,
+    "memorials",
+    MAX_TOTAL_IDENTITIES,
+  ).entries()) {
+    const path = `memorials[${index.toString()}]`;
+    const memorial = object(memorialValue, path, [
+      "id",
+      "deceasedId",
+      "tileIndex",
+      "createdTick",
+      "expiresTick",
+      "heirId",
+      "estate",
+      "mournerIds",
+      "completedMournerIds",
+    ]);
+    ids.push(integer(memorial.id, `${path}.id`, 1));
+    integer(memorial.deceasedId, `${path}.deceasedId`, 1);
+    integer(memorial.tileIndex, `${path}.tileIndex`, 0, tileCount - 1);
+    const createdTick = integer(memorial.createdTick, `${path}.createdTick`);
+    const expiresTick = integer(memorial.expiresTick, `${path}.expiresTick`);
+    if (expiresTick <= createdTick) fail(`${path}.expiresTick`, "must follow creation");
+    nullableInteger(memorial.heirId, `${path}.heirId`, 1);
+    const estate = object(memorial.estate, `${path}.estate`, ["food", "material", "water"]);
+    integer(estate.food, `${path}.estate.food`);
+    integer(estate.material, `${path}.estate.material`);
+    integer(estate.water, `${path}.estate.water`);
+    const mournerIds = numberArray(memorial.mournerIds, `${path}.mournerIds`, 1);
+    const completedMournerIds = numberArray(
+      memorial.completedMournerIds,
+      `${path}.completedMournerIds`,
+      1,
+    );
+    assertUnique(mournerIds, `${path}.mournerIds`);
+    assertUnique(completedMournerIds, `${path}.completedMournerIds`);
+    if (completedMournerIds.some((id) => !mournerIds.includes(id))) {
+      fail(`${path}.completedMournerIds`, "must be a subset of mournerIds");
+    }
+  }
+  assertUnique(ids, "memorials");
   return ids;
 }
 
@@ -690,6 +925,7 @@ function validateStructures(value: unknown, tileCount: number): number[] {
       "SHELTER_SITE",
       "SHELTER",
       "ABANDONED_SHELTER",
+      "ABANDONED_STORAGE",
     ]);
     integer(structure.tileIndex, `${path}.tileIndex`, 0, tileCount - 1);
     integer(structure.groupId, `${path}.groupId`, 1);
@@ -707,7 +943,7 @@ function validateStructures(value: unknown, tileCount: number): number[] {
     }
     const guardIds = numberArray(structure.guardIds, `${path}.guardIds`, 1);
     const completedTick = nullableInteger(structure.completedTick, `${path}.completedTick`);
-    if (kind === "STORAGE" || kind === "STORAGE_SITE") {
+    if (kind === "STORAGE" || kind === "STORAGE_SITE" || kind === "ABANDONED_STORAGE") {
       for (const shelterOnlyKey of [
         "condition",
         "baseCapacity",
@@ -726,12 +962,12 @@ function validateStructures(value: unknown, tileCount: number): number[] {
         fail(`${path}.completedTick`, "must be null while storage is under construction");
       }
       if (
-        kind === "STORAGE" &&
+        (kind === "STORAGE" || kind === "ABANDONED_STORAGE") &&
         (completedTick === null ||
           material !== materialRequired ||
           progress !== workRequired)
       ) {
-        fail(path, "must be complete when kind is STORAGE");
+        fail(path, "must be complete when kind is STORAGE or ABANDONED_STORAGE");
       }
     }
     if (kind === "SHELTER_SITE" || kind === "SHELTER" || kind === "ABANDONED_SHELTER") {
@@ -873,6 +1109,8 @@ function validateGroups(value: unknown, tileCount: number): number[] {
     const group = object(groupValue, path, [
       "id",
       "name",
+      "status",
+      "extinctTick",
       "stage",
       "foundedTick",
       "memberIds",
@@ -890,6 +1128,11 @@ function validateGroups(value: unknown, tileCount: number): number[] {
     ]);
     ids.push(integer(group.id, `${path}.id`, 1));
     string(group.name, `${path}.name`);
+    const status = literal(group.status, `${path}.status`, ["ACTIVE", "EXTINCT"]);
+    const extinctTick = nullableInteger(group.extinctTick, `${path}.extinctTick`);
+    if ((status === "ACTIVE") !== (extinctTick === null)) {
+      fail(`${path}.extinctTick`, "must be null exactly while the group is active");
+    }
     literal(group.stage, `${path}.stage`, ["PROVISIONAL", "PERSISTENT"]);
     integer(group.foundedTick, `${path}.foundedTick`);
     const memberIds = numberArray(group.memberIds, `${path}.memberIds`, 1);
@@ -996,6 +1239,9 @@ function validateMemories(value: unknown, tileCount: number): number[] {
       "HARM_RECEIVED",
       "RESOURCE_FOUND",
       "GROUP_FOUNDED",
+      "CARE_RECEIVED",
+      "BIRTH_WITNESSED",
+      "DEATH_MOURNED",
     ]);
     integer(memory.createdTick, `${path}.createdTick`);
     nullableInteger(memory.subjectEntityId, `${path}.subjectEntityId`, 1);
@@ -1099,6 +1345,7 @@ function validateDomainEvents(value: unknown, tileCount: number): number[] {
       "SIMULATION_STARTED",
       "HYDRATION_RULES_ENABLED",
       "SHELTER_RULES_ENABLED",
+      "LIFECYCLE_RULES_ENABLED",
       "PLAYER_ADDED_FOOD",
       "PLAYER_REMOVED_FOOD",
       "PLAYER_ADDED_MATERIAL",
@@ -1149,6 +1396,20 @@ function validateDomainEvents(value: unknown, tileCount: number): number[] {
       "CREATURE_JOINED_GROUP",
       "GROUP_FOUNDED",
       "LEADER_SELECTED",
+      "LIFE_STAGE_CHANGED",
+      "CRITICAL_HEALTH_STARTED",
+      "CRITICAL_HEALTH_RECOVERED",
+      "FAMILY_FORMED",
+      "PREGNANCY_STARTED",
+      "PREGNANCY_LOST",
+      "CREATURE_BORN",
+      "CARE_GIVEN",
+      "CREATURE_DIED",
+      "MEMORIAL_CREATED",
+      "MOURNING_COMPLETED",
+      "ESTATE_CLAIMED",
+      "ESTATE_CLOSED",
+      "GROUP_EXTINCT",
     ]);
     numberArray(event.actorIds, `${path}.actorIds`, 1);
     numberArray(event.targetIds, `${path}.targetIds`, 1);
@@ -1216,6 +1477,11 @@ function validateHistoryEvents(value: unknown): number[] {
       "SOCIAL_BOND",
       "THEFT",
       "CONFRONTATION",
+      "HEALTH_CRISIS",
+      "BIRTH",
+      "DEATH",
+      "MOURNING",
+      "GROUP_EXTINCTION",
     ]);
     string(event.title, `${path}.title`, true);
     string(event.summary, `${path}.summary`, true);
@@ -1304,6 +1570,14 @@ function validateMetrics(value: unknown): void {
     "invalidPathFailures",
     "interactionContentions",
     "failedInteractionClaims",
+    "births",
+    "deaths",
+    "pregnanciesStarted",
+    "pregnanciesLost",
+    "careActions",
+    "mournings",
+    "estatesClaimed",
+    "groupsExtinct",
   ] as const;
   const metrics = object(value, "metrics", keys);
   for (const key of keys) integer(metrics[key], `metrics.${key}`);
@@ -1319,6 +1593,7 @@ function validateConfiguration(value: unknown): void {
     "maxRelationshipsPerCreature",
     "maxIntentHistoryPerCreature",
     "maxRouteSamplesPerCreature",
+    "maxLifeRecords",
   ]);
   integer(configuration.ticksPerSecond, "configuration.ticksPerSecond", 1, 1_000);
   for (const key of [
@@ -1329,8 +1604,15 @@ function validateConfiguration(value: unknown): void {
     "maxRelationshipsPerCreature",
     "maxIntentHistoryPerCreature",
     "maxRouteSamplesPerCreature",
+    "maxLifeRecords",
   ] as const) {
     integer(configuration[key], `configuration.${key}`, 1, MAX_PERSISTED_COLLECTION_ITEMS);
+  }
+  if (configuration.maxLifeRecords !== MAX_TOTAL_IDENTITIES) {
+    fail(
+      "configuration.maxLifeRecords",
+      `must preserve the total identity cap of ${MAX_TOTAL_IDENTITIES.toString()}`,
+    );
   }
 }
 
@@ -1369,6 +1651,8 @@ export function assertCompatibleSimulationState(
     "resourceNodes",
     "structures",
     "groups",
+    "lifeRecords",
+    "memorials",
     "relationships",
     "memories",
     "commandQueue",
@@ -1422,8 +1706,18 @@ export function assertCompatibleSimulationState(
     fail("resourceNodes", "must contain at least one water source");
   }
   const structureIds = validateStructures(state.structures, tileCount);
-  const entityIds = [...creatureIds, ...resourceIds, ...structureIds];
+  const lifeRecordIds = validateLifeRecords(state.lifeRecords);
+  const memorialIds = validateMemorials(state.memorials, tileCount);
+  const entityIds = [...creatureIds, ...resourceIds, ...structureIds, ...memorialIds];
   assertUnique(entityIds, ENTITY_KEYS.join(", "));
+  const identityIds = [...creatureIds, ...lifeRecordIds];
+  assertUnique(identityIds, "creatures, lifeRecords");
+  if (identityIds.length > MAX_TOTAL_IDENTITIES) {
+    fail(
+      "lifeRecords",
+      `exceeds the total identity cap of ${MAX_TOTAL_IDENTITIES.toString()}`,
+    );
+  }
   const groupIds = validateGroups(state.groups, tileCount);
   const relationshipIds = validateRelationships(state.relationships);
   const memoryIds = validateMemories(state.memories, tileCount);
@@ -1435,6 +1729,8 @@ export function assertCompatibleSimulationState(
   validateConfiguration(state.configuration);
 
   const creatures = array(state.creatures, "creatures");
+  const lifeRecords = array(state.lifeRecords, "lifeRecords");
+  const memorials = array(state.memorials, "memorials");
   const groups = array(state.groups, "groups");
   const structures = array(state.structures, "structures");
   const relationships = array(state.relationships, "relationships");
@@ -1442,8 +1738,23 @@ export function assertCompatibleSimulationState(
   const domainEvents = array(state.domainEvents, "domainEvents");
   const historyEvents = array(state.historyEvents, "historyEvents");
   const decisions = array(state.decisionRecords, "decisionRecords");
+  const livingCount = creatures.filter(
+    (value) => (value as UnknownRecord).alive === true,
+  ).length;
+  const reservedPregnancies = creatures.filter(
+    (value) =>
+      (value as UnknownRecord).alive === true &&
+      (value as UnknownRecord).pregnancy !== null,
+  ).length;
+  if (livingCount + reservedPregnancies > MAX_LIVING_POPULATION) {
+    fail(
+      "creatures",
+      `living population plus reserved pregnancies exceeds ${MAX_LIVING_POPULATION.toString()}`,
+    );
+  }
   const creatureSet = new Set(creatureIds);
-  const entitySet = new Set(entityIds);
+  const identitySet = new Set(identityIds);
+  const entitySet = new Set([...entityIds, ...lifeRecordIds]);
   const groupSet = new Set(groupIds);
   const structureSet = new Set(structureIds);
   const structureById = new Map(
@@ -1455,9 +1766,17 @@ export function assertCompatibleSimulationState(
   const memorySet = new Set(memoryIds);
   const eventSet = new Set(eventIds);
   const decisionSet = new Set(decisionIds);
-  const subjectSet = new Set([...entityIds, ...groupIds]);
+  const subjectSet = new Set([...entitySet, ...groupIds]);
   const configuration = state.configuration as UnknownRecord;
   const typedState = value as SimulationState;
+  const historicalMemorialIds = new Set(
+    domainEvents.flatMap((eventValue) => {
+      const event = eventValue as UnknownRecord;
+      return event.type === "MEMORIAL_CREATED" && Array.isArray(event.targetIds)
+        ? (event.targetIds as number[]).slice(0, 1)
+        : [];
+    }),
+  );
 
   for (const [index, creatureValue] of creatures.entries()) {
     const creature = creatureValue as UnknownRecord;
@@ -1466,6 +1785,37 @@ export function assertCompatibleSimulationState(
       fail(
         `creatures[${index.toString()}].groupId`,
         `references missing ID ${groupId.toString()}`,
+      );
+    }
+    for (const key of ["motherId", "fatherId", "caregiverId"] as const) {
+      const relatedId = creature[key] as number | null;
+      if (relatedId !== null && !identitySet.has(relatedId)) {
+        fail(
+          `creatures[${index.toString()}].${key}`,
+          `references missing identity ${relatedId.toString()}`,
+        );
+      }
+    }
+    const pregnancy = creature.pregnancy as UnknownRecord | null;
+    if (pregnancy !== null && !identitySet.has(pregnancy.fatherId as number)) {
+      fail(
+        `creatures[${index.toString()}].pregnancy.fatherId`,
+        "references a missing identity",
+      );
+    }
+    assertReferences(
+      creature.mournedLifeRecordIds as number[],
+      new Set(lifeRecordIds),
+      `creatures[${index.toString()}].mournedLifeRecordIds`,
+    );
+    const criticalSinceTick = creature.criticalSinceTick as number | null;
+    if (criticalSinceTick !== null && criticalSinceTick > tick) {
+      fail(`creatures[${index.toString()}].criticalSinceTick`, "cannot be in the future");
+    }
+    if (criticalSinceTick !== null && (creature.health as number) > 1_200) {
+      fail(
+        `creatures[${index.toString()}].criticalSinceTick`,
+        "requires health at or below 1200",
       );
     }
     assertReferences(
@@ -1539,6 +1889,42 @@ export function assertCompatibleSimulationState(
       fail(`creatures[${index.toString()}].recentRoute`, "exceeds its configured bound");
     }
   }
+  for (const [index, recordValue] of lifeRecords.entries()) {
+    const record = recordValue as UnknownRecord;
+    for (const key of ["motherId", "fatherId", "heirId"] as const) {
+      const relatedId = record[key] as number | null;
+      if (relatedId !== null && !identitySet.has(relatedId)) {
+        fail(
+          `lifeRecords[${index.toString()}].${key}`,
+          `references missing identity ${relatedId.toString()}`,
+        );
+      }
+    }
+    const finalGroupId = record.finalGroupId as number | null;
+    if (finalGroupId !== null && !groupSet.has(finalGroupId)) {
+      fail(`lifeRecords[${index.toString()}].finalGroupId`, "references a missing group");
+    }
+  }
+  for (const [index, memorialValue] of memorials.entries()) {
+    const memorial = memorialValue as UnknownRecord;
+    if (!lifeRecordIds.includes(memorial.deceasedId as number)) {
+      fail(`memorials[${index.toString()}].deceasedId`, "must reference a life record");
+    }
+    const heirId = memorial.heirId as number | null;
+    if (heirId !== null && !identitySet.has(heirId)) {
+      fail(`memorials[${index.toString()}].heirId`, "references a missing identity");
+    }
+    assertReferences(
+      memorial.mournerIds as number[],
+      identitySet,
+      `memorials[${index.toString()}].mournerIds`,
+    );
+    assertReferences(
+      memorial.completedMournerIds as number[],
+      identitySet,
+      `memorials[${index.toString()}].completedMournerIds`,
+    );
+  }
   for (const [index, groupValue] of groups.entries()) {
     const group = groupValue as UnknownRecord;
     assertReferences(
@@ -1549,6 +1935,21 @@ export function assertCompatibleSimulationState(
     const leaderId = group.leaderId as number | null;
     if (leaderId !== null && !(group.memberIds as number[]).includes(leaderId)) {
       fail(`groups[${index.toString()}].leaderId`, "must be a group member");
+    }
+    if (group.status === "EXTINCT") {
+      if (
+        (group.memberIds as number[]).length !== 0 ||
+        leaderId !== null ||
+        group.storageStructureId !== null ||
+        group.activeShelterId !== null ||
+        group.pendingShelterId !== null
+      ) {
+        fail(
+          `groups[${index.toString()}]`,
+          "must clear active membership and asset pointers when extinct",
+        );
+      }
+      continue;
     }
     const storageId = group.storageStructureId as number | null;
     if (storageId !== null && !structureSet.has(storageId)) {
@@ -1929,7 +2330,7 @@ export function assertCompatibleSimulationState(
     const edge = edgeValue as UnknownRecord;
     assertReferences(
       [edge.fromId as number, edge.toId as number],
-      creatureSet,
+      identitySet,
       `relationships[${index.toString()}]`,
     );
   }
@@ -1937,7 +2338,7 @@ export function assertCompatibleSimulationState(
     const memory = memoryValue as UnknownRecord;
     assertReferences(
       [memory.ownerId as number],
-      creatureSet,
+      identitySet,
       `memories[${index.toString()}].ownerId`,
     );
     const subjectId = memory.subjectEntityId as number | null;
@@ -1957,14 +2358,17 @@ export function assertCompatibleSimulationState(
     const event = eventValue as UnknownRecord;
     assertReferences(
       event.actorIds as number[],
-      creatureSet,
+      identitySet,
       `domainEvents[${index.toString()}].actorIds`,
     );
-    assertReferences(
-      event.targetIds as number[],
-      entitySet,
-      `domainEvents[${index.toString()}].targetIds`,
-    );
+    for (const targetId of event.targetIds as number[]) {
+      if (!entitySet.has(targetId) && !historicalMemorialIds.has(targetId)) {
+        fail(
+          `domainEvents[${index.toString()}].targetIds`,
+          `references missing ID ${targetId.toString()}`,
+        );
+      }
+    }
     assertReferences(
       event.groupIds as number[],
       groupSet,
@@ -1985,7 +2389,7 @@ export function assertCompatibleSimulationState(
     );
     assertReferences(
       history.actorIds as number[],
-      creatureSet,
+      identitySet,
       `historyEvents[${index.toString()}].actorIds`,
     );
     assertReferences(
@@ -1998,11 +2402,15 @@ export function assertCompatibleSimulationState(
     const decision = decisionValue as UnknownRecord;
     assertReferences(
       [decision.actorId as number],
-      creatureSet,
+      identitySet,
       `decisionRecords[${index.toString()}].actorId`,
     );
     const targetId = decision.selectedTargetId as number | null;
-    if (targetId !== null && !entitySet.has(targetId)) {
+    if (
+      targetId !== null &&
+      !entitySet.has(targetId) &&
+      !historicalMemorialIds.has(targetId)
+    ) {
       fail(
         `decisionRecords[${index.toString()}].selectedTargetId`,
         `references missing ID ${targetId.toString()}`,

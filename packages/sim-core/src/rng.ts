@@ -66,6 +66,11 @@ export function keyedRandomUnit(
   return keyedRandomU32(seed, channel, tick, actorId, targetId, nonce) % 10_001;
 }
 
+/** Phase 4.3 identity-stable lifespan: 18,000 plus a keyed 0..4,000 span. */
+export function naturalLifespanTicksFor(seed: number, identityId: number): number {
+  return 18_000 + (keyedRandomU32(seed, "natural-lifespan", 0, identityId) % 4_001);
+}
+
 export function randomRange(
   owner: RandomStateOwner,
   minimumInclusive: number,

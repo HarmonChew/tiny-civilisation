@@ -120,7 +120,7 @@ describe("water actions", () => {
     expect(state.metrics.interactionContentions).toBe(1);
   });
 
-  it("keeps dehydration damage nonlethal at the 1,200 health floor", () => {
+  it("lets dehydration damage cross the 1,200 critical-health threshold", () => {
     const state = createSimulation(96);
     const creature = state.creatures[0]!;
     creature.needs.thirst = 9_399;
@@ -129,8 +129,18 @@ describe("water actions", () => {
     for (let tick = 0; tick < 50; tick += 1) updateNeeds(state);
 
     expect(creature.needs.thirst).toBeGreaterThanOrEqual(9_400);
-    expect(creature.health).toBe(1_200);
+    expect(creature.health).toBeLessThan(1_200);
     expect(creature.alive).toBe(true);
+    expect(creature.criticalSinceTick).toBe(state.tick);
+    expect(state.domainEvents.at(-1)).toMatchObject({
+      type: "CRITICAL_HEALTH_STARTED",
+      actorIds: [creature.id],
+      attentionTier: "CRITICAL",
+    });
+    expect(state.historyEvents.at(-1)).toMatchObject({
+      type: "HEALTH_CRISIS",
+      actorIds: [creature.id],
+    });
   });
 
   it("regenerates water on its declared cadence without exceeding source capacity", () => {

@@ -105,6 +105,155 @@ const view: WorldView = {
 };
 
 describe("InspectorPanel", () => {
+  it("discloses lifecycle, caregiver, lineage, and inherited potential facts", () => {
+    const youth: CreatureView = {
+      ...creature,
+      sex: "FEMALE",
+      ageTicks: 1_200,
+      lifeStage: "JUVENILE",
+      naturalLifespanTicks: 19_500,
+      birthTick: -1_080,
+      motherId: 2,
+      fatherId: 3,
+      caregiverId: 2,
+      childIds: [],
+      dependent: true,
+      pregnant: false,
+      inheritedTraits: [{ key: "loyalty", label: "Loyalty", value: 72 }],
+      skillPotential: [{ key: "foraging", label: "Foraging", value: 64 }],
+    };
+    const lifecycleView: WorldView = {
+      ...view,
+      creatures: [
+        youth,
+        { ...creature, id: 2, name: "Iri" },
+        { ...creature, id: 3, name: "Nalo" },
+      ],
+    };
+    render(
+      <InspectorPanel
+        creature={youth}
+        view={lifecycleView}
+        evidenceEvent={null}
+        followed={false}
+        onFollow={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Lifecycle and lineage")).toBeTruthy();
+    expect(screen.getByText(/Female \/ Juvenile/)).toBeTruthy();
+    expect(screen.getByText("Iri and Nalo")).toBeTruthy();
+    expect(screen.getByText("Caregiver: Iri")).toBeTruthy();
+    expect(screen.getByText(/Loyalty 72%/)).toBeTruthy();
+    expect(screen.getByText(/Foraging 64%/)).toBeTruthy();
+  });
+
+  it("keeps a dead selected creature readable through its permanent life record", () => {
+    const rememberedView: WorldView = {
+      ...view,
+      creatures: [],
+      lifeRecords: [
+        {
+          id: 1,
+          name: "Aro",
+          color: creature.color,
+          sex: "MALE",
+          motherId: 2,
+          childIds: [4],
+          birthTick: -11_000,
+          deathTick: 240,
+          ageTicks: 11_240,
+          finalLifeStage: "ADULT",
+          deathCause: "INJURY",
+          inheritedTraits: [{ key: "generosity", label: "Generosity", value: 72 }],
+          skillPotential: [{ key: "foraging", label: "Foraging", value: 64 }],
+          majorEventIds: [44],
+          heirId: 4,
+        },
+      ],
+    };
+    render(
+      <InspectorPanel
+        creature={null}
+        subjectRef={{ kind: "creature", id: 1 }}
+        view={rememberedView}
+        evidenceEvent={null}
+        followed={false}
+        onFollow={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Permanent life record")).toBeTruthy();
+    expect(screen.getByText("Injury")).toBeTruthy();
+    expect(screen.getByText(/Generosity 72%/)).toBeTruthy();
+    expect(screen.getByText(/Foraging 64%/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Follow Aro/ })).toBeNull();
+  });
+
+  it("links a temporary memorial to its named heir and permanent record", () => {
+    const onSelectSubject = vi.fn();
+    const memorialView: WorldView = {
+      ...view,
+      creatures: [{ ...creature, id: 2, name: "Iri" }],
+      memorials: [
+        {
+          id: 50,
+          deceasedId: 1,
+          deceasedName: "Aro",
+          tileIndex: 10,
+          x: 10,
+          y: 0,
+          createdTick: 120,
+          expiresTick: 720,
+          heirId: 2,
+          estate: { food: 3, material: 2, water: 4 },
+          mournersRemaining: 1,
+        },
+      ],
+      lifeRecords: [
+        {
+          id: 1,
+          name: "Aro",
+          color: creature.color,
+          sex: "MALE",
+          childIds: [2],
+          birthTick: -11_000,
+          deathTick: 120,
+          ageTicks: 11_120,
+          finalLifeStage: "ADULT",
+          deathCause: "INJURY",
+          inheritedTraits: [],
+          skillPotential: [],
+          majorEventIds: [],
+          heirId: 2,
+        },
+      ],
+    };
+    render(
+      <InspectorPanel
+        creature={null}
+        subjectRef={{ kind: "memorial", id: 50 }}
+        view={memorialView}
+        evidenceEvent={null}
+        followed={false}
+        onFollow={vi.fn()}
+        onSelect={vi.fn()}
+        onSelectSubject={onSelectSubject}
+      />,
+    );
+
+    expect(screen.getByText("Temporary memorial")).toBeTruthy();
+    expect(screen.getByText("Iri")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Open permanent life record for Aro",
+      }),
+    );
+    expect(onSelectSubject).toHaveBeenCalledWith({ kind: "life-record", id: 1 });
+  });
+
   it("leads with authoritative desire, plan/action, and factual reason", () => {
     render(
       <InspectorPanel

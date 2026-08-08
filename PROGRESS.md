@@ -1,6 +1,6 @@
 # Tiny Civilisation — Progress and Expansion Plan
 
-Last updated: 6 August 2026
+Last updated: 8 August 2026
 
 ## Current position
 
@@ -13,6 +13,8 @@ Phase 3 release evidence is not complete. Its historical 64-seed calibration and
 Phase 4.1 water and mobility engineering and automated simulation evidence are complete. The eight-creature, 48×32 scenario set now includes finite renewable potable-water sources, thirst and nonlethal dehydration, shared carrying capacity, gathering/drinking/sharing behavior, weighted travel decisions, observational traffic trails, water interventions, factual response traces, migration, headless hydration evidence, and accessible browser projections. The discovery [review](docs/baselines/phase-4.1-calibration-review-v1.md) froze classifier v2 and the selected bands; the unchanged [frozen calibration](docs/baselines/phase-4.1-calibration-v2.md) and [untouched holdout](docs/baselines/phase-4.1-holdout-v2.md) each pass their automated hard, contract, outcome-incidence, dominance-rationale, and paired macro-difference gates. The aggregate release suite recorded at immutable commit `7df0b22` passed all 12 stories across Chromium, Firefox, and WebKit. Manual NVDA and the unified five-person formative and five-new-person confirmatory rounds remain open in the [Phase 4.1 release ledger](docs/baselines/phase-4.1-release-status-v1.md), so the slice is not release-complete.
 
 Phase 4.2 shelter and settlement engineering and automated release-candidate evidence are complete in the current workspace. Persistent groups can autonomously select, build, occupy, maintain, and once relocate a communal shelter; condition changes capacity and recovery without collapse, member claims outrank trusted guests, and outdoor rest remains available. Material interventions, versioned migration, factual events, dish-first shelter projections, a focused settlement collector, frozen classifier-v3 labels, and the descriptive `SETTLEMENT` macro dimension are implemented. Discovery and same-seed frozen verification passed, and the separately reserved `2001..2064` holdout completed once, passed every declared automated gate, and was resealed as `RECORDED` with execution disabled. Source-only tests, golden replay, payload/bundle/performance checks, 46/46 Chromium journeys/visuals, and the 24/24 three-browser matrix pass. The inherited and separate Phase 4.2 NVDA, formative, and confirmatory records remain open in the [Phase 4.2 release ledger](docs/baselines/phase-4.2-release-status-v1.md), so no release completion is claimed.
+
+Phase 4.3 lifecycle engineering is implemented as the final pre-testing feature slice. Biological reproduction, ageing and life stages, dependent-youth care, critical hardship and old-age death, lineage, mourning, memorials, inheritance, succession, group extinction, permanent life records, v5 migration, paginated record queries, lifecycle projections, and prospective lifecycle analysis are integrated under behavior/state 6. The release process is intentionally incomplete: calibration remains `NOT_RUN`, classifier/bands remain `NOT_FROZEN`, the `3001..3064` holdout is `SEALED`, and no formative, final-NVDA, or confirmatory record is claimed. The approved [unified-alpha protocol](docs/unified-alpha-human-protocol-v1.md) prospectively supersedes the still-unrun inherited human tracks without marking them passed.
 
 ### Verification coverage
 
@@ -303,7 +305,7 @@ The variation phase is complete when:
 
 ### Phase 4 — Add systemic depth vertically
 
-Status: **Phase 4.2 engineering and automated release-candidate evidence complete; human release evidence pending.**
+Status: **Phase 4.3 lifecycle engineering candidate implemented; unified validation and human release evidence pending.**
 
 Goal: add one complete causal and visible system at a time.
 
@@ -311,9 +313,10 @@ Phase 4.1 implements water and mobility: authoritative thirst, finite renewable 
 
 Phase 4.2 implements shelter and settlement: persistent groups select a deterministic legal site near member, store, and resource anchors; contribute material and work; derive occupancy from interaction claims; maintain condition; choose sheltered or outdoor recovery; admit trusted guests behind members; and may relocate once after a stable improvement. Players can alter environmental material supply but cannot issue build, repair, rest, or relocation orders. Its normative mechanics, versions, measurement definitions, frozen classifier/bands, and recorded one-shot corpus protocol are in [`docs/phase-4.2-contract.md`](docs/phase-4.2-contract.md); the automated evidence and remaining human gates are tracked in [`docs/phase-4.2-execution-plan.md`](docs/phase-4.2-execution-plan.md).
 
-Remaining order after Phase 4.2 release gates:
+Phase 4.3 implements lifecycle and alpha closure: deterministic founder demographics and lifespan, paired family formation, pregnancy and birth, inherited potentials, dependent care, stage transitions, hardship and old-age mortality, permanent lineage, mourning, estates, same-tick succession, and inspectable extinction. Living population is capped at 24 and retained identity at 256; zero-population worlds remain valid. Its normative mechanics and validation order are in [`docs/phase-4.3-contract.md`](docs/phase-4.3-contract.md) and [`docs/phase-4.3-execution-plan.md`](docs/phase-4.3-execution-plan.md).
 
-- **Lifecycle:** ageing, death, birth, lineage, mourning, inheritance, and population stability.
+Remaining order after Phase 4.3 unified-alpha closure:
+
 - **Collective difference:** group norms, culture, territory, migration, trade, and diplomacy.
 - **External pressure:** seasons, disease, predators, and environmental shocks.
 - **Technology:** only after knowledge transmission and cultural difference have meaningful mechanics.
@@ -361,8 +364,10 @@ The project is ready for broad feature expansion when:
 
 ## Recommended next work
 
-Finish the existing release gates before expanding the model further:
+Freeze new mechanics and execute the unified Phase 4.3 validation sequence:
 
-1. Preserve the passing Phase 3, Phase 4.1, and Phase 4.2 calibration and untouched-holdout artifacts, checksums, consumed-attempt marker, and disabled process lock.
-2. Complete the inherited unified manual NVDA workflow and unfamiliar-participant formative and confirmatory rounds; fix blocking and high-severity findings and repeat affected automated evidence.
-3. Complete the separate Phase 4.2 NVDA, five-person formative, and five-new-person confirmatory evidence before making a release-complete claim or beginning lifecycle work.
+1. Complete the clean feature-complete automated gate and package the exact formative candidate; preserve every earlier phase artifact unchanged.
+2. Run five unfamiliar formative participants on deterministic calibration fixtures, fix every blocker/high finding, and mint a new candidate for each runtime/configuration change.
+3. Generate and review discovery calibration, freeze the lifecycle definition, repeat the same seeds as verification, then run the serial Node 22.12/24 automated release candidate and package it immutably.
+4. Complete final NVDA on that exact package before authorizing the one-shot `3001..3064` holdout.
+5. Run five entirely new confirmatory participants on different calibration fixtures. Only after every unified gate is recorded may the approved expanded-alpha pass wording be used.

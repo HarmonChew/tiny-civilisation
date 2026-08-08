@@ -8,6 +8,7 @@ import {
   type WorldFocusState,
 } from "./focus";
 import type { WorldView } from "./model";
+import type * as SimAdapterModule from "./sim-adapter";
 import { DEFAULT_SCENARIO_VIEW } from "./experiment/scenario-presets";
 
 const view = {
@@ -189,11 +190,15 @@ const view = {
   ],
 } satisfies WorldView;
 
-vi.mock("./sim-adapter", () => ({
-  ticksPerSecond: 10,
-  makeWorldView: vi.fn(() => view),
-  makeWorldViewFromSnapshot: vi.fn(() => view),
-}));
+vi.mock("./sim-adapter", async (importOriginal) => {
+  const actual = await importOriginal<typeof SimAdapterModule>();
+  return {
+    ...actual,
+    ticksPerSecond: 10,
+    makeWorldView: vi.fn(() => view),
+    makeWorldViewFromSnapshot: vi.fn(() => view),
+  };
+});
 
 vi.mock("./runtime/browser-simulation-engine", async () => {
   const { DirectSimulationEngine } = await import("./runtime/direct-simulation-engine");

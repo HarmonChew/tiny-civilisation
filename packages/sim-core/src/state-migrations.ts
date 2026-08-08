@@ -2,6 +2,8 @@ import { desireForAction, desireStrength, planForAction } from "./desires.js";
 import { classifyAttentionTier, createEventClusterKey } from "./event-attention.js";
 import { claimInteractionSlot, requiresInteractionClaim } from "./interaction-slots.js";
 import { findPath } from "./pathfinding.js";
+import { MAX_TOTAL_IDENTITIES, lifeStageForAge } from "./lifecycle.js";
+import { naturalLifespanTicksFor } from "./rng.js";
 import { selectStrongestReason } from "./reason-facts.js";
 import type {
   ActionKind,
@@ -312,6 +314,186 @@ function upgradeShelterState(state: UnknownRecord, scenarioId: ScenarioId): void
   const scenario = createScenarioReference(scenarioId, legacySeed(state));
   state.scenario = { ...scenario };
   state.compiledMapHash = compileScenario(scenario).compiledMapHash;
+  state.schemaVersion = 5;
+}
+
+function phaseFiveScenarioId(state: UnknownRecord): ScenarioId {
+  const scenario = state.scenario;
+  if (!isRecord(scenario) || !isScenarioId(scenario.scenarioId)) {
+    throw new Error("Phase 4.2 simulation state scenario must be a known scenario.");
+  }
+  if (
+    scenario.kind !== "tiny-civilisation/scenario" ||
+    scenario.schemaVersion !== 2 ||
+    scenario.behaviorVersion !== 5 ||
+    scenario.scenarioVersion !== 2 ||
+    scenario.mapGenerationVersion !== 1 ||
+    scenario.seed !== legacySeed(state)
+  ) {
+    throw new Error(
+      "Phase 4.2 simulation state must use the behavior 5 / state 5 / scenario 2 compatibility tuple.",
+    );
+  }
+  return scenario.scenarioId;
+}
+
+const LEGACY_FOUNDER_SEX = [
+  "FEMALE",
+  "MALE",
+  "FEMALE",
+  "MALE",
+  "FEMALE",
+  "MALE",
+  "FEMALE",
+  "MALE",
+] as const;
+
+const LEGACY_FOUNDER_AGE = [
+  10_500, 8_000, 15_500, 11_500, 9_500, 13_000, 7_500, 8_500,
+] as const;
+
+function upgradeLifecycleState(state: UnknownRecord, scenarioId: ScenarioId): void {
+  const seed = legacySeed(state);
+  const tick = state.tick;
+  if (typeof tick !== "number" || !Number.isSafeInteger(tick) || tick < 0) {
+    throw new Error("Legacy simulation state tick must be a non-negative integer.");
+  }
+  const creatures = requireArray(state, "creatures");
+  const groups = requireArray(state, "groups");
+  const metrics = state.metrics;
+  const configuration = state.configuration;
+  if (!isRecord(metrics) || !isRecord(configuration)) {
+    throw new Error("Legacy lifecycle metrics and configuration must be objects.");
+  }
+  const lifeRecords: UnknownRecord[] = [];
+  const livingIds = new Set<number>();
+  const orderedCreatures = [...creatures].sort((left, right) => {
+    const leftId = isRecord(left) && typeof left.id === "number" ? left.id : 0;
+    const rightId = isRecord(right) && typeof right.id === "number" ? right.id : 0;
+    return leftId - rightId;
+  });
+  for (const [index, creatureValue] of orderedCreatures.entries()) {
+    if (!isRecord(creatureValue) || typeof creatureValue.id !== "number") {
+      throw new Error("Legacy creature must be an object with an ID.");
+    }
+    const id = creatureValue.id;
+    const baseAge = LEGACY_FOUNDER_AGE[index % LEGACY_FOUNDER_AGE.length] ?? 8_500;
+    const lifespan = naturalLifespanTicksFor(seed, id);
+    const ageTicks = Math.min(baseAge + tick, lifespan - 1_000);
+    const traits = isRecord(creatureValue.traits) ? creatureValue.traits : {};
+    const skills = isRecord(creatureValue.skills) ? creatureValue.skills : {};
+    creatureValue.sex = LEGACY_FOUNDER_SEX[index % LEGACY_FOUNDER_SEX.length] ?? "FEMALE";
+    creatureValue.ageTicks = ageTicks;
+    creatureValue.lifeStage = lifeStageForAge(ageTicks);
+    creatureValue.naturalLifespanTicks = lifespan;
+    creatureValue.birthTick = tick - ageTicks;
+    creatureValue.motherId = null;
+    creatureValue.fatherId = null;
+    creatureValue.caregiverId = null;
+    creatureValue.dependentUntilTick = null;
+    creatureValue.criticalSinceTick = null;
+    creatureValue.criticalDamage = null;
+    creatureValue.traitPotential = {
+      generosity: traits.generosity ?? 5_000,
+      aggression: traits.aggression ?? 5_000,
+      sociability: traits.sociability ?? 5_000,
+      loyalty: traits.loyalty ?? 5_000,
+    };
+    creatureValue.skillPotential = {
+      foraging: skills.foraging ?? 5_000,
+      combat: skills.combat ?? 5_000,
+    };
+    creatureValue.pregnancy = null;
+    creatureValue.reproductionCooldownUntilTick = 0;
+    creatureValue.death = null;
+    creatureValue.mournedLifeRecordIds = [];
+    creatureValue.majorLifeEventIds = [];
+    if (!isRecord(creatureValue.actionCounts)) {
+      throw new Error("Legacy creature actionCounts must be an object.");
+    }
+    creatureValue.actionCounts.FORM_FAMILY = 0;
+    creatureValue.actionCounts.CARE_FOR_YOUNG = 0;
+    creatureValue.actionCounts.MOURN = 0;
+    creatureValue.actionCounts.CLAIM_ESTATE = 0;
+    if (creatureValue.alive === false) {
+      lifeRecords.push({
+        id,
+        name: creatureValue.name,
+        color: creatureValue.color,
+        sex: creatureValue.sex,
+        motherId: null,
+        fatherId: null,
+        birthTick: creatureValue.birthTick,
+        deathTick: -1,
+        ageTicks,
+        finalLifeStage: creatureValue.lifeStage,
+        deathCause: "LEGACY_UNKNOWN",
+        finalGroupId: creatureValue.groupId ?? null,
+        traitPotential: { ...(creatureValue.traitPotential as UnknownRecord) },
+        skillPotential: { ...(creatureValue.skillPotential as UnknownRecord) },
+        majorEventIds: [],
+        heirId: null,
+      });
+    } else {
+      livingIds.add(id);
+    }
+  }
+  state.creatures = orderedCreatures.filter(
+    (creature) => isRecord(creature) && creature.alive !== false,
+  );
+  state.lifeRecords = lifeRecords;
+  state.memorials = [];
+  for (const groupValue of groups) {
+    if (!isRecord(groupValue)) throw new Error("Legacy group must be an object.");
+    groupValue.status = "ACTIVE";
+    groupValue.extinctTick = null;
+    if (Array.isArray(groupValue.memberIds)) {
+      groupValue.memberIds = groupValue.memberIds.filter(
+        (id): id is number => typeof id === "number" && livingIds.has(id),
+      );
+    }
+    if (typeof groupValue.leaderId === "number" && !livingIds.has(groupValue.leaderId)) {
+      groupValue.leaderId = null;
+    }
+  }
+  metrics.births = 0;
+  metrics.deaths = 0;
+  metrics.pregnanciesStarted = 0;
+  metrics.pregnanciesLost = 0;
+  metrics.careActions = 0;
+  metrics.mournings = 0;
+  metrics.estatesClaimed = 0;
+  metrics.groupsExtinct = 0;
+  configuration.maxLifeRecords = MAX_TOTAL_IDENTITIES;
+  const nextEventId = state.nextEventId;
+  if (typeof nextEventId !== "number" || !Number.isSafeInteger(nextEventId)) {
+    throw new Error("Legacy simulation state nextEventId must be an integer.");
+  }
+  requireArray(state, "domainEvents").push({
+    id: nextEventId,
+    tick,
+    type: "LIFECYCLE_RULES_ENABLED",
+    actorIds: [],
+    targetIds: [],
+    groupIds: [],
+    locationTileIndex: null,
+    resourceKind: null,
+    quantity: lifeRecords.length,
+    causedByEventIds: [],
+    decisionRecordIds: [],
+    importance: 45,
+    attentionTier: "NOTABLE",
+    clusterKey: "world:lifecycle-rules-enabled",
+    commandId: null,
+    commandOutcome: null,
+    commandRejectionReason: null,
+    summary:
+      "Lifecycle rules began when this save was upgraded; legacy deaths retain unknown timing and no pregnancy or lineage history was invented.",
+  });
+  state.nextEventId = nextEventId + 1;
+  const scenario = createScenarioReference(scenarioId, seed);
+  state.scenario = { ...scenario };
+  state.compiledMapHash = compileScenario(scenario).compiledMapHash;
   state.schemaVersion = SIMULATION_STATE_VERSION;
 }
 
@@ -401,10 +583,17 @@ export function migrateSimulationState(value: unknown): SimulationState {
   if (value.schemaVersion === SIMULATION_STATE_VERSION) {
     return value as unknown as SimulationState;
   }
+  if (value.schemaVersion === 5) {
+    const migrated = cloneJson(value);
+    if (!isRecord(migrated)) throw new Error("Legacy simulation state is invalid.");
+    upgradeLifecycleState(migrated, phaseFiveScenarioId(migrated));
+    return migrated as unknown as SimulationState;
+  }
   if (value.schemaVersion === 4) {
     const migrated = cloneJson(value);
     if (!isRecord(migrated)) throw new Error("Legacy simulation state is invalid.");
     upgradeShelterState(migrated, phaseFourScenarioId(migrated));
+    upgradeLifecycleState(migrated, phaseFourScenarioId(value));
     return migrated as unknown as SimulationState;
   }
   if (value.schemaVersion === 3) {
@@ -413,6 +602,7 @@ export function migrateSimulationState(value: unknown): SimulationState {
     const scenarioId = legacyScenarioId(migrated);
     upgradeHydrationState(migrated, scenarioId);
     upgradeShelterState(migrated, scenarioId);
+    upgradeLifecycleState(migrated, scenarioId);
     return migrated as unknown as SimulationState;
   }
   if (value.schemaVersion === 2) {
@@ -420,11 +610,12 @@ export function migrateSimulationState(value: unknown): SimulationState {
     if (!isRecord(migrated)) throw new Error("Legacy simulation state is invalid.");
     upgradeHydrationState(migrated, "petri-world");
     upgradeShelterState(migrated, "petri-world");
+    upgradeLifecycleState(migrated, "petri-world");
     return migrated as unknown as SimulationState;
   }
   if (value.schemaVersion !== 1) {
     throw new Error(
-      `Unsupported simulation state version ${String(value.schemaVersion)}; expected 1, 2, 3, 4, or ${SIMULATION_STATE_VERSION}.`,
+      `Unsupported simulation state version ${String(value.schemaVersion)}; expected 1, 2, 3, 4, 5, or ${SIMULATION_STATE_VERSION}.`,
     );
   }
   const migrated = cloneJson(value);
@@ -540,5 +731,6 @@ export function migrateSimulationState(value: unknown): SimulationState {
   }
   upgradeHydrationState(migrated, "petri-world");
   upgradeShelterState(migrated, "petri-world");
+  upgradeLifecycleState(migrated, "petri-world");
   return migrated as unknown as SimulationState;
 }

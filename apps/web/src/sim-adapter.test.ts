@@ -56,10 +56,8 @@ describe("simulation UI adapter", () => {
 
   it("retains bootstrap tiles when a dynamic observation omits static world data", () => {
     const state = createSimulationState(4_182);
-    const bootstrap = makeWorldViewFromSnapshot(
-      createRenderSnapshot(state),
-      hashSimulationState(state),
-    );
+    const transport = createRenderSnapshot(state);
+    const bootstrap = makeWorldViewFromSnapshot(transport, hashSimulationState(state));
     advanceSimulationTicks(state, 1);
     const dynamic = makeWorldViewFromSnapshot(
       createRenderSnapshot(state, false),
@@ -68,6 +66,15 @@ describe("simulation UI adapter", () => {
     );
 
     expect(bootstrap.tiles.length).toBeGreaterThan(0);
+    expect(transport.tiles[0]).not.toHaveProperty("index");
+    expect(transport.tiles[0]).not.toHaveProperty("x");
+    expect(transport.tiles[0]).not.toHaveProperty("y");
+    expect(bootstrap.tiles[0]).toMatchObject({ index: 0, x: 0, y: 0 });
+    expect(bootstrap.tiles[state.world.width + 1]).toMatchObject({
+      index: state.world.width + 1,
+      x: 1,
+      y: 1,
+    });
     expect(dynamic.tiles).toEqual(bootstrap.tiles);
     expect(dynamic.tiles).not.toBe(bootstrap.tiles);
     expect(dynamic.tick).toBe(1);
@@ -140,6 +147,8 @@ describe("simulation UI adapter", () => {
           {
             id: 81,
             name: "Mossbank",
+            status: "ACTIVE",
+            extinctTick: null,
             stage: "PERSISTENT",
             foundedTick: 0,
             memberIds: [creature.id],
@@ -432,6 +441,50 @@ describe("simulation UI adapter", () => {
     );
   });
 
+  it("categorizes lifecycle transitions, critical health, death, mourning, estate, and extinction consistently", () => {
+    const state = createSimulationState(95);
+    const template = state.domainEvents[0]!;
+    const lifecycleTypes = [
+      "CREATURE_BORN",
+      "LIFE_STAGE_CHANGED",
+      "CRITICAL_HEALTH_STARTED",
+      "CRITICAL_HEALTH_RECOVERED",
+      "CREATURE_DIED",
+      "MOURNING_COMPLETED",
+      "ESTATE_CLAIMED",
+      "ESTATE_CLOSED",
+      "GROUP_EXTINCT",
+    ] as const satisfies readonly DomainEvent["type"][];
+    state.domainEvents.push(
+      ...lifecycleTypes.map((type, index) => ({
+        ...template,
+        id: 900 + index,
+        tick: index + 1,
+        type,
+        attentionTier: "NOTABLE" as const,
+        clusterKey: `lifecycle:${type.toLowerCase()}`,
+        summary: `${type} was observed.`,
+      })),
+      {
+        ...template,
+        id: 999,
+        tick: 20,
+        type: "LEADER_SELECTED",
+        attentionTier: "NOTABLE",
+        clusterKey: "group:leader-selected",
+        summary: "A group selected a leader.",
+      },
+    );
+
+    const categories = new Map(
+      makeWorldView(state).events.map((event) => [event.type, event.category]),
+    );
+    for (const type of lifecycleTypes) {
+      expect(categories.get(type), type).toBe("lifecycle");
+    }
+    expect(categories.get("LEADER_SELECTED")).toBe("group");
+  });
+
   it("maps null social IDs, storage stock, and colliding event sequences truthfully", () => {
     const state = createSimulationState(17) as SimulationState;
     const owner = state.creatures[0]!;
@@ -454,6 +507,8 @@ describe("simulation UI adapter", () => {
     state.groups.push({
       id: 99,
       name: "Test keepers",
+      status: "ACTIVE",
+      extinctTick: null,
       foundedTick: 0,
       stage: "PERSISTENT",
       memberIds: [],
@@ -673,5 +728,52 @@ describe("simulation UI adapter", () => {
     expect(generosity?.value).toBeCloseTo(0.34);
     expect(relationship?.familiarity).toBeCloseTo(0.34);
     expect(relationship?.trust).toBeCloseTo(0.0034);
+  });
+
+  it("preserves authoritative critical timing and deceased children in full-state projections", () => {
+    const state = createSimulationState(31) as SimulationState;
+    const parent = state.creatures[0]!;
+    state.tick = 20;
+    parent.health = 1_000;
+    parent.criticalSinceTick = 7;
+    state.lifeRecords.push({
+      id: 10_000,
+      name: "Remembered child",
+      color: 0x6f8a58,
+      sex: "FEMALE",
+      motherId: parent.id,
+      fatherId: null,
+      birthTick: -9_980,
+      deathTick: 20,
+      ageTicks: 10_000,
+      finalLifeStage: "ADULT",
+      deathCause: "INJURY",
+      finalGroupId: null,
+      traitPotential: {
+        generosity: 5_000,
+        aggression: 5_000,
+        sociability: 5_000,
+        loyalty: 5_000,
+      },
+      skillPotential: { foraging: 5_000, combat: 5_000 },
+      majorEventIds: [],
+      heirId: null,
+    });
+
+    const projected = makeWorldView(state);
+    const projectedParent = projected.creatures.find(
+      (creature) => creature.id === parent.id,
+    );
+
+    expect(projectedParent?.criticalSinceTick).toBe(7);
+    expect(projectedParent?.childIds).toContain(10_000);
+    expect(projected.lifeRecords?.map((record) => record.id)).toContain(10_000);
+    const rememberedChild = projected.lifeRecords?.find((record) => record.id === 10_000);
+    expect(rememberedChild?.inheritedTraits).toEqual(
+      expect.arrayContaining([{ key: "generosity", label: "Generosity", value: 50 }]),
+    );
+    expect(rememberedChild?.skillPotential).toEqual(
+      expect.arrayContaining([{ key: "foraging", label: "Foraging", value: 50 }]),
+    );
   });
 });

@@ -36,6 +36,30 @@ export interface MatrixPairedComparison {
 export interface MatrixScenarioEvidence {
   readonly scenario: { readonly scenarioId: string };
   readonly activity?: {
+    readonly lifecycle?: {
+      readonly births: number;
+      readonly deaths: number;
+      readonly careActions: number;
+      readonly mourningCompletions: number;
+      readonly estatesClaimed: number;
+      readonly groupExtinctions: number;
+      readonly invariantFailureRuns: number;
+      readonly seedDistributions: Readonly<
+        Record<
+          | "livingAtHorizon"
+          | "populationNetChange"
+          | "births"
+          | "deaths"
+          | "pregnanciesLost"
+          | "dependentYouthAtHorizon"
+          | "maximumLineageDepth"
+          | "careActions"
+          | "lifeRecordsAtHorizon"
+          | "memorialsAtHorizon",
+          { readonly samples: number; readonly median: number | null }
+        >
+      >;
+    };
     readonly settlement?: {
       readonly seedDistributions: Readonly<
         Record<
@@ -116,6 +140,10 @@ export interface MatrixEvidenceReport {
     readonly phase42DefinitionFingerprintAlgorithm?: string;
     readonly phase42DefinitionStatus?: "CANDIDATE" | "FROZEN";
     readonly phase42DefinitionFingerprint?: string;
+    readonly phase43DefinitionContractSchemaVersion?: number;
+    readonly phase43DefinitionFingerprintAlgorithm?: string;
+    readonly phase43DefinitionStatus?: "CANDIDATE" | "FROZEN";
+    readonly phase43DefinitionFingerprint?: string;
   };
   readonly runs: readonly unknown[];
   readonly aggregate: {
@@ -231,6 +259,24 @@ function distributionMedian(
     : `${distribution.median.toString()} (${distribution.samples.toString()} seeds)`;
 }
 
+function lifecycleDistributionMedian(
+  item: MatrixScenarioEvidence,
+  metric:
+    | "livingAtHorizon"
+    | "populationNetChange"
+    | "births"
+    | "deaths"
+    | "dependentYouthAtHorizon"
+    | "careActions"
+    | "lifeRecordsAtHorizon"
+    | "memorialsAtHorizon",
+): string {
+  const distribution = item.activity?.lifecycle?.seedDistributions[metric];
+  return distribution?.median === null || distribution?.median === undefined
+    ? "n/a"
+    : `${distribution.median.toString()} (${distribution.samples.toString()} seeds)`;
+}
+
 export function serializeMatrixEvidence(report: MatrixEvidenceReport): string {
   return `${JSON.stringify(report, null, 2)}\n`;
 }
@@ -326,6 +372,9 @@ export function renderMatrixEvidenceSummary(
     phase42Corpus && !phase42Frozen
       ? "## Candidate Phase 4.2 paired macro review (not frozen)"
       : "## Frozen paired macro bands";
+  const phase43Corpus =
+    report.configuration.corpus === "phase-4.3-calibration" ||
+    report.configuration.corpus === "phase-4.3-holdout";
   const settlementSection =
     report.configuration.corpus === "phase-4.2-holdout"
       ? {
@@ -359,6 +408,10 @@ export function renderMatrixEvidenceSummary(
           `| \`${markdownCell(comparison.leftScenarioId)} -> ${markdownCell(comparison.rightScenarioId)}\` | ${markdownCell(metric.metricId)} | ${markdownCell(metric.missingValuePolicy)} | ${metric.summary.pairedSeedCount.toString()} | ${metric.summary.meanDelta?.toString() ?? "n/a"} | ${metric.effect.value?.toString() ?? "n/a"} |`,
       ),
   );
+  const lifecycleDistributionRows = report.aggregate.byScenario.map(
+    (item) =>
+      `| \`${markdownCell(item.scenario.scenarioId)}\` | ${lifecycleDistributionMedian(item, "livingAtHorizon")} | ${lifecycleDistributionMedian(item, "populationNetChange")} | ${lifecycleDistributionMedian(item, "births")} | ${lifecycleDistributionMedian(item, "deaths")} | ${lifecycleDistributionMedian(item, "dependentYouthAtHorizon")} | ${lifecycleDistributionMedian(item, "careActions")} | ${lifecycleDistributionMedian(item, "lifeRecordsAtHorizon")} | ${lifecycleDistributionMedian(item, "memorialsAtHorizon")} | ${item.activity?.lifecycle?.invariantFailureRuns.toString() ?? "n/a"} |`,
+  );
 
   const lines = [
     `# Tiny Civilisations ${report.configuration.corpus} matrix evidence`,
@@ -377,6 +430,13 @@ export function renderMatrixEvidenceSummary(
           `- Phase 4.2 definition status: ${report.configuration.phase42DefinitionStatus ?? "n/a"}`,
           `- Phase 4.2 definition contract: schema ${report.configuration.phase42DefinitionContractSchemaVersion?.toString() ?? "n/a"}, ${report.configuration.phase42DefinitionFingerprintAlgorithm ?? "n/a"}`,
           `- Phase 4.2 definition fingerprint: \`${report.configuration.phase42DefinitionFingerprint ?? "n/a"}\``,
+        ]
+      : []),
+    ...(phase43Corpus
+      ? [
+          `- Phase 4.3 definition status: ${report.configuration.phase43DefinitionStatus ?? "n/a"}`,
+          `- Phase 4.3 definition contract: schema ${report.configuration.phase43DefinitionContractSchemaVersion?.toString() ?? "n/a"}, ${report.configuration.phase43DefinitionFingerprintAlgorithm ?? "n/a"}`,
+          `- Phase 4.3 definition fingerprint: \`${report.configuration.phase43DefinitionFingerprint ?? "n/a"}\``,
         ]
       : []),
     `- Scenarios: ${report.configuration.scenarios.map((value) => `\`${value}\``).join(", ")}`,
@@ -484,6 +544,18 @@ export function renderMatrixEvidenceSummary(
           ...(settlementPairRows.length > 0
             ? settlementPairRows
             : ["| none | none | n/a | 0 | n/a | n/a |"]),
+        ]
+      : []),
+    ...(phase43Corpus
+      ? [
+          "",
+          "## Phase 4.3 lifecycle distributions",
+          "",
+          "These are descriptive per-seed medians and invariant counts. Candidate calibration does not freeze thresholds, pass a release gate, or authorize the reserved holdout.",
+          "",
+          "| Scenario | Living at horizon | Population net change | Births | Deaths | Dependent youth | Care actions | Life records | Memorials | Invariant-failure runs |",
+          "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+          ...lifecycleDistributionRows,
         ]
       : []),
     "",

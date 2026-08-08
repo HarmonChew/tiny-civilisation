@@ -25,13 +25,19 @@ import {
 } from "@tiny-civ/sim-core";
 
 import {
+  StreamingLifecycleActivityCollector,
+  summarizeLifecycleProfiles,
+  type LifecycleActivityAggregate,
+  type LifecycleActivityProfile,
+} from "./lifecycle-activity.js";
+import {
   StreamingSettlementActivityCollector,
   summarizeSettlementProfiles,
   type SettlementActivityAggregate,
   type SettlementActivityProfile,
 } from "./settlement-activity.js";
 
-export const ACTIVITY_PROFILE_SCHEMA_VERSION = 5 as const;
+export const ACTIVITY_PROFILE_SCHEMA_VERSION = 6 as const;
 export const ACTIVITY_SAMPLE_EVERY_TICKS = 1 as const;
 export const SIGNIFICANT_EVENT_TIERS = [
   "SIGNIFICANT",
@@ -61,6 +67,9 @@ export const DESIRE_KINDS = [
   "PROTECT_PERSON_OR_GROUP",
   "AVOID_THREAT",
   "COMPLETE_SHARED_WORK",
+  "RAISE_FAMILY",
+  "HONOUR_THE_DEAD",
+  "SETTLE_ESTATE",
 ] as const satisfies readonly DesireKind[];
 
 export const DESIRE_FAMILIES = [
@@ -69,6 +78,7 @@ export const DESIRE_FAMILIES = [
   "SOCIAL",
   "SAFETY",
   "SHARED_WORK",
+  "LIFECYCLE",
 ] as const;
 
 export type DesireFamily = (typeof DESIRE_FAMILIES)[number];
@@ -84,6 +94,9 @@ export const DESIRE_FAMILY_BY_KIND = {
   PROTECT_PERSON_OR_GROUP: "SAFETY",
   AVOID_THREAT: "SAFETY",
   COMPLETE_SHARED_WORK: "SHARED_WORK",
+  RAISE_FAMILY: "LIFECYCLE",
+  HONOUR_THE_DEAD: "LIFECYCLE",
+  SETTLE_ESTATE: "LIFECYCLE",
 } as const satisfies Record<DesireKind, DesireFamily>;
 
 export const RESOURCE_KINDS = [
@@ -115,6 +128,10 @@ export const ACTION_KINDS = [
   "ATTACK",
   "FLEE",
   "JOIN_GROUP",
+  "FORM_FAMILY",
+  "CARE_FOR_YOUNG",
+  "MOURN",
+  "CLAIM_ESTATE",
 ] as const satisfies readonly ActionKind[];
 
 export const INTERACTION_EVENT_TYPES = [
@@ -143,6 +160,10 @@ export const INTERACTION_EVENT_TYPES = [
   "CREATURE_JOINED_GROUP",
   "GROUP_FOUNDED",
   "LEADER_SELECTED",
+  "FAMILY_FORMED",
+  "CARE_GIVEN",
+  "MOURNING_COMPLETED",
+  "ESTATE_CLAIMED",
 ] as const satisfies readonly DomainEventType[];
 
 export const INTERACTION_PURPOSES = [
@@ -156,6 +177,10 @@ export const INTERACTION_PURPOSES = [
   "GUARD",
   "CONFLICT",
   "FLIGHT",
+  "FAMILY",
+  "CARE",
+  "MOURNING",
+  "ESTATE",
 ] as const satisfies readonly InteractionPurpose[];
 
 export const INTERVENTION_CHANGE_KINDS = [
@@ -549,7 +574,7 @@ export interface ResourceKindHorizonFact {
 
 export interface StorageHorizonFact {
   id: number;
-  kind: "STORAGE" | "STORAGE_SITE";
+  kind: "STORAGE" | "STORAGE_SITE" | "ABANDONED_STORAGE";
   groupId: number;
   tileIndex: number;
   completedTick: number | null;
@@ -827,6 +852,7 @@ export interface ActivityProfile {
   desires: DesireActivityProfile;
   hydration: HydrationActivityProfile;
   settlement: SettlementActivityProfile;
+  lifecycle: LifecycleActivityProfile;
   scenarioSpatial: ScenarioSpatialActivityProfile;
   diagnostics: ActivityDiagnosticProfile;
 }
@@ -951,6 +977,7 @@ export interface ActivityProfileAggregate {
   };
   hydration: HydrationActivityAggregate;
   settlement: SettlementActivityAggregate;
+  lifecycle: LifecycleActivityAggregate;
   warnings: string[];
 }
 
@@ -1921,7 +1948,9 @@ function horizonFacts(state: SimulationState): HorizonFactsProfile {
   const structures = state.structures
     .filter(
       (structure): structure is StorageStructureState =>
-        structure.kind === "STORAGE" || structure.kind === "STORAGE_SITE",
+        structure.kind === "STORAGE" ||
+        structure.kind === "STORAGE_SITE" ||
+        structure.kind === "ABANDONED_STORAGE",
     )
     .sort((left, right) => left.id - right.id)
     .map((structure): StorageHorizonFact => ({
@@ -2151,6 +2180,7 @@ function waterAccessProfile(state: SimulationState): HydrationActivityProfile["a
 }
 
 export class StreamingActivityCollector {
+  private readonly lifecycle: StreamingLifecycleActivityCollector;
   private readonly settlement: StreamingSettlementActivityCollector;
   private readonly scenario: SimulationState["scenario"];
   private readonly compiledMapHash: string;
@@ -2303,6 +2333,7 @@ export class StreamingActivityCollector {
   };
 
   constructor(initialState: SimulationState) {
+    this.lifecycle = new StreamingLifecycleActivityCollector(initialState);
     this.settlement = new StreamingSettlementActivityCollector(initialState);
     const compiled = compileScenario(initialState.scenario);
     if (compiled.compiledMapHash !== initialState.compiledMapHash) {
@@ -2430,6 +2461,7 @@ export class StreamingActivityCollector {
     this.currentTickTransitionKeys.clear();
 
     const events = this.newEvents(state);
+    this.lifecycle.observe(state, events);
     this.settlement.observe(state, events);
     for (const event of events) this.registerAppliedIntervention(event);
     this.observeDecisionsAndSelections(state, events);
@@ -3104,6 +3136,7 @@ export class StreamingActivityCollector {
       desires,
       hydration,
       settlement: this.settlement.report(),
+      lifecycle: this.lifecycle.report(),
       scenarioSpatial,
       diagnostics,
     };
@@ -4711,6 +4744,7 @@ export function summarizeActivityProfiles(
       },
     },
     settlement: summarizeSettlementProfiles(profiles.map((profile) => profile.settlement)),
+    lifecycle: summarizeLifecycleProfiles(profiles.map((profile) => profile.lifecycle)),
     warnings: warnings.sort(compareText),
   };
 }

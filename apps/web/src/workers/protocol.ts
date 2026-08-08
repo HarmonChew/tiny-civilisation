@@ -17,6 +17,8 @@ import type {
   RuntimeCheckpoint,
   RuntimeEntityDetail,
   RuntimeInterventionOutcomeProjection,
+  RuntimeLifeRecordPage,
+  RuntimeLifeRecordQuery,
   RuntimeProgress,
   RuntimeReplay,
   SimulationFrame,
@@ -24,7 +26,7 @@ import type {
 } from "../runtime/types";
 
 /** Changes whenever the Worker transport envelope changes incompatibly. */
-export const RUNTIME_PROTOCOL_VERSION = 4 as const;
+export const RUNTIME_PROTOCOL_VERSION = 5 as const;
 
 export type RuntimeOperation =
   | {
@@ -47,6 +49,7 @@ export type RuntimeOperation =
       readonly query?: CausalEvidenceQueryOptions;
     }
   | { readonly type: "get-entity-detail"; readonly ref: CausalEvidenceRef }
+  | { readonly type: "get-life-records"; readonly query?: RuntimeLifeRecordQuery }
   | {
       readonly type: "get-intervention-outcomes";
       readonly commands: readonly ScheduledPlayerCommand[];
@@ -80,6 +83,7 @@ export type RuntimeOperationResult =
   | RuntimeCheckpoint
   | CausalEvidenceProjectionV1
   | RuntimeEntityDetail
+  | RuntimeLifeRecordPage
   | readonly RuntimeInterventionOutcomeProjection[]
   | ExperimentOutcomeV1
   | ExperimentOutcomeComparisonV1

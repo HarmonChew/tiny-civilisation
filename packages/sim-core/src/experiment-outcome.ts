@@ -2,6 +2,7 @@ import type { ShelterStructureState, SimulationState } from "./types.js";
 import type { ScenarioReferenceV2 } from "./scenarios/types.js";
 import { OUTCOME_SCHEMA_VERSION, SIMULATION_BEHAVIOR_VERSION } from "./versions.js";
 import { estimateInteractionTravelIgnoringOccupancy } from "./interaction-slots.js";
+import { MAX_LIVING_POPULATION } from "./lifecycle.js";
 import { isShelterStructure } from "./shelters.js";
 
 export interface ExperimentOutcomeMetrics {
@@ -42,6 +43,32 @@ export interface ExperimentOutcomeMetrics {
   readonly shelterDeniedClaims: number;
   readonly shelterGuestUses: number;
   readonly shelterRelocations: number;
+  readonly births: number;
+  readonly deaths: number;
+  readonly starvationDeaths: number;
+  readonly dehydrationDeaths: number;
+  readonly exhaustionDeaths: number;
+  readonly injuryDeaths: number;
+  readonly oldAgeDeaths: number;
+  readonly legacyUnknownDeaths: number;
+  readonly juveniles: number;
+  readonly adults: number;
+  readonly elders: number;
+  readonly dependents: number;
+  readonly pregnancies: number;
+  readonly careActions: number;
+  readonly mourningActions: number;
+  readonly inheritanceClaims: number;
+  readonly activeMemorials: number;
+  readonly lifeRecords: number;
+  readonly maximumGenerationDepth: number;
+  /** Births minus deaths recorded since lifecycle rules became authoritative. */
+  readonly populationNetChange: number;
+  /** Living plus reserved pregnancies as a fraction of the hard population cap. */
+  readonly populationCapPressure: number;
+  readonly extinctGroups: number;
+  /** Numeric so the canonical comparison can represent an extinction transition. */
+  readonly worldExtinct: number;
 }
 
 export interface ExperimentOutcomeV1 extends ExperimentOutcomeMetrics {
@@ -95,6 +122,29 @@ const METRIC_KEYS = [
   "shelterDeniedClaims",
   "shelterGuestUses",
   "shelterRelocations",
+  "births",
+  "deaths",
+  "starvationDeaths",
+  "dehydrationDeaths",
+  "exhaustionDeaths",
+  "injuryDeaths",
+  "oldAgeDeaths",
+  "legacyUnknownDeaths",
+  "juveniles",
+  "adults",
+  "elders",
+  "dependents",
+  "pregnancies",
+  "careActions",
+  "mourningActions",
+  "inheritanceClaims",
+  "activeMemorials",
+  "lifeRecords",
+  "maximumGenerationDepth",
+  "populationNetChange",
+  "populationCapPressure",
+  "extinctGroups",
+  "worldExtinct",
 ] as const satisfies readonly (keyof ExperimentOutcomeMetrics)[];
 
 function metricsOf(outcome: ExperimentOutcomeV1): ExperimentOutcomeMetrics {
@@ -165,6 +215,27 @@ function recentRouteConcentration(
   return Math.max(...edgeCounts.values()) / traversals;
 }
 
+function maximumGenerationDepth(state: SimulationState): number {
+  const people = new Map(
+    [...state.creatures, ...state.lifeRecords].map(
+      (person) => [person.id, person] as const,
+    ),
+  );
+  const depth = (id: number, path: ReadonlySet<number>): number => {
+    if (path.has(id)) return 0;
+    const person = people.get(id);
+    if (!person) return 0;
+    const nextPath = new Set(path).add(id);
+    return Math.max(
+      0,
+      ...[person.motherId, person.fatherId].map((parentId) =>
+        parentId === null || !people.has(parentId) ? 0 : 1 + depth(parentId, nextPath),
+      ),
+    );
+  };
+  return Math.max(0, ...[...people.keys()].map((id) => depth(id, new Set())));
+}
+
 /**
  * Projects the canonical experiment readout. "Stored" means resources under
  * creature or completed-storage control; construction material committed to a
@@ -172,6 +243,9 @@ function recentRouteConcentration(
  */
 export function createExperimentOutcome(state: SimulationState): ExperimentOutcomeV1 {
   const aliveCreatures = state.creatures.filter((creature) => creature.alive);
+  const pregnancies = aliveCreatures.filter(
+    (creature) => creature.pregnancy !== null,
+  ).length;
   const completedStorages = state.structures.filter(
     (structure) => structure.kind === "STORAGE",
   );
@@ -224,7 +298,7 @@ export function createExperimentOutcome(state: SimulationState): ExperimentOutco
     severeThirst: aliveCreatures.filter((creature) => creature.needs.thirst >= 8_000)
       .length,
     severeThirstExposureTicks: state.metrics.severeThirstCreatureTicks,
-    groups: state.groups.length,
+    groups: state.groups.filter((group) => group.status === "ACTIVE").length,
     averageTrust:
       state.relationships.length === 0 ? 0 : relationshipTrust / state.relationships.length,
     foodShared: state.metrics.foodShared,
@@ -252,6 +326,45 @@ export function createExperimentOutcome(state: SimulationState): ExperimentOutco
     shelterDeniedClaims: state.metrics.shelterDeniedClaims,
     shelterGuestUses: state.metrics.shelterGuestUses,
     shelterRelocations: state.metrics.shelterRelocations,
+    births: state.metrics.births,
+    deaths: state.metrics.deaths,
+    starvationDeaths: state.lifeRecords.filter(
+      (record) => record.deathCause === "STARVATION",
+    ).length,
+    dehydrationDeaths: state.lifeRecords.filter(
+      (record) => record.deathCause === "DEHYDRATION",
+    ).length,
+    exhaustionDeaths: state.lifeRecords.filter(
+      (record) => record.deathCause === "EXHAUSTION",
+    ).length,
+    injuryDeaths: state.lifeRecords.filter((record) => record.deathCause === "INJURY")
+      .length,
+    oldAgeDeaths: state.lifeRecords.filter((record) => record.deathCause === "OLD_AGE")
+      .length,
+    legacyUnknownDeaths: state.lifeRecords.filter(
+      (record) => record.deathCause === "LEGACY_UNKNOWN",
+    ).length,
+    juveniles: aliveCreatures.filter((creature) => creature.lifeStage === "JUVENILE")
+      .length,
+    adults: aliveCreatures.filter((creature) => creature.lifeStage === "ADULT").length,
+    elders: aliveCreatures.filter((creature) => creature.lifeStage === "ELDER").length,
+    dependents: aliveCreatures.filter(
+      (creature) =>
+        creature.lifeStage === "JUVENILE" &&
+        creature.dependentUntilTick !== null &&
+        state.tick < creature.dependentUntilTick,
+    ).length,
+    pregnancies,
+    careActions: state.metrics.careActions,
+    mourningActions: state.metrics.mournings,
+    inheritanceClaims: state.metrics.estatesClaimed,
+    activeMemorials: state.memorials.length,
+    lifeRecords: state.lifeRecords.length,
+    maximumGenerationDepth: maximumGenerationDepth(state),
+    populationNetChange: state.metrics.births - state.metrics.deaths,
+    populationCapPressure: (aliveCreatures.length + pregnancies) / MAX_LIVING_POPULATION,
+    extinctGroups: state.groups.filter((group) => group.status === "EXTINCT").length,
+    worldExtinct: aliveCreatures.length === 0 ? 1 : 0,
   };
 }
 

@@ -234,6 +234,19 @@
   border-radius: 5px 50% 5px 50%;
 }
 
+.world-navigator__mark--remembered {
+  color: var(--text-secondary);
+  border-style: double;
+  border-color: var(--text-muted);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--surface-sunken) 45%, transparent);
+  transform: rotate(45deg);
+}
+
+.world-navigator__mark--remembered > svg {
+  transform: rotate(-45deg);
+}
+
 .world-navigator__mark--structure {
   border-radius: 2px;
 }

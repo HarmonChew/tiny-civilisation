@@ -76,3 +76,15 @@ four confirmatory participants must identify who is thirsty, what that creature
 is doing and why, where source/route pressure exists, and the factual effect of
 a water intervention. Record failures and resolve blocking or high-severity
 findings before calling the slice release-complete.
+
+## Administrative disposition of the unexecuted human workflow
+
+`SUPERSEDED_UNEXECUTED_BY_PHASE_4_3_UNIFIED_ALPHA_PROTOCOL`
+
+As of 8 August 2026, the outstanding Phase 4.1 manual NVDA, formative, and
+confirmatory workflow is administratively superseded by the single
+lifecycle-integrated Phase 4.3 unified-alpha protocol. This records that the old
+workflow will not be executed separately; it does not record a pass, waiver, or
+retroactive Phase 4.1 release. The historical automated artifacts and their
+recorded results remain unchanged. A final alpha claim depends on completing
+the Phase 4.3 protocol on the integrated candidate.

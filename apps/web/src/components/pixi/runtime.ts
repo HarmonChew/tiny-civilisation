@@ -11,6 +11,7 @@ export interface RenderLayers {
   frame: Graphics;
   resources: Container;
   structures: Container;
+  memorials: Container;
   creatures: Container;
 }
 
@@ -29,6 +30,7 @@ export interface PixiRuntime {
   creatureMarks: Map<EntityId, Graphics>;
   resourceMarks: Map<EntityId, Graphics>;
   structureMarks: Map<EntityId, Graphics>;
+  memorialMarks: Map<EntityId, Graphics>;
   terrainSignature: string;
   view: WorldView;
 }
@@ -64,6 +66,7 @@ export function createRenderLayers(): RenderLayers {
     frame: new Graphics(),
     resources: new Container(),
     structures: new Container(),
+    memorials: new Container(),
     creatures: new Container(),
   };
 }

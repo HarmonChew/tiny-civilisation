@@ -31,7 +31,7 @@ The signature interaction is evidence-to-world selection: choosing an event or r
 ```text
 React controls ── PlayerCommand ──▶ Worker engine ──▶ deterministic sim-core
                                                               │
-                                            read-only RenderSnapshot v4 frames
+                                            read-only RenderSnapshot v6 frames
                                                               │
                                           ┌───────────────────┴──────────────┐
                                           ▼                                  ▼
@@ -61,15 +61,16 @@ React and Pixi never mutate authoritative entities. A world-edit click becomes a
 `advanceSimulation` executes the following systems once per authoritative tick, in this declared order:
 
 1. Apply scheduled player commands in `(applyAtTick, commandId)` order.
-2. Update creature needs.
-3. Regenerate resource nodes.
-4. Update proximity familiarity.
-5. Move creatures and finish active actions.
-6. Reconcile groups, roles, leaders, homes, and storage ownership.
-7. Reconsider and begin scheduled creature decisions in stable creature-ID order.
-8. Decay and bound memories, relationships, decisions, and event collections.
-9. Repair and validate authoritative invariants.
-10. Increment the authoritative tick.
+2. Advance ages and emit life-stage changes.
+3. Update needs and retained damage, then resolve hardship mortality.
+4. Resolve deterministic old-age mortality.
+5. Regenerate resources, move dependent youth with their caregivers, and update proximity familiarity.
+6. Move creatures, finish active actions, resolve injury death, and clear recovered critical states.
+7. Process due pregnancies, births, memorials, mourning, and estates.
+8. Reconcile group extinction, remove full dead actor state, and update shelters, groups, and succession.
+9. Reconsider and begin scheduled creature decisions in stable creature-ID order.
+10. Bound memories, relationships, decisions, and events; repair and validate authoritative invariants.
+11. Increment the authoritative tick.
 
 The order is part of `SIMULATION_BEHAVIOR_VERSION`. A refactor must retain the checked-in golden hashes. A deliberate order or balance change increments that version and requires an explicitly reviewed fixture update.
 
@@ -102,18 +103,18 @@ apps/headless ──┘
 
 The implemented decisions are summarized here; [`phase-2.5-implementation.md`](phase-2.5-implementation.md) records their exact compatibility and verification behavior.
 
-| Decision                                | Implemented boundary                                                                                                                                                                                                                |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1 — intent hierarchy                   | `desires.ts` and `plans.ts` separate persistent desire and plan from the physical action; authoritative state and projections retain each layer.                                                                                    |
-| D2 — factual reasons                    | `reason-facts.ts` captures typed fact snapshots and deterministically selects the strongest supported reason; `observation-summary.ts` returns clauses with fact references.                                                        |
-| D3 — spatial interaction                | `interaction-slots.ts` assigns reachable authoritative fixed-point claims, validates uniqueness/walkability/capacity, and repairs invalid claims through blocked-plan reconsideration.                                              |
-| D4 — attention versus presentation      | `event-attention.ts` owns deterministic tier/cluster facts; `moments/event-presentation.ts` owns speed/preference-aware browser cues, pacing, queue bounds, and coalescing.                                                         |
-| D5 — observation frames                 | `projection.ts` emits snapshot v2; the Worker owns mutable state, static tiles are omitted between navigation revisions, ordinary frame hashes are `null`, and typed hash/checkpoint/evidence/detail/outcome queries run on demand. |
-| D6 — compatibility without false hashes | `versions.ts`, `state-migrations.ts`, `contracts.ts`, and `experiment-contracts.ts` migrate supported v1 artifacts while clearing v1 verification claims.                                                                           |
-| D7 — shared focus                       | `focus/` owns typed transient/persistent focus shared by the dish, navigator, chronicle, inspector, evidence, and moments.                                                                                                          |
-| D8 — isolated replay                    | A disposable engine captures the four 20/1/20 replay beats for the dish. Event-aware framing is temporary; exit/failure restores the exact live viewport, world focus, play, follow, region, and DOM focus.                         |
+| Decision                                | Implemented boundary                                                                                                                                                                                                                                                        |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1 — intent hierarchy                   | `desires.ts` and `plans.ts` separate persistent desire and plan from the physical action; authoritative state and projections retain each layer.                                                                                                                            |
+| D2 — factual reasons                    | `reason-facts.ts` captures typed fact snapshots and deterministically selects the strongest supported reason; `observation-summary.ts` returns clauses with fact references.                                                                                                |
+| D3 — spatial interaction                | `interaction-slots.ts` assigns reachable authoritative fixed-point claims, validates uniqueness/walkability/capacity, and repairs invalid claims through blocked-plan reconsideration.                                                                                      |
+| D4 — attention versus presentation      | `event-attention.ts` owns deterministic tier/cluster facts; `moments/event-presentation.ts` owns speed/preference-aware browser cues, pacing, queue bounds, and coalescing.                                                                                                 |
+| D5 — observation frames                 | `projection.ts` emits snapshot v6; ordered static tiles transport only terrain/blocking while the web reconstructs derivable index/x/y, hot frames omit static world and life records, and typed hash/checkpoint/evidence/detail/outcome/life-record queries run on demand. |
+| D6 — compatibility without false hashes | `versions.ts`, `state-migrations.ts`, `contracts.ts`, and `experiment-contracts.ts` migrate supported v1 artifacts while clearing v1 verification claims.                                                                                                                   |
+| D7 — shared focus                       | `focus/` owns typed transient/persistent focus shared by the dish, navigator, chronicle, inspector, evidence, and moments.                                                                                                                                                  |
+| D8 — isolated replay                    | A disposable engine captures the four 20/1/20 replay beats for the dish. Event-aware framing is temporary; exit/failure restores the exact live viewport, world focus, play, follow, region, and DOM focus.                                                                 |
 
-## Scenario and Phase 4.1 system boundaries
+## Scenario and Phase 4.3 system boundaries
 
 - `sim-core/scenarios/` owns the immutable four-entry catalog, executable definitions, deterministic compiler, structural/topological validation, seed corpora, and stable compiled-map hashes.
 - A scenario reference contains scenario ID, definition version, map-generation version, and seed. It is authoritative in state and is copied through snapshot, save, replay, experiment, outcome, causal-evidence, browser workspace, and Worker protocol boundaries.
@@ -122,6 +123,11 @@ The implemented decisions are summarized here; [`phase-2.5-implementation.md`](p
 - Static snapshot frames include catalog facts and compiled regions/chokepoints. Hot frames omit static tiles and landmark geometry. The browser retains the static scenario projection across hot updates.
 - `headless matrix` runs catalog × locked seed corpora in catalog-then-seed order with one live simulation/collector at a time. It retains bounded raw primary profiles and derives hard invariants, contract bands, factual multi-label outcomes, Wilson incidence, paired descriptive effects, and convergence diagnostics.
 - Cross-scenario analysis is descriptive and non-causal. Controlled experiment deltas remain restricted to the same scenario reference, seed, behavior version, and horizon.
+- `shelters.ts` owns deterministic site assessment, legal footprints, condition, capacity, occupancy priority, maintenance, and one-time relocation. Shelter actions still enter through the shared desire, plan, candidate, interaction-claim, and resolver boundaries.
+- `lifecycle.ts` owns age transitions, fertility and pregnancy, birth and lineage, dependent care, critical and natural mortality, life records, memorials, estates, and lifecycle group extinction. Lifecycle motives and actions still enter through the shared desire, plan, candidate, interaction-claim, and resolver boundaries.
+- Living creatures remain authoritative entities; dead identities move to bounded life records and memorial projections. Parentage, caregiver, estate, and memorial references are deep-validated across save, replay, experiment, and Worker boundaries.
+- Permanent records use stable-ID direct/Worker pagination with a default page size of 50 and maximum of 100; living creatures and active memorials remain the only lifecycle identities in hot frames.
+- `headless` activity-profile schema 6 and scenario-analysis schema 5/classifier 4 add descriptive lifecycle measurements and factual non-exclusive labels. Phase 4.3 calibration and protected holdout corpora remain separate, no-clobber evidence routes; generic commands reject the reserved holdout seeds.
 
 Additional Phase 2.5 presentation modules remain downstream of these contracts:
 
@@ -136,12 +142,13 @@ Additional Phase 2.5 presentation modules remain downstream of these contracts:
 - `SIMULATION_BEHAVIOR_VERSION` changes when the same seed and command log intentionally produces a different result.
 - `SIMULATION_STATE_VERSION` changes when authoritative serialized state changes shape.
 - Command, snapshot, replay, save, scenario, experiment, outcome, and causal-evidence schema versions change independently at their transport boundaries.
-- Phase 4.1 uses behavior/state 4/4; command/snapshot 2/4; replay/save 3/3; scenario envelope/definition/map generation 2/2/1; experiment/outcome/causal-evidence 4/3/4; intervention response/activity profile 2/4; and browser workspace/Worker protocol 3/3.
+- Phase 4.2 uses behavior/state 5/5; command/snapshot 3/5; replay/save 4/4; scenario envelope/definition/map generation 2/2/1; experiment/outcome/causal-evidence 5/4/5; intervention response/activity profile 3/5; browser workspace/Worker protocol 4/4; and scenario analysis/outcome classifier 4/3.
+- Phase 4.3 uses behavior/state 6/6; command/snapshot 3/6; replay/save 5/5; scenario envelope/definition/map generation 2/3/1; experiment/outcome/causal-evidence 6/5/6; intervention response/activity profile 4/6; browser workspace/Worker protocol 5/5; and scenario analysis/outcome classifier 5/4.
 - Save, replay, and experiment parsing/migration happens only at `sim-core` contract boundaries; applications do not probe or silently alias incompatible fields.
 - Supported seed-only artifacts migrate through the historical `petri-world` definition before the Phase 4 upgrade. Phase 3 artifacts are accepted only under explicit behavior-3/state-3 tuples. Their verification hashes, checkpoints, outcomes, and response traces are cleared; candidate state and scenario identity are fully validated before an active browser run is replaced.
 - Unknown versions, malformed nested shapes, extra fields, invalid references, and oversized persisted JSON are rejected before replacing the active run.
 
-See the [Phase 4.1 contract](phase-4.1-contract.md#compatibility-versions) for the current matrix, the [Phase 3 contract](phase-3-contract.md#compatibility-and-versions) for its migration source, and the [Phase 2.5 implementation record](phase-2.5-implementation.md#version-matrix) for earlier history.
+See the [Phase 4.3 contract](phase-4.3-contract.md#version-boundary) for the current matrix, the [Phase 4.2 contract](phase-4.2-contract.md#compatibility-versions-and-migration) for its migration source, and the [Phase 2.5 implementation record](phase-2.5-implementation.md#version-matrix) for earlier history.
 
 ## Vertical-slice boundary
 
@@ -151,6 +158,8 @@ Implemented now:
 - eight autonomous creatures with needs, traits, skills, inventory, persistent desires/plans, actions, and retained factual reasons;
 - deterministic A* movement and resource gathering;
 - thirst, finite renewable potable-water nodes, drinking, water sharing, deterministic weighted travel scoring, and observational traffic trails;
+- autonomous communal shelter site selection, construction, occupancy, upkeep, degradation, and one-time relocation;
+- deterministic ageing, family formation, pregnancy, birth, dependent care, critical and natural death, life records, mourning, memorials, estate transfer, and group extinction;
 - authoritative interaction slots, readable endpoints/routes, and deterministic claim validation/repair;
 - sharing, theft, memories, directed relationships, group formation, leadership, communal storage, guarding, confrontation, and flight;
 - pause, tick, speed, restart, typed shared focus, following, and environmental interventions;
@@ -160,10 +169,18 @@ Implemented now:
 
 Intentionally deferred:
 
-- shelter, birth, ageing, death, culture, migration, territory, trade, seasons, disease, predators, technology, and LLM narration.
+- marriage, adoption, gender roles, genetics beyond bounded potential blending, direct lifecycle controls, population above 24, culture, migration, territory, trade, diplomacy, seasons, disease, predators, technology, public deployment, cross-device sync, Phase 5 history compression, and LLM narration.
 
 The deferred systems should extend the same event and utility contracts only after the social feedback loop remains compelling across multi-seed runs.
 
-Phase 4.1 engineering and automated simulation evidence are complete, but automated coverage alone does not close its release gate. The discovery [review](baselines/phase-4.1-calibration-review-v1.md) froze outcome-classifier v2 plus the selected scenario and macro bands. The unchanged [frozen calibration](baselines/phase-4.1-calibration-v2.md) and [untouched holdout](baselines/phase-4.1-holdout-v2.md) each cover four scenarios × 64 seeds × 10,000 ticks and pass their automated hard, contract, outcome-incidence, dominance-rationale, and paired macro-difference gates. Deterministic, migration, golden, coverage, visual, payload, bundle, four-scenario throughput, and aggregate 12/12 Chromium/Firefox/WebKit release evidence also pass. The manual assistive-technology pass and fresh usability session remain open. The [release ledger](baselines/phase-4.1-release-status-v1.md) records this boundary.
+Phase 4.2 engineering and automated release-candidate evidence are complete in the current workspace, but automated coverage alone does not close its release gate. Discovery and same-seed frozen verification each cover four scenarios × 64 seeds × 10,000 ticks. The separately reserved `2001..2064` holdout ran once, passed the frozen hard, contract, outcome, dominance, inherited-macro, and `SETTLEMENT` gates, and is permanently recorded with execution disabled. Source-only coverage, behavior-5 golden replay, payload, bundle, throughput, 46/46 Chromium journeys and visuals, and the 24/24 Chromium/Firefox/WebKit matrix pass. The [Phase 4.2 release ledger](baselines/phase-4.2-release-status-v1.md) records the remaining inherited and Phase 4.2 human gates.
 
-Phase 3 adds automated deterministic, contract, runtime, component, and portable 32-run smoke evidence across all four identities. Its historical 64-seed calibration and untouched 64-seed holdout from immutable commit `4ff604e` pass the frozen hard, label, and macro gates without behavior tuning; the [release ledger](baselines/phase-3-release-status-v1.md) links their compressed artifacts, checksums, and pre-holdout review. The Chromium project retains the existing 30-scene snapshot matrix; Phase 4.1 adds four medium-width water states. The aggregate release suite passes all 12 current stories across Chromium, Firefox, and WebKit. The Phase 3 manual NVDA pass and planned formative/confirmatory usability sessions also remain release gates, so neither Phase 3 nor Phase 4.1 is release-complete.
+Phase 4.3 lifecycle engineering and prospective release tooling are present,
+but the checked-in lifecycle calibration remains `NOT_RUN` and its protected
+holdout remains sealed. The [Phase 4.3 contract](phase-4.3-contract.md) and
+[release ledger](baselines/phase-4.3-release-status-v1.md) define the ordered
+path from formative testing through a frozen candidate, final NVDA, one-shot
+holdout, and separate confirmatory participants. No implementation or focused
+test result closes those gates.
+
+Phase 3 and Phase 4.1 retain their immutable historical calibration, holdout, checksum, and browser evidence. Their pending manual NVDA and unfamiliar-participant records are not inferred from the later automated results, so neither historical slice is retroactively described as release-complete.

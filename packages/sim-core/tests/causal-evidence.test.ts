@@ -116,6 +116,8 @@ function evidenceState(): SimulationState {
   state.groups.push({
     id: 1,
     name: "Evidence group",
+    status: "ACTIVE",
+    extinctTick: null,
     stage: "PERSISTENT",
     foundedTick: 1,
     memberIds: [actor.id, target.id],

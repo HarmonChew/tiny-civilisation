@@ -68,11 +68,14 @@ import {
   readExperimentFile,
 } from "../storage/experiment-storage";
 import type { SimulationController } from "./useSimulationController";
-import { useInterventionResponseTraces } from "./useInterventionResponseTraces";
+import {
+  interventionResponseMaterialSignature,
+  useInterventionResponseTraces,
+} from "./useInterventionResponseTraces";
 
 const ONBOARDING_KEY = "tiny-civilisation/orientation-complete/v1";
 const WORKSPACE_KIND = "tiny-civilisation/workspace";
-const WORKSPACE_SCHEMA_VERSION = 4;
+const WORKSPACE_SCHEMA_VERSION = 5;
 const INTERVENTION_BRANCH_BASE_ID = "intervention";
 const MAX_INTERACTIVE_REPLAY_TICK = 100_000;
 const MAX_IMPORTED_REPLAY_COMMANDS = 10_000;
@@ -200,7 +203,7 @@ const EMPTY_COMPARISON: ComparisonState = {
   message: "Bookmark a baseline, introduce one condition, then compare both runs.",
 };
 
-interface PersistedWorkspaceV4 {
+interface PersistedWorkspaceV5 {
   kind: typeof WORKSPACE_KIND;
   schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
   activeBranchId: string;
@@ -208,7 +211,7 @@ interface PersistedWorkspaceV4 {
   simulationSave: string;
 }
 
-interface ParsedWorkspace extends PersistedWorkspaceV4 {
+interface ParsedWorkspace extends PersistedWorkspaceV5 {
   verificationUnavailable: boolean;
 }
 
@@ -716,7 +719,10 @@ function metricDisplay(
   value: number,
 ): string | number {
   if (key === "averageTrust") return (value / 1_000).toFixed(2);
-  if (key === "routeConcentration") return `${(value * 100).toFixed(1)}%`;
+  if (key === "routeConcentration" || key === "populationCapPressure") {
+    return `${(value * 100).toFixed(1)}%`;
+  }
+  if (key === "worldExtinct") return value === 0 ? "No" : "Yes";
   if (key === "meanShelterCondition") return `${(value / 100).toFixed(1)}%`;
   if (key === "averageThirst" || key === "averageWaterAccessCost") {
     return Math.round(value);
@@ -794,6 +800,33 @@ const METRIC_DEFINITIONS: ReadonlyArray<{
   { key: "shelterDeniedClaims", label: "Shelter claims denied" },
   { key: "shelterGuestUses", label: "Guest shelter uses" },
   { key: "shelterRelocations", label: "Completed home relocations" },
+  { key: "births", label: "Births" },
+  { key: "deaths", label: "Deaths" },
+  { key: "starvationDeaths", label: "Deaths from starvation" },
+  { key: "dehydrationDeaths", label: "Deaths from dehydration" },
+  { key: "exhaustionDeaths", label: "Deaths from exhaustion" },
+  { key: "injuryDeaths", label: "Deaths from injury" },
+  { key: "oldAgeDeaths", label: "Deaths from old age" },
+  { key: "legacyUnknownDeaths", label: "Legacy deaths with unknown cause" },
+  { key: "juveniles", label: "Juveniles at horizon" },
+  { key: "adults", label: "Adults at horizon" },
+  { key: "elders", label: "Elders at horizon" },
+  { key: "dependents", label: "Dependent youth at horizon" },
+  { key: "pregnancies", label: "Pregnancies at horizon" },
+  { key: "careActions", label: "Dependent-care actions" },
+  { key: "mourningActions", label: "Completed mourning actions" },
+  { key: "inheritanceClaims", label: "Claimed inheritances" },
+  { key: "activeMemorials", label: "Active memorials" },
+  { key: "lifeRecords", label: "Permanent life records" },
+  { key: "maximumGenerationDepth", label: "Maximum generation depth" },
+  { key: "populationNetChange", label: "Population trend (births minus deaths)" },
+  {
+    key: "populationCapPressure",
+    label: "Population cap pressure",
+    note: "Living population plus reserved pregnancies as a share of 24.",
+  },
+  { key: "extinctGroups", label: "Extinct historical groups" },
+  { key: "worldExtinct", label: "World extinct" },
 ];
 
 export function comparisonMetrics(
@@ -816,7 +849,7 @@ export function comparisonMetrics(
   });
 }
 
-function serializeWorkspace(workspace: PersistedWorkspaceV4): string {
+function serializeWorkspace(workspace: PersistedWorkspaceV5): string {
   return JSON.stringify(workspace);
 }
 
@@ -834,6 +867,13 @@ function importedExperimentVerificationUnavailable(serialized: string): boolean 
     return false;
   }
   if (record?.kind !== "tiny-civilisation/experiment") return false;
+  if (
+    record.schemaVersion === 5 &&
+    record.behaviorVersion === 5 &&
+    record.stateSchemaVersion === 5
+  ) {
+    return true;
+  }
   if (
     record.schemaVersion === 4 &&
     record.behaviorVersion === 4 &&
@@ -869,31 +909,40 @@ function assertLegacyWorkspaceTuple(record: Record<string, unknown>): void {
     ((artifact.behaviorVersion === 1 && artifact.stateSchemaVersion === 1) ||
       (artifact.behaviorVersion === 3 && artifact.stateSchemaVersion === 2));
   const supported =
-    record.schemaVersion === 3
+    record.schemaVersion === 4
       ? experiment?.kind === "tiny-civilisation/experiment" &&
-        experiment.schemaVersion === 4 &&
-        experiment.behaviorVersion === 4 &&
-        experiment.stateSchemaVersion === 4 &&
+        experiment.schemaVersion === 5 &&
+        experiment.behaviorVersion === 5 &&
+        experiment.stateSchemaVersion === 5 &&
         save?.kind === "tiny-civilisation/save" &&
-        save.schemaVersion === 3 &&
-        save.behaviorVersion === 4 &&
-        save.stateSchemaVersion === 4
-      : record.schemaVersion === 2
+        save.schemaVersion === 4 &&
+        save.behaviorVersion === 5 &&
+        save.stateSchemaVersion === 5
+      : record.schemaVersion === 3
         ? experiment?.kind === "tiny-civilisation/experiment" &&
-          experiment.schemaVersion === 3 &&
-          experiment.behaviorVersion === 3 &&
-          experiment.stateSchemaVersion === 3 &&
+          experiment.schemaVersion === 4 &&
+          experiment.behaviorVersion === 4 &&
+          experiment.stateSchemaVersion === 4 &&
           save?.kind === "tiny-civilisation/save" &&
-          save.schemaVersion === 2 &&
-          save.behaviorVersion === 3 &&
-          save.stateSchemaVersion === 3
-        : record.schemaVersion === 1 &&
-          experiment?.kind === "tiny-civilisation/experiment" &&
-          (experiment?.schemaVersion === 1 || experiment?.schemaVersion === 2) &&
-          phaseOneOrTwo(experiment) &&
-          save?.kind === "tiny-civilisation/save" &&
-          save.schemaVersion === 1 &&
-          phaseOneOrTwo(save);
+          save.schemaVersion === 3 &&
+          save.behaviorVersion === 4 &&
+          save.stateSchemaVersion === 4
+        : record.schemaVersion === 2
+          ? experiment?.kind === "tiny-civilisation/experiment" &&
+            experiment.schemaVersion === 3 &&
+            experiment.behaviorVersion === 3 &&
+            experiment.stateSchemaVersion === 3 &&
+            save?.kind === "tiny-civilisation/save" &&
+            save.schemaVersion === 2 &&
+            save.behaviorVersion === 3 &&
+            save.stateSchemaVersion === 3
+          : record.schemaVersion === 1 &&
+            experiment?.kind === "tiny-civilisation/experiment" &&
+            (experiment?.schemaVersion === 1 || experiment?.schemaVersion === 2) &&
+            phaseOneOrTwo(experiment) &&
+            save?.kind === "tiny-civilisation/save" &&
+            save.schemaVersion === 1 &&
+            phaseOneOrTwo(save);
   if (!supported) {
     throw new Error("That browser save uses an incompatible legacy version tuple.");
   }
@@ -915,6 +964,7 @@ function parseWorkspace(serialized: string): ParsedWorkspace {
     (record.schemaVersion !== 1 &&
       record.schemaVersion !== 2 &&
       record.schemaVersion !== 3 &&
+      record.schemaVersion !== 4 &&
       record.schemaVersion !== WORKSPACE_SCHEMA_VERSION)
   ) {
     throw new Error("That browser save uses an incompatible workspace version.");
@@ -1550,7 +1600,7 @@ export function useExperimentWorkspace({
       const checkpoint = await simulation.getCheckpoint();
       if (!checkpoint) throw new Error("The simulation is not ready to checkpoint.");
       const next = branchWithCheckpointResult(checkpoint);
-      const workspace: PersistedWorkspaceV4 = {
+      const workspace: PersistedWorkspaceV5 = {
         kind: WORKSPACE_KIND,
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activeBranchId: activeBranchRef.current,
@@ -1611,7 +1661,7 @@ export function useExperimentWorkspace({
       setActionStatus({
         phase: "success",
         message: workspace.verificationUnavailable
-          ? `Upgraded; prior verification unavailable. Restored tick ${restoredView.tick} under Phase 4.2 rules. Rerun comparisons before drawing conclusions.`
+          ? `Upgraded; prior verification unavailable. Restored tick ${restoredView.tick} under Phase 4.3 rules. Rerun comparisons before drawing conclusions.`
           : `Restored tick ${restoredView.tick} without changing its hash.`,
       });
     } catch (error) {
@@ -2363,7 +2413,15 @@ export function useExperimentWorkspace({
       const entry = branch?.commandLog.find(
         (candidate) => candidate.command.commandId === commandId,
       );
-      if (!entry || entry.responseTrace === trace) return;
+      if (
+        !entry ||
+        entry.responseTrace === trace ||
+        (entry.responseTrace !== null &&
+          interventionResponseMaterialSignature(entry.responseTrace) ===
+            interventionResponseMaterialSignature(trace))
+      ) {
+        return;
+      }
       const next = setExperimentInterventionResponseTrace(
         current,
         branchId,

@@ -202,6 +202,106 @@ describe("useInterventionResponseTraces", () => {
     });
   });
 
+  it("coalesces same-turn publication and persistence outside the passive effect", async () => {
+    const onMaterialChange = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ currentView }) =>
+        useInterventionResponseTraces({
+          streamKey: "branch-a",
+          commandLog,
+          view: currentView,
+          onMaterialChange,
+        }),
+      { initialProps: { currentView: view(10) } },
+    );
+
+    rerender({ currentView: view(20, true) });
+
+    expect(onMaterialChange).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(result.current.get(1)?.responses[0]).toMatchObject({
+        participantId: 1,
+        status: "USED",
+      });
+      expect(onMaterialChange).toHaveBeenCalledTimes(1);
+    });
+    expect(onMaterialChange.mock.calls[0]?.[1]).toMatchObject({
+      responses: [{ participantId: 1, status: "USED" }],
+    });
+
+    rerender({ currentView: { ...view(20, true) } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(onMaterialChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("discards a queued trace when the stream changes before publication", async () => {
+    const onMaterialChange = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ entries, streamKey }) =>
+        useInterventionResponseTraces({
+          streamKey,
+          commandLog: entries,
+          view: view(10),
+          onMaterialChange,
+        }),
+      { initialProps: { entries: commandLog, streamKey: "branch-a" } },
+    );
+
+    rerender({ entries: [], streamKey: "branch-b" });
+
+    await waitFor(() => expect(result.current.size).toBe(0));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(onMaterialChange).not.toHaveBeenCalled();
+  });
+
+  it("cancels a queued trace when the hook unmounts", async () => {
+    const onMaterialChange = vi.fn();
+    const { unmount } = renderHook(() =>
+      useInterventionResponseTraces({
+        streamKey: "branch-a",
+        commandLog,
+        view: view(10),
+        onMaterialChange,
+      }),
+    );
+
+    unmount();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(onMaterialChange).not.toHaveBeenCalled();
+  });
+
+  it("retains queued evidence until a persistence callback becomes available", async () => {
+    const onMaterialChange = vi.fn();
+    const { rerender } = renderHook(
+      ({ callback }) =>
+        useInterventionResponseTraces({
+          streamKey: "branch-a",
+          commandLog,
+          view: view(10),
+          ...(callback ? { onMaterialChange: callback } : {}),
+        }),
+      {
+        initialProps: {
+          callback: undefined as
+            | ((
+                commandId: number,
+                trace: ReturnType<typeof createInterventionResponseTrace>,
+              ) => void)
+            | undefined,
+        },
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(onMaterialChange).not.toHaveBeenCalled();
+
+    rerender({ callback: onMaterialChange });
+
+    await waitFor(() => expect(onMaterialChange).toHaveBeenCalledTimes(1));
+  });
+
   it("seeds its visible trace map from persisted experiment evidence", async () => {
     const persistedTrace = observeInterventionResponse(
       createInterventionResponseTrace(commandLog[0]!.command, [1]),

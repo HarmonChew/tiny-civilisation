@@ -27,10 +27,10 @@ import {
 } from "../src/scenarios/index.js";
 
 const EXPECTED_MAP_HASHES = {
-  "petri-world": "f21ecdb935f2bc8e",
-  "split-banks": "06541eb2e89525ca",
-  "scattered-plenty": "1626166bcf24ce83",
-  "unequal-table": "6f16475a03ba40dc",
+  "petri-world": "d6c6639633238a1e",
+  "split-banks": "15e9997e7c266d0a",
+  "scattered-plenty": "8176efc0f41f2c1b",
+  "unequal-table": "9b2e6824c0b608e4",
 } as const;
 
 const HISTORICAL_V4_CANONICAL_STATE_HASHES = {
@@ -44,13 +44,13 @@ const HISTORICAL_V4_CANONICAL_STATE_HASHES = {
 } as const;
 
 const EXPECTED_CANONICAL_STATE_HASHES = {
-  "petri-world": { tick0: "b8ccf2cb6ac4334b", tick2000: "cf31008ad385755a" },
-  "split-banks": { tick0: "f7bfce7a594f5e14", tick2000: "a9ebb71ee0d71e08" },
+  "petri-world": { tick0: "e50a32ae9ecb1d9e", tick2000: "82222fd2343d1e53" },
+  "split-banks": { tick0: "6647a04748bacca8", tick2000: "86b87cb4061a3e33" },
   "scattered-plenty": {
-    tick0: "797a9014ad2185cc",
-    tick2000: "917aa84e4dae041c",
+    tick0: "5bd7ab1ad7b02dd5",
+    tick2000: "0b53cd51ed7f2df3",
   },
-  "unequal-table": { tick0: "c952d1e906b84190", tick2000: "5c141776668f3423" },
+  "unequal-table": { tick0: "48584c454e8d58d5", tick2000: "06191fafb6131d6f" },
 } as const;
 
 function populationHarness(world: WorldState, seed = 4_182): SimulationState {

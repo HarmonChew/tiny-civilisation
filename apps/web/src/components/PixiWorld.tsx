@@ -162,6 +162,7 @@ export function PixiWorld({
           layers.intentions,
           layers.resources,
           layers.structures,
+          layers.memorials,
           layers.interaction,
           layers.interventionPreview,
           layers.creatures,
@@ -177,6 +178,7 @@ export function PixiWorld({
           creatureMarks: new Map(),
           resourceMarks: new Map(),
           structureMarks: new Map(),
+          memorialMarks: new Map(),
           terrainSignature: "",
           view: propsRef.current.view,
         };
@@ -355,20 +357,31 @@ export function PixiWorld({
         distance: Math.hypot(creature.x - point.x, creature.y - point.y),
       }))
       .sort((a, b) => a.distance - b.distance || a.id - b.id)[0];
-    const nearestStructure = runtime.view.structures
-      .map((structure) => ({
-        id: structure.id,
+    const nearestWorldSubject = [
+      ...(runtime.view.memorials ?? []).map((memorial) => ({
+        ref: { kind: "memorial", id: memorial.id } as const,
+        priority: 0,
+        distance: Math.hypot(memorial.x + 0.5 - point.x, memorial.y + 0.5 - point.y),
+      })),
+      ...runtime.view.structures.map((structure) => ({
+        ref: { kind: "structure", id: structure.id } as const,
+        priority: 1,
         distance: Math.hypot(structure.x + 0.5 - point.x, structure.y + 0.5 - point.y),
-      }))
-      .sort((left, right) => left.distance - right.distance || left.id - right.id)[0];
-    const directStructureHit =
-      nearestStructure !== undefined &&
-      nearestStructure.distance <= 0.65 &&
+      })),
+    ].sort(
+      (left, right) =>
+        left.distance - right.distance ||
+        left.priority - right.priority ||
+        left.ref.id - right.ref.id,
+    )[0];
+    const directWorldSubjectHit =
+      nearestWorldSubject !== undefined &&
+      nearestWorldSubject.distance <= 0.65 &&
       (nearest === undefined ||
         nearest.distance > 0.9 ||
-        nearestStructure.distance + 0.2 < nearest.distance);
-    if (directStructureHit && onSelectSubject) {
-      onSelectSubject({ kind: "structure", id: nearestStructure.id });
+        nearestWorldSubject.distance + 0.2 < nearest.distance);
+    if (directWorldSubjectHit && onSelectSubject) {
+      onSelectSubject(nearestWorldSubject.ref);
       return;
     }
     if (nearest && nearest.distance <= 0.9) {
@@ -445,7 +458,7 @@ export function PixiWorld({
       aria-label={
         replayCamera
           ? "Living dish replay frame. Camera controls are locked until you return to the live world."
-          : "Living dish map. Click a creature or structure to inspect it. Drag to pan, use the mouse wheel to zoom, or use arrow and plus or minus keys."
+          : "Living dish map. Click a creature, memorial, or structure to inspect it. Drag to pan, use the mouse wheel to zoom, or use arrow and plus or minus keys."
       }
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

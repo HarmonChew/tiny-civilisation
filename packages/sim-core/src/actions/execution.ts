@@ -1,5 +1,15 @@
 import { addHistory, emitDomainEvent } from "../events.js";
 import { isCanonicalShelteredRestClaim } from "../interaction-slots.js";
+import {
+  completeCareForYoung,
+  completeEstateClaim,
+  completeFamilyFormation,
+  completeMourning,
+  isActionAllowedForLifeStage,
+  lifecycleWorkRate,
+  recordCriticalDamage,
+  transitionToDead,
+} from "../lifecycle.js";
 import { findPath, manhattanDistance } from "../pathfinding.js";
 import { planCompletedAfterAction, recordPlanTransition } from "../plans.js";
 import { keyedRandomU32, keyedRandomUnit } from "../rng.js";
@@ -149,7 +159,11 @@ function moveCreatureAlongPath(
       : creatureTravelPosition(state, nextTile, creature.id);
   const speed = Math.max(
     64,
-    Math.floor((MOVEMENT_SPEED * (7_500 + creature.health / 4)) / UNIT_MAX),
+    Math.floor(
+      (MOVEMENT_SPEED * (7_500 + creature.health / 4) * lifecycleWorkRate(creature)) /
+        UNIT_MAX /
+        UNIT_MAX,
+    ),
   );
   const deltaX = target.x - creature.x;
   const deltaY = target.y - creature.y;
@@ -201,6 +215,13 @@ export function executeActiveActions(state: SimulationState): void {
     if (!creature.alive || !action) {
       continue;
     }
+    if (!isActionAllowedForLifeStage(creature, action.kind)) {
+      creature.activeAction = null;
+      creature.activeGoal = null;
+      if (creature.activePlan) recordPlanTransition(state, creature, "BLOCKED");
+      creature.nextDecisionTick = state.tick + 1;
+      continue;
+    }
     if (
       action.kind === "REST_SHELTERED" &&
       !isCanonicalShelteredRestClaim(state, creature, action)
@@ -250,7 +271,12 @@ export function executeActiveActions(state: SimulationState): void {
     }
     action.progress = Math.min(
       action.workRequired,
-      action.progress + Math.ceil(UNIT_MAX / getActionDuration(action.kind)),
+      action.progress +
+        Math.ceil(
+          (UNIT_MAX * lifecycleWorkRate(creature)) /
+            UNIT_MAX /
+            getActionDuration(action.kind),
+        ),
     );
     if (action.progress >= action.workRequired) {
       finishCreatureAction(state, creature);
@@ -1135,7 +1161,7 @@ function attackCreature(
         760) +
       Math.floor(attacker.skills.combat / 28)
     : 0;
-  target.health = clamp(target.health - damage, 1_200, UNIT_MAX);
+  target.health = clamp(target.health - damage, 0, UNIT_MAX);
   state.metrics.attacks += 1;
   const evidence =
     relationshipFrom(state, attacker.id, target.id)?.significantEventIds.slice(-2) ?? [];
@@ -1155,6 +1181,7 @@ function attackCreature(
       ? `${attacker.name} struck ${target.name}, causing ${damage} injury.`
       : `${attacker.name} confronted ${target.name}, but the blow missed.`,
   });
+  recordCriticalDamage(state, target, { injury: damage }, [event.id]);
   emitDomainEvent(state, {
     type: "CONFRONTATION_AFTERMATH",
     actorIds: [attacker.id],
@@ -1218,6 +1245,9 @@ function attackCreature(
       ),
       58,
     );
+  }
+  if (target.health <= 0) {
+    transitionToDead(state, target, "INJURY", [event.id]);
   }
 }
 
@@ -1441,6 +1471,14 @@ const ACTION_RESOLVERS: Record<ActionKind, ActionResolver> = {
   FLEE: resolveFlee,
   JOIN_GROUP: (state, creature, action) =>
     joinGroup(state, creature, action.targetEntityId),
+  FORM_FAMILY: (state, creature, action) =>
+    completeFamilyFormation(state, creature, action.targetEntityId),
+  CARE_FOR_YOUNG: (state, creature, action) =>
+    completeCareForYoung(state, creature, action.targetEntityId),
+  MOURN: (state, creature, action) =>
+    completeMourning(state, creature, action.targetEntityId),
+  CLAIM_ESTATE: (state, creature, action) =>
+    completeEstateClaim(state, creature, action.targetEntityId),
 };
 
 function resolveAction(

@@ -1,5 +1,7 @@
 import {
   SCENARIO_IDS,
+  addExperimentBookmark,
+  addExperimentCheckpoint,
   appendExperimentIntervention,
   advanceSimulation,
   compareExperimentOutcomes,
@@ -11,9 +13,13 @@ import {
   createScenarioReference,
   createSimulation,
   deserializeSimulationSave,
+  forkExperimentBranch,
   hashSimulationState,
+  queryLifeRecords,
   serializeExperiment,
   serializeSimulationSave,
+  setExperimentInterventionResponseTrace,
+  settleExperimentIntervention,
   setExperimentBranchResult,
   type CausalEvidenceProjectionV1,
   type DomainEvent,
@@ -197,6 +203,7 @@ function simulationController(
         node: projection.nodes[0] ?? null,
       };
     }),
+    getLifeRecords: vi.fn(async (query) => queryLifeRecords(await queryState(), query)),
     getInterventionOutcomes: vi.fn(async (commands) => {
       const current = await queryState();
       return projectInterventionOutcomes(current, commands);
@@ -280,7 +287,7 @@ beforeEach(() => {
 });
 
 describe("equal-horizon comparison metrics", () => {
-  it("uses the Phase 4 outcome keys and reports direction without judging it", () => {
+  it("uses the Phase 4.3 outcome keys and reports direction without judging it", () => {
     const baseline: ExperimentOutcomeMetrics = {
       population: 8,
       wildFood: 40,
@@ -315,6 +322,29 @@ describe("equal-horizon comparison metrics", () => {
       shelterDeniedClaims: 1,
       shelterGuestUses: 1,
       shelterRelocations: 0,
+      births: 0,
+      deaths: 0,
+      starvationDeaths: 0,
+      dehydrationDeaths: 0,
+      exhaustionDeaths: 0,
+      injuryDeaths: 0,
+      oldAgeDeaths: 0,
+      legacyUnknownDeaths: 0,
+      juveniles: 0,
+      adults: 7,
+      elders: 1,
+      dependents: 0,
+      pregnancies: 0,
+      careActions: 0,
+      mourningActions: 0,
+      inheritanceClaims: 0,
+      activeMemorials: 0,
+      lifeRecords: 0,
+      maximumGenerationDepth: 0,
+      populationNetChange: 0,
+      populationCapPressure: 8 / 24,
+      extinctGroups: 0,
+      worldExtinct: 0,
     };
     const branch: ExperimentOutcomeMetrics = {
       ...baseline,
@@ -574,7 +604,7 @@ describe("phase 3 scenario identity", () => {
     await createExperimentStorage().save(
       JSON.stringify({
         kind: "tiny-civilisation/workspace",
-        schemaVersion: 4,
+        schemaVersion: 5,
         activeBranchId: experiment.rootBranchId,
         experiment,
         simulationSave: serializeSimulationSave(savedState),
@@ -621,6 +651,222 @@ describe("phase 3 scenario identity", () => {
     );
   });
 
+  it("loads a Phase 4.2 workspace under current rules without preserving old verification", async () => {
+    const reference = createScenarioReference("split-banks", 7_780);
+    const { state: upgradedState } = scenarioFrame(reference, 9);
+    const command = scheduledCommand(1, {
+      type: "ADD_FOOD",
+      applyAtTick: 6,
+      tileIndex: 10,
+      amount: 7,
+    });
+    let legacyExperiment = createExperiment(reference);
+    legacyExperiment = appendExperimentIntervention(
+      legacyExperiment,
+      legacyExperiment.rootBranchId,
+      createPendingIntervention(command),
+    );
+    legacyExperiment = forkExperimentBranch(
+      legacyExperiment,
+      legacyExperiment.rootBranchId,
+      "intervention",
+      "Intervention branch",
+      7,
+    );
+    legacyExperiment = settleExperimentIntervention(
+      legacyExperiment,
+      legacyExperiment.rootBranchId,
+      command.commandId,
+      {
+        status: "APPLIED",
+        appliedAtTick: 6,
+        resolvedTileIndex: 10,
+        quantity: 7,
+        blocked: null,
+        eventIds: [100],
+        reason: null,
+      },
+    );
+    legacyExperiment = setExperimentInterventionResponseTrace(
+      legacyExperiment,
+      legacyExperiment.rootBranchId,
+      command.commandId,
+      {
+        schemaVersion: 4,
+        command: {
+          commandId: command.commandId,
+          applyAtTick: command.applyAtTick,
+          type: command.type,
+          tileIndex: command.tileIndex,
+        },
+        participantIds: [],
+        windowTicks: 120,
+        phase: "CLOSED",
+        outcome: {
+          eventId: 100,
+          tick: 6,
+          status: "APPLIED",
+          rejectionReason: null,
+          targetEntityIds: [],
+        },
+        windowStartTick: 6,
+        windowEndTick: 126,
+        observedThroughTick: 126,
+        closedAtTick: 126,
+        closureReason: {
+          code: "WINDOW_ELAPSED",
+          fact: "The bounded response window elapsed.",
+          sourceEventIds: [100],
+        },
+        responses: [],
+        unclassifiedParticipantIds: [],
+        seenEventIds: [100],
+      },
+    );
+    legacyExperiment = setExperimentBranchResult(
+      legacyExperiment,
+      legacyExperiment.rootBranchId,
+      80,
+      "0123456789abcdef",
+    );
+    legacyExperiment = addExperimentBookmark(legacyExperiment, {
+      id: "bookmark-phase-4-2",
+      branchId: legacyExperiment.rootBranchId,
+      tick: 5,
+      label: "Before the fork",
+    });
+    legacyExperiment = addExperimentCheckpoint(legacyExperiment, {
+      id: "checkpoint-phase-4-2",
+      branchId: legacyExperiment.rootBranchId,
+      tick: 8,
+      stateHash: "fedcba9876543210",
+    });
+    const legacyRecord = JSON.parse(serializeExperiment(legacyExperiment)) as {
+      schemaVersion: number;
+      behaviorVersion: number;
+      stateSchemaVersion: number;
+      scenario: { behaviorVersion: number; scenarioVersion: number };
+    };
+    legacyRecord.schemaVersion = 5;
+    legacyRecord.behaviorVersion = 5;
+    legacyRecord.stateSchemaVersion = 5;
+    legacyRecord.scenario.behaviorVersion = 5;
+    legacyRecord.scenario.scenarioVersion = 2;
+    await createExperimentStorage().save(
+      JSON.stringify({
+        kind: "tiny-civilisation/workspace",
+        schemaVersion: 4,
+        activeBranchId: "intervention",
+        experiment: legacyRecord,
+        simulationSave: JSON.stringify({
+          kind: "tiny-civilisation/save",
+          schemaVersion: 4,
+          behaviorVersion: 5,
+          stateSchemaVersion: 5,
+          state: {},
+        }),
+      }),
+    );
+
+    const initialState = createSimulation(4_182);
+    const load = vi.fn(async () => makeWorldView(upgradedState));
+    const simulation = simulationController({
+      view: makeWorldView(initialState),
+      scenario: initialState.scenario,
+      seed: initialState.seed,
+      getState: vi.fn(async () => upgradedState),
+      load,
+      save: vi.fn(async () => serializeSimulationSave(initialState)),
+      getCheckpoint: vi.fn(async () => ({
+        tick: upgradedState.tick,
+        hash: hashSimulationState(upgradedState),
+        state: upgradedState,
+      })),
+    });
+    const { result } = renderHook(() =>
+      useExperimentWorkspace({ simulation, onSelectCreature: vi.fn() }),
+    );
+
+    await waitFor(() => expect(result.current.props.actions.canLoad).toBe(true));
+    act(() => result.current.props.actions.onLoad());
+    await waitFor(() =>
+      expect(result.current.props.actions.status).toMatchObject({ phase: "success" }),
+    );
+
+    expect(load).toHaveBeenCalledOnce();
+    expect(result.current.props.actions.status?.message).toContain(
+      "Upgraded; prior verification unavailable.",
+    );
+    expect(result.current.props.actions.status?.message).toContain("Phase 4.3 rules");
+    expect(result.current.props.interventions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Food added", status: "pending" }),
+      ]),
+    );
+    expect(result.current.props.bookmarks.bookmarks).toEqual([
+      { id: "bookmark-phase-4-2", tick: 5, label: "Before the fork" },
+    ]);
+
+    act(() => result.current.props.actions.onSave());
+    await waitFor(() =>
+      expect(result.current.props.actions.status?.message).toContain(
+        "Saved locally in this browser",
+      ),
+    );
+    const migratedWorkspace = await createExperimentStorage().load();
+    if (!migratedWorkspace) throw new Error("Missing re-saved workspace fixture.");
+    const migratedRecord = JSON.parse(migratedWorkspace) as {
+      experiment: {
+        branches: Array<{
+          id: string;
+          parentBranchId: string | null;
+          targetTick: number | null;
+          expectedHash: string | null;
+          commandLog: Array<{
+            command: { commandId: number };
+            outcome: { status: string };
+            responseTrace: unknown;
+          }>;
+        }>;
+        bookmarks: Array<{ id: string; branchId: string; tick: number }>;
+        checkpoints: Array<{ id: string; branchId: string; tick: number }>;
+      };
+    };
+    const rootBranch = migratedRecord.experiment.branches.find(
+      (branch) => branch.id === legacyExperiment.rootBranchId,
+    );
+    const interventionBranch = migratedRecord.experiment.branches.find(
+      (branch) => branch.id === "intervention",
+    );
+    expect(rootBranch).toMatchObject({
+      parentBranchId: null,
+      targetTick: 80,
+      expectedHash: null,
+    });
+    expect(rootBranch?.commandLog).toEqual([
+      expect.objectContaining({
+        command: expect.objectContaining({ commandId: command.commandId }),
+        outcome: { status: "PENDING" },
+        responseTrace: null,
+      }),
+    ]);
+    expect(interventionBranch).toMatchObject({
+      parentBranchId: legacyExperiment.rootBranchId,
+      targetTick: 9,
+    });
+    expect(interventionBranch?.commandLog[0]?.command.commandId).toBe(command.commandId);
+    expect(migratedRecord.experiment.bookmarks).toEqual([
+      expect.objectContaining({
+        id: "bookmark-phase-4-2",
+        branchId: legacyExperiment.rootBranchId,
+        tick: 5,
+      }),
+    ]);
+    expect(migratedRecord.experiment.checkpoints).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "checkpoint-phase-4-2" })]),
+    );
+  });
+
   it("loads a Phase 4.1 workspace with commands retained and derived verification cleared", async () => {
     const reference = createScenarioReference("split-banks", 7_779);
     const { state: upgradedState } = scenarioFrame(reference, 9);
@@ -647,12 +893,13 @@ describe("phase 3 scenario identity", () => {
       schemaVersion: number;
       behaviorVersion: number;
       stateSchemaVersion: number;
-      scenario: { behaviorVersion: number };
+      scenario: { behaviorVersion: number; scenarioVersion: number };
     };
     legacyRecord.schemaVersion = 4;
     legacyRecord.behaviorVersion = 4;
     legacyRecord.stateSchemaVersion = 4;
     legacyRecord.scenario.behaviorVersion = 4;
+    legacyRecord.scenario.scenarioVersion = 2;
     await createExperimentStorage().save(
       JSON.stringify({
         kind: "tiny-civilisation/workspace",
@@ -701,7 +948,7 @@ describe("phase 3 scenario identity", () => {
     expect(result.current.props.actions.status?.message).toContain(
       "Upgraded; prior verification unavailable.",
     );
-    expect(result.current.props.actions.status?.message).toContain("Phase 4.2 rules");
+    expect(result.current.props.actions.status?.message).toContain("Phase 4.3 rules");
   });
 
   it("loads a Phase 3 workspace without preserving obsolete verification claims", async () => {
@@ -1679,7 +1926,7 @@ describe("experiment intervention navigation", () => {
       locationTileIndex: 7,
     };
     const trace: InterventionResponseTrace = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       command: { commandId: 1, applyAtTick: 10, type: "ADD_FOOD", tileIndex: 7 },
       participantIds: [1],
       windowTicks: 120,
@@ -1944,7 +2191,7 @@ describe("experiment intervention presentation", () => {
       locationTileIndex: 5,
     };
     const trace: InterventionResponseTrace = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       command: { commandId: 1, applyAtTick: 10, type: "ADD_FOOD", tileIndex: 5 },
       participantIds: [1],
       windowTicks: 120,

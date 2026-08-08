@@ -922,6 +922,8 @@ describe("streaming activity collector", () => {
     state.groups.push({
       id: groupId,
       name: "Test group",
+      status: "ACTIVE",
+      extinctTick: null,
       stage: "PERSISTENT",
       foundedTick: 0,
       memberIds: [first.id, second.id],
@@ -1505,6 +1507,8 @@ describe("streaming activity collector", () => {
     changingState.groups.push({
       id: changingGroupId,
       name: "Changing group",
+      status: "ACTIVE",
+      extinctTick: null,
       stage: "PROVISIONAL",
       foundedTick: changingState.tick,
       memberIds: [changingActor.id],

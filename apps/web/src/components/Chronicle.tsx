@@ -12,6 +12,10 @@ function GroupLedger({
   const storageCount = view.structures.filter((structure) =>
     /STORAGE/i.test(structure.kind),
   ).length;
+  const juveniles = view.creatures.filter(
+    (creature) => creature.lifeStage === "JUVENILE",
+  ).length;
+  const elders = view.creatures.filter((creature) => creature.lifeStage === "ELDER").length;
   return (
     <section className="ledger" aria-labelledby="census-heading">
       <div className="ledger__heading">
@@ -27,8 +31,10 @@ function GroupLedger({
           <dd>{view.population}</dd>
         </div>
         <div>
-          <dt>Groups</dt>
-          <dd>{view.groups.length}</dd>
+          <dt>Age structure</dt>
+          <dd aria-label={`${juveniles} juveniles and ${elders} elders`}>
+            {juveniles}J / {elders}E
+          </dd>
         </div>
         <div>
           <dt>Stores</dt>
@@ -65,10 +71,12 @@ function GroupLedger({
                   <div>
                     <strong>{group.name}</strong>
                     <span>
-                      {group.memberIds.length} members
+                      {group.status === "EXTINCT"
+                        ? `Extinct at tick ${group.extinctTick}`
+                        : `${group.memberIds.length} members`}
                       {leader ? (
                         <>
-                          {" · "}
+                          {"; "}
                           <button type="button" onClick={() => onSelect(leader.id)}>
                             {leader.name} leads
                           </button>
@@ -100,6 +108,7 @@ function GroupLedger({
 
 const filterOptions: Array<{ id: TimelineCategory; label: string }> = [
   { id: "all", label: "All" },
+  { id: "lifecycle", label: "Lifecycle" },
   { id: "social", label: "Social" },
   { id: "resources", label: "Resources" },
   { id: "conflict", label: "Conflict" },

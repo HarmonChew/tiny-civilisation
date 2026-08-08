@@ -68,6 +68,47 @@ const groups: GroupView[] = [
 ];
 
 describe("CreatureRoster", () => {
+  it("switches between living subjects and permanent remembered records", () => {
+    const onSelectRemembered = vi.fn();
+    render(
+      <CreatureRoster
+        creatures={creatures}
+        lifeRecords={[
+          {
+            id: 90,
+            name: "Iri",
+            color: 0x8ea66c,
+            sex: "FEMALE",
+            childIds: [],
+            birthTick: -10_000,
+            deathTick: 220,
+            ageTicks: 10_220,
+            finalLifeStage: "ADULT",
+            deathCause: "DEHYDRATION",
+            inheritedTraits: [],
+            skillPotential: [],
+            majorEventIds: [12],
+          },
+        ]}
+        groups={groups}
+        selectedId={90}
+        keyboardFocusedId={null}
+        onSelect={vi.fn()}
+        onKeyboardFocus={vi.fn()}
+        onHover={vi.fn()}
+        onSelectRemembered={onSelectRemembered}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Remembered 1" }));
+    const record = screen.getByRole("button", { name: /Iri, remembered adult/ });
+    expect(record.getAttribute("aria-pressed")).toBe("true");
+    expect(record.className).toContain("is-selected");
+    fireEvent.click(record);
+    expect(onSelectRemembered).toHaveBeenCalledWith(90);
+    expect(screen.getByText("Dehydration")).toBeTruthy();
+  });
+
   it("keeps every creature and its readable state in one native list", () => {
     render(
       <CreatureRoster

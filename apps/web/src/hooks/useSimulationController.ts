@@ -18,7 +18,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import type { InterventionTool, TileView, WorldView } from "../model";
+import type { InterventionTool, LifeRecordView, TileView, WorldView } from "../model";
 import { DEFAULT_SCENARIO_VIEW } from "../experiment/scenario-presets";
 import {
   type InterventionAcknowledgement,
@@ -29,6 +29,8 @@ import {
   type RuntimeCheckpoint,
   type RuntimeEntityDetail,
   type RuntimeInterventionOutcomeProjection,
+  type RuntimeLifeRecordPage,
+  type RuntimeLifeRecordQuery,
   type RuntimeQueryOptions,
   type RuntimeReplay,
   type SimulationEngine,
@@ -36,9 +38,15 @@ import {
   type SimulationCreation,
 } from "../runtime";
 import { createBrowserSimulationEngine } from "../runtime/browser-simulation-engine";
-import { makeWorldViewFromSnapshot, ticksPerSecond } from "../sim-adapter";
+import {
+  makeLifeRecordViews,
+  makeWorldViewFromSnapshot,
+  ticksPerSecond,
+} from "../sim-adapter";
 
 export type SimulationSpeed = 1 | 2 | 4;
+
+const LIFE_RECORD_PAGE_SIZE = 100;
 
 const EMPTY_VIEW: WorldView = {
   scenario: DEFAULT_SCENARIO_VIEW,
@@ -49,6 +57,8 @@ const EMPTY_VIEW: WorldView = {
   height: 32,
   tiles: [],
   creatures: [],
+  memorials: [],
+  lifeRecords: [],
   resources: [],
   structures: [],
   groups: [],
@@ -91,6 +101,10 @@ export interface SimulationController {
     ref: CausalEvidenceRef,
     options?: RuntimeQueryOptions,
   ) => Promise<RuntimeEntityDetail | null>;
+  getLifeRecords: (
+    query?: RuntimeLifeRecordQuery,
+    options?: RuntimeQueryOptions,
+  ) => Promise<RuntimeLifeRecordPage | null>;
   getInterventionOutcomes: (
     commands: readonly ScheduledPlayerCommand[],
     options?: RuntimeQueryOptions,
@@ -125,6 +139,7 @@ export function useSimulationController(
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const retainedTilesRef = useRef<readonly TileView[]>([]);
   const retainedScenarioRef = useRef(DEFAULT_SCENARIO_VIEW);
+  const retainedLifeRecordsRef = useRef<readonly LifeRecordView[]>([]);
   const verifiedHashRef = useRef<RuntimeCanonicalHash | null>(null);
   const mountedRef = useRef(true);
   const advanceInFlightRef = useRef(false);
@@ -136,6 +151,7 @@ export function useSimulationController(
   const [scenario, setScenario] = useState<ScenarioReferenceV2>(initialReference);
   const [seed, setSeed] = useState(initialReference.seed);
   const [timelineRevision, setTimelineRevision] = useState(0);
+  const [lifeRecordRevision, setLifeRecordRevision] = useState("0:0");
   const [initialized, setInitialized] = useState(false);
   const [busy, setBusy] = useState(true);
   const [fatalError, setFatalError] = useState<string | null>(null);
@@ -150,13 +166,17 @@ export function useSimulationController(
       verifiedHashRef.current = { tick: frame.tick, hash: frame.hash };
     }
     const verifiedHash = verifiedHashRef.current;
-    const nextView = makeWorldViewFromSnapshot(
+    const projectedView = makeWorldViewFromSnapshot(
       frame.snapshot,
       verifiedHash?.hash ?? null,
       retainedTilesRef.current,
       verifiedHash?.tick ?? null,
       retainedScenarioRef.current,
     );
+    const nextView = {
+      ...projectedView,
+      lifeRecords: [...retainedLifeRecordsRef.current],
+    };
     if (frame.snapshot.tiles.length > 0) retainedTilesRef.current = nextView.tiles;
     retainedScenarioRef.current = nextView.scenario;
     if (mountedRef.current) {
@@ -166,6 +186,9 @@ export function useSimulationController(
       setInitialized(true);
       setBusy(false);
       setFatalError(null);
+      setLifeRecordRevision(
+        `${frame.snapshot.metrics.births.toString()}:${frame.snapshot.metrics.deaths.toString()}`,
+      );
     }
     return nextView;
   }, []);
@@ -302,6 +325,7 @@ export function useSimulationController(
         setPlaying(false);
         const frame = await engine.create(nextScenario);
         verifiedHashRef.current = null;
+        retainedLifeRecordsRef.current = [];
         const nextView = applyFrame(frame);
         setTimelineRevision((current) => current + 1);
         setFeedback(
@@ -466,6 +490,82 @@ export function useSimulationController(
     [],
   );
 
+  const getLifeRecords = useCallback(
+    async (
+      query?: RuntimeLifeRecordQuery,
+      options?: RuntimeQueryOptions,
+    ): Promise<RuntimeLifeRecordPage | null> => {
+      const engine = engineRef.current;
+      if (!engine) return null;
+      const page = await engine.getLifeRecords(query, options);
+      if (mountedRef.current) {
+        setView((current) => {
+          const projected = makeLifeRecordViews(page.records, current.creatures);
+          const merged =
+            (query?.cursor === undefined || query.cursor === null) &&
+            (query?.relatedToId === undefined || query.relatedToId === null)
+              ? projected
+              : [
+                  ...retainedLifeRecordsRef.current.filter(
+                    (record) => !projected.some((candidate) => candidate.id === record.id),
+                  ),
+                  ...projected,
+                ];
+          const identities = [...current.creatures, ...merged];
+          const lifeRecords = merged.map((record) => ({
+            ...record,
+            childIds: identities
+              .filter(
+                (candidate) =>
+                  candidate.motherId === record.id || candidate.fatherId === record.id,
+              )
+              .map((candidate) => candidate.id),
+          }));
+          retainedLifeRecordsRef.current = lifeRecords;
+          return {
+            ...current,
+            creatures: current.creatures.map((creature) => ({
+              ...creature,
+              childIds: identities
+                .filter(
+                  (candidate) =>
+                    candidate.motherId === creature.id ||
+                    candidate.fatherId === creature.id,
+                )
+                .map((candidate) => candidate.id),
+            })),
+            lifeRecords,
+          };
+        });
+      }
+      return page;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!initialized || fatalError) return;
+    const abort = new AbortController();
+    const loadAllLifeRecords = async (): Promise<void> => {
+      let cursor: number | null = null;
+      do {
+        const page = await getLifeRecords(
+          cursor === null
+            ? { limit: LIFE_RECORD_PAGE_SIZE }
+            : { cursor, limit: LIFE_RECORD_PAGE_SIZE },
+          { signal: abort.signal },
+        );
+        if (!page) return;
+        cursor = page.nextCursor;
+      } while (cursor !== null);
+    };
+    void loadAllLifeRecords().catch((error: unknown) => {
+      if (error instanceof Error && error.name === "AbortError") return;
+      fail(error, "Permanent life records could not be loaded.");
+    });
+    return () => abort.abort();
+  }, [fatalError, fail, getLifeRecords, initialized, lifeRecordRevision, timelineRevision]);
+
   const getInterventionOutcomes = useCallback(
     async (
       commands: readonly ScheduledPlayerCommand[],
@@ -514,6 +614,7 @@ export function useSimulationController(
       try {
         setPlaying(false);
         const frame = await engine.load(serialized);
+        retainedLifeRecordsRef.current = [];
         const nextView = applyFrame(frame);
         setTimelineRevision((current) => current + 1);
         setFeedback(
@@ -558,6 +659,7 @@ export function useSimulationController(
       setPlaying(false);
       try {
         const result = await engine.replay(replayContract, options);
+        retainedLifeRecordsRef.current = [];
         applyFrame(result.frame);
         setTimelineRevision((current) => current + 1);
         return result;
@@ -590,6 +692,7 @@ export function useSimulationController(
     getCheckpoint,
     getCausalEvidence,
     getEntityDetail,
+    getLifeRecords,
     getInterventionOutcomes,
     getOutcome,
     compareOutcome,

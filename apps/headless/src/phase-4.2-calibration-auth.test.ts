@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  deriveMatrixEvidenceReport,
-  type DeterministicMatrixRun,
-} from "./matrix-report-derivation.js";
+import { type DeterministicMatrixRun } from "./matrix-report-derivation.js";
 import {
   authenticatePhase42CalibrationMatrixWithRunnerForTest,
+  derivePhase42MatrixEvidenceWithCurrentRuntimeForTest,
   hydratePhase42IncidenceBandPolicy,
   hydratePhase42IncidenceBands,
   type Phase42CalibrationRunRegenerator,
@@ -78,7 +76,7 @@ function authenticCandidateFixture(): {
     const runs = arrayAt(skeleton.runs, "fixture runs").map(rawRun);
     const contract = candidateDefinitionContract();
     const fingerprint = phase42DefinitionFingerprint(contract);
-    cachedReport = deriveMatrixEvidenceReport({
+    cachedReport = derivePhase42MatrixEvidenceWithCurrentRuntimeForTest({
       corpus: "phase-4.2-calibration",
       seeds: PHASE_4_2_CALIBRATION_SEEDS,
       ticks: 10_000,
@@ -216,7 +214,7 @@ describe("Phase 4.2 calibration authentication", () => {
       "candidate incidence bands",
     ).push(incidenceBand);
     const fingerprint = phase42DefinitionFingerprint(contract);
-    const report = deriveMatrixEvidenceReport({
+    const report = derivePhase42MatrixEvidenceWithCurrentRuntimeForTest({
       corpus: "phase-4.2-calibration",
       seeds: PHASE_4_2_CALIBRATION_SEEDS,
       ticks: 10_000,
@@ -274,7 +272,7 @@ describe("Phase 4.2 calibration authentication", () => {
         structuredClone(run),
       ]),
     );
-    const report = deriveMatrixEvidenceReport({
+    const report = derivePhase42MatrixEvidenceWithCurrentRuntimeForTest({
       corpus: "phase-4.2-calibration",
       seeds: PHASE_4_2_CALIBRATION_SEEDS,
       ticks: 10_000,

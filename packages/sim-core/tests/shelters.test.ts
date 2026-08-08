@@ -99,6 +99,8 @@ function groupFixture(
   const group: GroupState = {
     id: groupId,
     name: "Test settlement",
+    status: "ACTIVE",
+    extinctTick: null,
     stage: persistent ? "PERSISTENT" : "PROVISIONAL",
     foundedTick: state.tick,
     memberIds: members.map((member) => member.id),
@@ -547,6 +549,8 @@ describe("shelter site selection and settlement gates", () => {
     const group: GroupState = {
       id: state.nextGroupId++,
       name: "Later group",
+      status: "ACTIVE",
+      extinctTick: null,
       stage: "PROVISIONAL",
       foundedTick: state.tick,
       memberIds: members.map((member) => member.id),
@@ -1629,6 +1633,7 @@ function phaseFourState(seed = 97): Record<string, unknown> {
   legacy.schemaVersion = 4;
   const scenario = legacy.scenario as Record<string, unknown>;
   scenario.behaviorVersion = 4;
+  scenario.scenarioVersion = 2;
   for (const creature of legacy.creatures as Array<Record<string, unknown>>) {
     const counts = creature.actionCounts as Record<string, unknown>;
     counts.REST = creature.id === 1 ? 3 : 0;
@@ -1660,7 +1665,7 @@ describe("version-4 shelter migrations and malformed hybrids", () => {
       state: legacyState,
     }).state;
     expect(JSON.stringify(legacyState)).toBe(original);
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(6);
     expect(migrated.groups.every((group) => group.activeShelterId === null)).toBe(true);
     expect(
       migrated.structures.every((structure) => structure.kind.startsWith("STORAGE")),
@@ -1671,7 +1676,7 @@ describe("version-4 shelter migrations and malformed hybrids", () => {
       outdoorRests: 3,
       shelterRelocations: 0,
     });
-    expect(migrated.domainEvents.at(-1)).toMatchObject({
+    expect(migrated.domainEvents.at(-2)).toMatchObject({
       type: "SHELTER_RULES_ENABLED",
       tick: migrated.tick,
       resourceKind: null,
@@ -1684,6 +1689,7 @@ describe("version-4 shelter migrations and malformed hybrids", () => {
     const scenario = {
       ...createScenarioReference("unequal-table", 101),
       behaviorVersion: 4,
+      scenarioVersion: 2,
     };
     const command = {
       commandId: 1,
@@ -1714,6 +1720,7 @@ describe("version-4 shelter migrations and malformed hybrids", () => {
     legacy.behaviorVersion = 4;
     legacy.stateSchemaVersion = 4;
     (legacy.scenario as Record<string, unknown>).behaviorVersion = 4;
+    (legacy.scenario as Record<string, unknown>).scenarioVersion = 2;
     const branch = (legacy.branches as Array<Record<string, unknown>>)[0]!;
     branch.targetTick = 20;
     branch.expectedHash = "0123456789abcdef";

@@ -23,6 +23,8 @@ import type {
   RuntimeCheckpoint,
   RuntimeEntityDetail,
   RuntimeInterventionOutcomeProjection,
+  RuntimeLifeRecordPage,
+  RuntimeLifeRecordQuery,
   RuntimeProgress,
   RuntimeQueryOptions,
   RuntimeReplay,
@@ -235,6 +237,19 @@ export class WorkerSimulationEngine implements SimulationEngine {
     options: RuntimeQueryOptions = {},
   ): Promise<RuntimeEntityDetail> {
     return this.request<RuntimeEntityDetail>({ type: "get-entity-detail", ref }, options);
+  }
+
+  getLifeRecords(
+    query: RuntimeLifeRecordQuery = {},
+    options: RuntimeQueryOptions = {},
+  ): Promise<RuntimeLifeRecordPage> {
+    return this.request<RuntimeLifeRecordPage>(
+      {
+        type: "get-life-records",
+        ...(Object.keys(query).length === 0 ? {} : { query }),
+      },
+      options,
+    );
   }
 
   getInterventionOutcomes(

@@ -1,9 +1,10 @@
-import { keyedRandomUnit, randomRange } from "./rng.js";
+import { keyedRandomUnit, naturalLifespanTicksFor, randomRange } from "./rng.js";
 import { tileIndexAt } from "./pathfinding.js";
 import {
   TILE_FIXED_UNITS,
   type ActionKind,
   type CreatureState,
+  type ReproductiveSex,
   type ResourceKind,
   type SimulationState,
   type TileState,
@@ -49,6 +50,10 @@ export function createEmptyActionCounts(): Record<ActionKind, number> {
     ATTACK: 0,
     FLEE: 0,
     JOIN_GROUP: 0,
+    FORM_FAMILY: 0,
+    CARE_FOR_YOUNG: 0,
+    MOURN: 0,
+    CLAIM_ESTATE: 0,
   };
 }
 
@@ -110,6 +115,8 @@ export function createPetriWorld(): WorldState {
 export interface CreaturePrototype {
   readonly name: string;
   readonly color: number;
+  readonly sex: ReproductiveSex;
+  readonly ageTicks: number;
   readonly x: number;
   readonly y: number;
   readonly hunger: number;
@@ -126,6 +133,8 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
   {
     name: "Iri",
     color: 0x7dd3fc,
+    sex: "FEMALE",
+    ageTicks: 10_500,
     x: 9,
     y: 9,
     hunger: 4_100,
@@ -140,6 +149,8 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
   {
     name: "Nalo",
     color: 0xfde68a,
+    sex: "MALE",
+    ageTicks: 8_000,
     x: 11,
     y: 9,
     hunger: 6_800,
@@ -154,6 +165,8 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
   {
     name: "Ves",
     color: 0xc4b5fd,
+    sex: "FEMALE",
+    ageTicks: 15_500,
     x: 8,
     y: 11,
     hunger: 3_700,
@@ -168,6 +181,8 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
   {
     name: "Aro",
     color: 0x86efac,
+    sex: "MALE",
+    ageTicks: 11_500,
     x: 12,
     y: 11,
     hunger: 5_500,
@@ -182,6 +197,8 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
   {
     name: "Meka",
     color: 0xf9a8d4,
+    sex: "FEMALE",
+    ageTicks: 9_500,
     x: 9,
     y: 13,
     hunger: 4_600,
@@ -196,6 +213,8 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
   {
     name: "Sori",
     color: 0xfdba74,
+    sex: "MALE",
+    ageTicks: 13_000,
     x: 13,
     y: 13,
     hunger: 5_000,
@@ -210,6 +229,8 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
   {
     name: "Pela",
     color: 0xa7f3d0,
+    sex: "FEMALE",
+    ageTicks: 7_500,
     x: 7,
     y: 13,
     hunger: 6_200,
@@ -224,6 +245,8 @@ export const PETRI_CREATURE_PROTOTYPES: readonly CreaturePrototype[] = [
   {
     name: "Taro",
     color: 0xfca5a5,
+    sex: "MALE",
+    ageTicks: 8_500,
     x: 14,
     y: 10,
     hunger: 7_100,
@@ -324,6 +347,37 @@ function createCreature(
     name: prototype.name,
     color: prototype.color,
     alive: true,
+    sex: prototype.sex,
+    ageTicks: prototype.ageTicks,
+    lifeStage:
+      prototype.ageTicks < 5_000
+        ? "JUVENILE"
+        : prototype.ageTicks < 15_000
+          ? "ADULT"
+          : "ELDER",
+    naturalLifespanTicks: naturalLifespanTicksFor(state.seed, id),
+    birthTick: -prototype.ageTicks,
+    motherId: null,
+    fatherId: null,
+    caregiverId: null,
+    dependentUntilTick: null,
+    criticalSinceTick: null,
+    criticalDamage: null,
+    traitPotential: {
+      generosity: clampUnit(prototype.generosity),
+      aggression: clampUnit(prototype.aggression),
+      sociability: clampUnit(prototype.sociability),
+      loyalty: clampUnit(prototype.loyalty),
+    },
+    skillPotential: {
+      foraging: clampUnit(prototype.foraging),
+      combat: clampUnit(prototype.combat),
+    },
+    pregnancy: null,
+    reproductionCooldownUntilTick: 0,
+    death: null,
+    mournedLifeRecordIds: [],
+    majorLifeEventIds: [],
     tileIndex,
     x: prototype.x * TILE_FIXED_UNITS + TILE_FIXED_UNITS / 2,
     y: prototype.y * TILE_FIXED_UNITS + TILE_FIXED_UNITS / 2,

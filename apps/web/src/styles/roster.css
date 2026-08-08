@@ -38,6 +38,38 @@
   font-size: 9px;
 }
 
+.creature-roster__views {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: -3px 0 10px;
+}
+
+.creature-roster__views button {
+  min-height: 34px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: rgba(255, 251, 239, 0.38);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.creature-roster__views button.is-active {
+  color: var(--action-primary);
+  border-color: var(--action-primary);
+  background: color-mix(in srgb, var(--status-moss) 12%, var(--surface-paper-strong));
+}
+
+.creature-roster__item--remembered {
+  filter: saturate(0.45);
+}
+
+.creature-roster__item--remembered .creature-roster__identity {
+  border-style: double;
+  border-color: var(--text-muted);
+}
+
 .creature-roster__list {
   display: grid;
   margin: 0;

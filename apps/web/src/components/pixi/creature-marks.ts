@@ -299,8 +299,9 @@ export function drawCreatureMark(
   }
 
   drawDirectionCue(mark, creature);
+  const bodyRadius = creature.lifeStage === "JUVENILE" ? 0.25 : 0.33;
   mark
-    .circle(0, 0, 0.33)
+    .circle(0, 0, bodyRadius)
     .fill({ color, alpha: creature.alive ? 1 : 0.35 })
     .stroke({ color: PALETTE.ink, width: 0.085 })
     .arc(0, 0, 0.405, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * health)
@@ -310,6 +311,37 @@ export function drawCreatureMark(
       alpha: 0.9,
     });
   drawIdentityPattern(mark, identityVariant(creature.id));
+
+  // Lifecycle states are encoded with geometry so they remain legible without color.
+  if (creature.lifeStage === "JUVENILE") {
+    mark
+      .moveTo(-0.31, 0.34)
+      .lineTo(0, 0.48)
+      .lineTo(0.31, 0.34)
+      .stroke({ color: PALETTE.paper, width: 0.055, alpha: 0.95 });
+  } else if (creature.lifeStage === "ELDER") {
+    mark
+      .circle(0, 0, 0.47)
+      .stroke({ color: PALETTE.paper, width: 0.045, alpha: 0.88 })
+      .moveTo(-0.18, 0.47)
+      .lineTo(0.18, 0.47)
+      .stroke({ color: PALETTE.paper, width: 0.06, alpha: 0.9 });
+  }
+  if (creature.criticalSinceTick !== undefined) {
+    mark
+      .moveTo(-0.48, -0.48)
+      .lineTo(0.48, 0.48)
+      .moveTo(0.48, -0.48)
+      .lineTo(-0.48, 0.48)
+      .stroke({ color: PALETTE.danger, width: 0.095, alpha: 0.98 });
+  }
+  if (creature.mourning) {
+    mark
+      .arc(0, 0, 0.57, Math.PI * 0.15, Math.PI * 0.85)
+      .stroke({ color: PALETTE.paper, width: 0.08, alpha: 0.95 })
+      .circle(0, 0.59, 0.055)
+      .fill({ color: PALETTE.paper, alpha: 0.95 });
+  }
 
   if (creature.groupId !== undefined) {
     const groupColor =

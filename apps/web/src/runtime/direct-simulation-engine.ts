@@ -17,6 +17,8 @@ import type {
   RuntimeCheckpoint,
   RuntimeEntityDetail,
   RuntimeInterventionOutcomeProjection,
+  RuntimeLifeRecordPage,
+  RuntimeLifeRecordQuery,
   RuntimeQueryOptions,
   RuntimeReplay,
   SimulationEngine,
@@ -106,6 +108,13 @@ export class DirectSimulationEngine implements SimulationEngine {
     options: RuntimeQueryOptions = {},
   ): Promise<RuntimeEntityDetail> {
     return this.perform(() => this.runtime.getEntityDetail(ref, options));
+  }
+
+  getLifeRecords(
+    query: RuntimeLifeRecordQuery = {},
+    options: RuntimeQueryOptions = {},
+  ): Promise<RuntimeLifeRecordPage> {
+    return this.perform(() => this.runtime.getLifeRecords(query, options));
   }
 
   getInterventionOutcomes(

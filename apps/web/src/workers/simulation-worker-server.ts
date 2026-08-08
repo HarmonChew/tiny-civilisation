@@ -32,6 +32,7 @@ function isCancellableOperation(operation: RuntimeOperation): boolean {
     operation.type === "get-checkpoint" ||
     operation.type === "get-causal-evidence" ||
     operation.type === "get-entity-detail" ||
+    operation.type === "get-life-records" ||
     operation.type === "get-intervention-outcomes" ||
     operation.type === "get-outcome" ||
     operation.type === "compare-outcome"
@@ -129,6 +130,8 @@ export class SimulationWorkerServer {
         });
       case "get-entity-detail":
         return this.runtime.getEntityDetail(operation.ref, { signal });
+      case "get-life-records":
+        return this.runtime.getLifeRecords(operation.query, { signal });
       case "get-intervention-outcomes":
         return this.runtime.getInterventionOutcomes(operation.commands, { signal });
       case "get-outcome":

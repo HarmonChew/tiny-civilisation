@@ -5,6 +5,7 @@ import {
   createExperimentOutcome,
   createScenarioReference,
   createSimulation,
+  transitionToDead,
   type ExperimentOutcomeV1,
 } from "../src/index.js";
 
@@ -22,6 +23,8 @@ describe("canonical experiment outcomes", () => {
     state.groups.push({
       id: 1,
       name: "Test group",
+      status: "ACTIVE",
+      extinctTick: null,
       stage: "PERSISTENT",
       foundedTick: 0,
       memberIds: [first.id],
@@ -175,6 +178,37 @@ describe("canonical experiment outcomes", () => {
     expect(createExperimentOutcome(createSimulation(9)).averageTrust).toBe(0);
   });
 
+  it("projects lifecycle, lineage, inheritance, cap pressure, and extinction facts", () => {
+    const state = createSimulation(17);
+    const parent = state.creatures[0];
+    const child = state.creatures[1];
+    const victim = state.creatures.at(-1);
+    if (!parent || !child || !victim) throw new Error("Missing lifecycle fixtures.");
+    child.motherId = parent.id;
+    state.metrics.births = 2;
+    state.metrics.careActions = 3;
+    state.metrics.mournings = 2;
+    state.metrics.estatesClaimed = 1;
+    expect(transitionToDead(state, victim, "DEHYDRATION")).toBe(true);
+
+    const outcome = createExperimentOutcome(state);
+    expect(outcome).toMatchObject({
+      births: 2,
+      deaths: 1,
+      dehydrationDeaths: 1,
+      starvationDeaths: 0,
+      careActions: 3,
+      mourningActions: 2,
+      inheritanceClaims: 1,
+      activeMemorials: 1,
+      lifeRecords: 1,
+      maximumGenerationDepth: 1,
+      populationNetChange: 1,
+      worldExtinct: 0,
+    });
+    expect(outcome.populationCapPressure).toBe(7 / 24);
+  });
+
   it("projects deterministic water access and recent hydration-route pressure", () => {
     const state = createSimulation(createScenarioReference("petri-world", 11));
     const first = state.creatures[0];
@@ -214,6 +248,8 @@ describe("canonical experiment outcomes", () => {
     interventionState.metrics.severeThirstCreatureTicks = 7;
     interventionState.metrics.shelteredRests = 5;
     interventionState.metrics.shelterDeniedClaims = 2;
+    interventionState.metrics.births = 1;
+    interventionState.metrics.careActions = 4;
     interventionState.resourceNodes[0]!.currentStock += 3;
     const comparison = compareExperimentOutcomes(
       createExperimentOutcome(baselineState),
@@ -227,6 +263,8 @@ describe("canonical experiment outcomes", () => {
     expect(comparison.delta.severeThirstExposureTicks).toBe(7);
     expect(comparison.delta.shelteredRests).toBe(5);
     expect(comparison.delta.shelterDeniedClaims).toBe(2);
+    expect(comparison.delta.births).toBe(1);
+    expect(comparison.delta.careActions).toBe(4);
     expect(comparison.baseline.foodShared).toBe(0);
     expect(comparison.intervention.foodShared).toBe(4);
 
@@ -249,7 +287,7 @@ describe("canonical experiment outcomes", () => {
       schemaVersion: 3,
     } as unknown as ExperimentOutcomeV1;
     expect(() => assertExperimentOutcome(oldSchema)).toThrow(
-      "schema version 3 is incompatible with 4",
+      "schema version 3 is incompatible with 5",
     );
 
     const otherScenario = createSimulation(

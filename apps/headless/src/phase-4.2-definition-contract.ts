@@ -1,20 +1,9 @@
 import { createHash } from "node:crypto";
 
-import {
-  SCENARIO_DEFINITION_VERSION,
-  SCENARIO_IDS,
-  SCENARIO_MAP_GENERATION_VERSION,
-  SCENARIO_SCHEMA_VERSION,
-  SIMULATION_BEHAVIOR_VERSION,
-} from "@tiny-civ/sim-core";
+import { SCENARIO_IDS } from "@tiny-civ/sim-core";
 
-import { ACTIVITY_PROFILE_SCHEMA_VERSION } from "./activity-collector.js";
-import {
-  OUTCOME_CLASSIFIER_VERSION,
-  PHASE_4_2_CLASSIFIER_RULES,
-  SCENARIO_ANALYSIS_SCHEMA_VERSION,
-  phase42AnalysisSemanticContract,
-} from "./scenario-analysis.js";
+import { PHASE_4_2_CLASSIFIER_RULES } from "./scenario-analysis.js";
+import { PHASE_4_2_FROZEN_ANALYSIS_IMPLEMENTATION } from "./phase-4.2-frozen-analysis-contract.js";
 import {
   PAIRED_MACRO_BANDS,
   PAIRED_MACRO_BAND_TABLE_VERSION,
@@ -44,6 +33,22 @@ export { canonicalPhase42DefinitionJson } from "./phase-4.2-canonical-json.js";
 export const PHASE_4_2_DEFINITION_CONTRACT_SCHEMA_VERSION = 1 as const;
 export const PHASE_4_2_DEFINITION_FINGERPRINT_ALGORITHM =
   "SHA256_CANONICAL_JSON_V1" as const;
+
+/**
+ * Historical Phase 4.2 evidence must remain readable after later phases advance
+ * the live runtime. These are the literal versions embedded in the reviewed,
+ * frozen, and recorded Phase 4.2 definition rather than aliases to current
+ * package constants.
+ */
+export const PHASE_4_2_FROZEN_VERSIONS = Object.freeze({
+  behavior: 5 as const,
+  activityProfile: 5 as const,
+  scenarioEnvelope: 2 as const,
+  scenarioDefinition: 2 as const,
+  mapGeneration: 1 as const,
+  scenarioAnalysis: 4 as const,
+  outcomeClassifier: 3 as const,
+});
 
 /**
  * Reviewed data policy for the Phase 4.2 settlement-incidence floors. This is
@@ -129,15 +134,7 @@ function pairedBandSemantics(definition: PairedMacroBandDefinition) {
 export const PHASE_4_2_DEFINITION_CONTRACT = Object.freeze({
   schemaVersion: PHASE_4_2_DEFINITION_CONTRACT_SCHEMA_VERSION,
   fingerprintAlgorithm: PHASE_4_2_DEFINITION_FINGERPRINT_ALGORITHM,
-  versions: {
-    behavior: SIMULATION_BEHAVIOR_VERSION,
-    activityProfile: ACTIVITY_PROFILE_SCHEMA_VERSION,
-    scenarioEnvelope: SCENARIO_SCHEMA_VERSION,
-    scenarioDefinition: SCENARIO_DEFINITION_VERSION,
-    mapGeneration: SCENARIO_MAP_GENERATION_VERSION,
-    scenarioAnalysis: SCENARIO_ANALYSIS_SCHEMA_VERSION,
-    outcomeClassifier: OUTCOME_CLASSIFIER_VERSION,
-  },
+  versions: { ...PHASE_4_2_FROZEN_VERSIONS },
   corpus: {
     scenarios: [...SCENARIO_IDS],
     seedCount: 64,
@@ -152,7 +149,7 @@ export const PHASE_4_2_DEFINITION_CONTRACT = Object.freeze({
     requiredPassingInheritedMacroDimensions: REQUIRED_PASSING_PHASE_3_MACRO_DIMENSIONS,
     requiredPassingSettlementBands: REQUIRED_PASSING_PHASE_4_2_SETTLEMENT_BANDS,
   },
-  analysisImplementation: phase42AnalysisSemanticContract(),
+  analysisImplementation: PHASE_4_2_FROZEN_ANALYSIS_IMPLEMENTATION,
   bandValidationImplementation: phase42BandValidationSemanticContract(),
   inheritedPhase41: {
     reviewedCalibrationSha256: PHASE_4_1_CALIBRATION_SHA256,

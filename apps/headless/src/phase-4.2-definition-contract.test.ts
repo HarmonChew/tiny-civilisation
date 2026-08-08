@@ -1,14 +1,70 @@
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+
 import { describe, expect, it } from "vitest";
 
 import {
   PHASE_4_2_DEFINITION_CONTRACT,
   PHASE_4_2_DEFINITION_FINGERPRINT,
+  PHASE_4_2_FROZEN_VERSIONS,
   PHASE_4_2_INCIDENCE_BAND_POLICY,
   canonicalPhase42DefinitionJson,
   phase42DefinitionFingerprint,
 } from "./phase-4.2-definition-contract.js";
+import {
+  PHASE_4_2_HOLDOUT_EXECUTION_ENABLED,
+  PHASE_4_2_HOLDOUT_STATUS,
+} from "./phase-4.2-corpora.js";
+import {
+  PHASE_4_2_FROZEN_ANALYSIS_IMPLEMENTATION,
+  PHASE_4_2_FROZEN_ANALYSIS_IMPLEMENTATION_SHA256,
+} from "./phase-4.2-frozen-analysis-contract.js";
 
 describe("Phase 4.2 frozen-definition fingerprint", () => {
+  it("pins the recorded definition versions independently of current runtime versions", () => {
+    expect(PHASE_4_2_FROZEN_VERSIONS).toEqual({
+      behavior: 5,
+      activityProfile: 5,
+      scenarioEnvelope: 2,
+      scenarioDefinition: 2,
+      mapGeneration: 1,
+      scenarioAnalysis: 4,
+      outcomeClassifier: 3,
+    });
+    expect(PHASE_4_2_DEFINITION_CONTRACT.versions).toEqual(PHASE_4_2_FROZEN_VERSIONS);
+    expect(PHASE_4_2_HOLDOUT_STATUS).toBe("RECORDED");
+    expect(PHASE_4_2_HOLDOUT_EXECUTION_ENABLED).toBe(false);
+  });
+
+  it("preserves the reviewed fingerprint in the operational tsx runtime", () => {
+    // The contract intentionally authenticates Function#toString() projections.
+    // Vitest rewrites imported functions, so run this exact-hash regression under
+    // the same tsx runtime used by the headless evidence commands.
+    const require = createRequire(import.meta.url);
+    const tsxCliPath = require.resolve("tsx/cli");
+    const contractModuleUrl = new URL("./phase-4.2-definition-contract.ts", import.meta.url)
+      .href;
+    const program = `import(${JSON.stringify(contractModuleUrl)}).then((module) => process.stdout.write(module.PHASE_4_2_DEFINITION_FINGERPRINT))`;
+    const operationalFingerprint = execFileSync(
+      process.execPath,
+      [tsxCliPath, "-e", program],
+      { encoding: "utf8" },
+    );
+
+    expect(operationalFingerprint).toBe(
+      "3f46b03b570de25c321c595f2bdc4b5df6081e52cd564680b0f1d0613c9606c6",
+    );
+  });
+
+  it("checksums the readable classifier-v3 semantic snapshot", () => {
+    expect(
+      createHash("sha256")
+        .update(JSON.stringify(PHASE_4_2_FROZEN_ANALYSIS_IMPLEMENTATION), "utf8")
+        .digest("hex"),
+    ).toBe(PHASE_4_2_FROZEN_ANALYSIS_IMPLEMENTATION_SHA256);
+  });
+
   it("canonicalizes object keys while preserving semantic array order", () => {
     expect(canonicalPhase42DefinitionJson({ b: 2, a: { d: 4, c: 3 } })).toBe(
       canonicalPhase42DefinitionJson({ a: { c: 3, d: 4 }, b: 2 }),

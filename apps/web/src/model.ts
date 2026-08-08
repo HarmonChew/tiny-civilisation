@@ -3,7 +3,12 @@ import type { ReasonFact, ScenarioReferenceV2 } from "@tiny-civ/sim-core";
 export type EntityId = number;
 
 export type TimelineCategory =
-  "all" | "social" | "resources" | "conflict" | "group" | "player";
+  "all" | "lifecycle" | "social" | "resources" | "conflict" | "group" | "player";
+
+export type ReproductiveSex = "FEMALE" | "MALE";
+export type LifeStage = "JUVENILE" | "ADULT" | "ELDER";
+export type DeathCause =
+  "STARVATION" | "DEHYDRATION" | "EXHAUSTION" | "INJURY" | "OLD_AGE" | "LEGACY_UNKNOWN";
 
 export type InterventionTool =
   | "inspect"
@@ -143,6 +148,20 @@ export interface CreatureView {
   x: number;
   y: number;
   alive: boolean;
+  sex?: ReproductiveSex | undefined;
+  ageTicks?: number | undefined;
+  lifeStage?: LifeStage | undefined;
+  naturalLifespanTicks?: number | undefined;
+  birthTick?: number | undefined;
+  motherId?: EntityId | undefined;
+  fatherId?: EntityId | undefined;
+  childIds?: EntityId[] | undefined;
+  caregiverId?: EntityId | undefined;
+  dependent?: boolean | undefined;
+  pregnant?: boolean | undefined;
+  pregnancyDueTick?: number | undefined;
+  criticalSinceTick?: number | undefined;
+  mourning?: boolean | undefined;
   groupId?: EntityId | undefined;
   role: string;
   desire: string;
@@ -190,16 +209,60 @@ export interface CreatureView {
   fatigue: number;
   thirst: number;
   traits: TraitView[];
+  inheritedTraits?: TraitView[] | undefined;
+  skillPotential?: TraitView[] | undefined;
   inventory: InventoryView[];
   candidates: CandidateView[];
   memories: MemoryView[];
   relationships: RelationshipView[];
 }
 
+export interface EstateView {
+  food: number;
+  material: number;
+  water: number;
+}
+
+export interface MemorialView {
+  id: EntityId;
+  deceasedId: EntityId;
+  deceasedName: string;
+  tileIndex: number;
+  x: number;
+  y: number;
+  createdTick: number;
+  expiresTick: number;
+  heirId?: EntityId | undefined;
+  estate: EstateView;
+  mournersRemaining: number;
+}
+
+export interface LifeRecordView {
+  id: EntityId;
+  name: string;
+  color: number;
+  sex: ReproductiveSex;
+  motherId?: EntityId | undefined;
+  fatherId?: EntityId | undefined;
+  childIds: EntityId[];
+  birthTick: number;
+  deathTick: number;
+  ageTicks: number;
+  finalLifeStage: LifeStage;
+  deathCause: DeathCause;
+  finalGroupId?: EntityId | undefined;
+  inheritedTraits: TraitView[];
+  skillPotential: TraitView[];
+  majorEventIds: number[];
+  heirId?: EntityId | undefined;
+}
+
 export interface GroupView {
   id: EntityId;
   name: string;
   stage?: "PROVISIONAL" | "PERSISTENT" | undefined;
+  status?: "ACTIVE" | "EXTINCT" | undefined;
+  extinctTick?: number | undefined;
   memberIds: EntityId[];
   leaderId?: EntityId | undefined;
   home?: Point | undefined;
@@ -280,6 +343,8 @@ export interface WorldView {
   height: number;
   tiles: TileView[];
   creatures: CreatureView[];
+  memorials?: MemorialView[] | undefined;
+  lifeRecords?: LifeRecordView[] | undefined;
   resources: ResourceView[];
   structures: StructureView[];
   groups: GroupView[];

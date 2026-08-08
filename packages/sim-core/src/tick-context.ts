@@ -117,6 +117,7 @@ export function entityTile(state: SimulationState, entityId: number): number | n
     getCreature(state, entityId)?.tileIndex ??
     getResourceNode(state, entityId)?.tileIndex ??
     getStructure(state, entityId)?.tileIndex ??
+    state.memorials.find((memorial) => memorial.id === entityId)?.tileIndex ??
     null
   );
 }

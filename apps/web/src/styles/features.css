@@ -657,6 +657,90 @@ button.timeline-entry__body:hover strong {
   background: rgba(255, 250, 235, 0.34);
 }
 
+.subject-summary--lifecycle summary {
+  cursor: pointer;
+  color: var(--text-primary);
+  font-family: var(--font-editorial);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.subject-summary--lifecycle[open] summary {
+  margin-bottom: 8px;
+}
+
+.lineage-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.inherited-potential {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-default);
+}
+
+.inherited-potential p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-family: var(--font-number);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.lineage-links button {
+  min-height: 36px;
+  padding: 6px 9px;
+  color: var(--action-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-paper-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.subject-header--remembered {
+  border-left: 4px double var(--text-muted);
+  background: color-mix(in srgb, var(--surface-sunken) 18%, transparent);
+}
+
+.subject-avatar--remembered {
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  border-style: double;
+}
+
+.life-record-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 14px 0 0;
+  border: 1px solid var(--border-default);
+  background: var(--border-default);
+}
+
+.life-record-facts > div {
+  min-width: 0;
+  padding: 8px;
+  background: var(--surface-paper-strong);
+}
+
+.life-record-facts dt {
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.life-record-facts dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
 .subject-summary dl,
 .subject-summary dd {
   margin: 0;

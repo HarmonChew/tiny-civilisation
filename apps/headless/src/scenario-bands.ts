@@ -134,6 +134,13 @@ export type ScenarioOutcomeLabelId =
   | "SHELTER_CROWDING"
   | "GUEST_SHELTERING"
   | "SETTLEMENT_RELOCATION"
+  | "VISIBLE_NEW_GENERATION"
+  | "DEPENDENT_YOUTH_CARED_FOR"
+  | "MOURNING_AND_MEMORY"
+  | "ESTATE_TRANSFERRED"
+  | "POPULATION_GROWTH"
+  | "POPULATION_DECLINE"
+  | "POPULATION_EXTINCTION"
   | "QUIET_STALEMATE";
 
 /** Candidate classifier-v3 rules. Freeze them only after the Phase 4.2 calibration review. */

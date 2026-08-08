@@ -2,6 +2,17 @@ import { applyScheduledCommands } from "./commands.js";
 import { executeActiveActions, runScheduledDecisions } from "./actions/runtime.js";
 import { beginEventRetentionContext, endEventRetentionContext } from "./events.js";
 import { updateGroups } from "./groups.js";
+import {
+  finalizeLifecycleDeaths,
+  followDependentCaregivers,
+  clearRecoveredCriticalStates,
+  processCriticalMortality,
+  processMemorialsAndEstates,
+  processNaturalMortality,
+  processPregnanciesAndBirths,
+  updateLifecycleAges,
+  updateLifecycleGroupExtinction,
+} from "./lifecycle.js";
 import { updateProximityRelationships } from "./social.js";
 import { updateShelters } from "./shelters.js";
 import {
@@ -14,10 +25,19 @@ import type { SimulationState } from "./types.js";
 
 export const AUTHORITATIVE_TICK_PIPELINE = [
   "applyScheduledCommands",
+  "updateLifecycleAges",
   "updateNeeds",
+  "processCriticalMortality",
+  "processNaturalMortality",
   "regenerateResources",
+  "followDependentCaregivers",
   "updateProximityRelationships",
   "executeActiveActions",
+  "clearRecoveredCriticalStates",
+  "processPregnanciesAndBirths",
+  "processMemorialsAndEstates",
+  "updateLifecycleGroupExtinction",
+  "finalizeLifecycleDeaths",
   "updateShelters",
   "updateGroups",
   "runScheduledDecisions",
@@ -34,10 +54,19 @@ export function advanceSimulation(state: SimulationState, ticks = 1): Simulation
   try {
     for (let iteration = 0; iteration < tickCount; iteration += 1) {
       applyScheduledCommands(state);
+      updateLifecycleAges(state);
       updateNeeds(state);
+      processCriticalMortality(state);
+      processNaturalMortality(state);
       regenerateResources(state);
+      followDependentCaregivers(state);
       updateProximityRelationships(state);
       executeActiveActions(state);
+      clearRecoveredCriticalStates(state);
+      processPregnanciesAndBirths(state);
+      processMemorialsAndEstates(state);
+      updateLifecycleGroupExtinction(state);
+      finalizeLifecycleDeaths(state);
       updateShelters(state);
       updateGroups(state);
       runScheduledDecisions(state);

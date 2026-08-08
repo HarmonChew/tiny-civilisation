@@ -85,3 +85,15 @@ participants must satisfy every core comprehension criterion.
 
 Do not replace these records with automated accessibility checks, screenshots,
 or claims inferred from implementation.
+
+## Administrative disposition of the unexecuted human workflow
+
+`SUPERSEDED_UNEXECUTED_BY_PHASE_4_3_UNIFIED_ALPHA_PROTOCOL`
+
+As of 8 August 2026, the outstanding Phase 3 manual NVDA, formative, and
+confirmatory workflow is administratively superseded by the single
+lifecycle-integrated Phase 4.3 unified-alpha protocol. This records that the old
+workflow will not be executed separately; it does not record a pass, waiver, or
+retroactive Phase 3 release. The historical automated artifacts and their
+recorded results remain unchanged. A final alpha claim depends on completing
+the Phase 4.3 protocol on the integrated candidate.

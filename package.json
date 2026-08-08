@@ -24,6 +24,8 @@
     "test:e2e:dev": "node scripts/run-e2e.mjs --dev",
     "test:e2e:release": "npm run build && node scripts/run-e2e.mjs --config playwright.release.config.ts",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run test:e2e",
+    "check:release": "node scripts/run-release-check.mjs",
+    "release:package": "node scripts/package-release.mjs",
     "headless": "npm run start --workspace @tiny-civ/headless --",
     "batch": "npm run batch --workspace @tiny-civ/headless --",
     "profile": "npm run profile --workspace @tiny-civ/headless --",

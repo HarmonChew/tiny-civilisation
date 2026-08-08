@@ -463,9 +463,6 @@ export function createRenderSnapshot(
     navigationRevision: state.world.navigationRevision,
     tiles: includeStaticWorld
       ? state.world.tiles.map((tile) => ({
-          index: tile.index,
-          x: tile.x,
-          y: tile.y,
           terrain: tile.terrain,
           blocked: tile.blocked,
         }))
@@ -475,6 +472,21 @@ export function createRenderSnapshot(
       name: creature.name,
       color: creature.color,
       alive: creature.alive,
+      sex: creature.sex,
+      ageTicks: creature.ageTicks,
+      lifeStage: creature.lifeStage,
+      naturalLifespanTicks: creature.naturalLifespanTicks,
+      birthTick: creature.birthTick,
+      motherId: creature.motherId,
+      fatherId: creature.fatherId,
+      caregiverId: creature.caregiverId,
+      dependentUntilTick: creature.dependentUntilTick,
+      criticalSinceTick: creature.criticalSinceTick,
+      criticalDamage: creature.criticalDamage ? { ...creature.criticalDamage } : null,
+      traitPotential: { ...creature.traitPotential },
+      skillPotential: { ...creature.skillPotential },
+      pregnant: creature.pregnancy !== null,
+      pregnancyDueTick: creature.pregnancy?.dueTick ?? null,
       x: creature.x / TILE_FIXED_UNITS,
       y: creature.y / TILE_FIXED_UNITS,
       tileIndex: creature.tileIndex,
@@ -609,6 +621,22 @@ export function createRenderSnapshot(
         builtFromShelterId: shelter?.builtFromShelterId ?? null,
       };
     }),
+    memorials: state.memorials.map((memorial) => ({
+      id: memorial.id,
+      deceasedId: memorial.deceasedId,
+      deceasedName:
+        state.lifeRecords.find((record) => record.id === memorial.deceasedId)?.name ??
+        "Unknown",
+      tileIndex: memorial.tileIndex,
+      createdTick: memorial.createdTick,
+      expiresTick: memorial.expiresTick,
+      heirId: memorial.heirId,
+      estate: { ...memorial.estate },
+      mournersRemaining: Math.max(
+        0,
+        memorial.mournerIds.length - memorial.completedMournerIds.length,
+      ),
+    })),
     groups: state.groups.map((group) => ({
       ...group,
       memberIds: [...group.memberIds],

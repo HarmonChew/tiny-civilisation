@@ -1460,7 +1460,7 @@ export function ComparisonTable({ comparison }: { comparison: ComparisonState })
                     {metric.deltaDirection === "increase"
                       ? "+"
                       : metric.deltaDirection === "decrease"
-                        ? "âˆ’"
+                        ? "-"
                         : "="}
                   </span>
                   <span>{metric.delta}</span>

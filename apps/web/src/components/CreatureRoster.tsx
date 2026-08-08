@@ -1,6 +1,6 @@
 import { AlertTriangle, Droplets, PackageOpen, Route, UsersRound } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { CreatureView, EntityId, GroupView } from "../model";
+import type { CreatureView, EntityId, GroupView, LifeRecordView } from "../model";
 import { humanize } from "./ui";
 
 const IDENTITY_GLYPHS = ["A", "B", "C", "D", "E", "F", "G", "H"] as const;
@@ -48,6 +48,16 @@ function creatureAccessibleName(
   return [
     creature.name,
     creature.role,
+    creature.lifeStage ? humanize(creature.lifeStage) : undefined,
+    creature.sex ? `${humanize(creature.sex)} biological sex` : undefined,
+    creature.dependent ? "dependent youth" : undefined,
+    creature.pregnant
+      ? `pregnant, due at tick ${creature.pregnancyDueTick ?? "unknown"}`
+      : undefined,
+    creature.criticalSinceTick !== undefined
+      ? `critical health since tick ${creature.criticalSinceTick}`
+      : undefined,
+    creature.mourning ? "mourning" : undefined,
     `goal ${humanize(creature.goal)}`,
     `now ${humanize(creature.action)}`,
     `thirst ${Math.round(creature.thirst)} percent`,
@@ -64,21 +74,26 @@ function creatureAccessibleName(
 
 export function CreatureRoster({
   creatures,
+  lifeRecords = [],
   groups,
   selectedId,
   keyboardFocusedId,
   onSelect,
   onKeyboardFocus,
   onHover,
+  onSelectRemembered,
 }: {
   creatures: CreatureView[];
+  lifeRecords?: LifeRecordView[];
   groups: GroupView[];
   selectedId: EntityId | null;
   keyboardFocusedId: EntityId | null;
   onSelect: (id: EntityId) => void;
   onKeyboardFocus: (id: EntityId | null) => void;
   onHover: (id: EntityId | null) => void;
+  onSelectRemembered?: ((id: EntityId) => void) | undefined;
 }) {
+  const [viewMode, setViewMode] = useState<"living" | "remembered">("living");
   const orderedCreatures = useMemo(
     () => [...creatures].sort((left, right) => left.id - right.id),
     [creatures],
@@ -161,7 +176,64 @@ export function CreatureRoster({
           {creatures.length.toString().padStart(2, "0")}
         </span>
       </div>
-      {orderedCreatures.length === 0 ? (
+      <div className="creature-roster__views" role="group" aria-label="Roster view">
+        <button
+          type="button"
+          className={viewMode === "living" ? "is-active" : ""}
+          aria-pressed={viewMode === "living"}
+          onClick={() => setViewMode("living")}
+        >
+          Living {orderedCreatures.length}
+        </button>
+        <button
+          type="button"
+          className={viewMode === "remembered" ? "is-active" : ""}
+          aria-pressed={viewMode === "remembered"}
+          onClick={() => setViewMode("remembered")}
+        >
+          Remembered {lifeRecords.length}
+        </button>
+      </div>
+      {viewMode === "remembered" ? (
+        lifeRecords.length === 0 ? (
+          <p className="empty-copy">No permanent life records have been written.</p>
+        ) : (
+          <ul className="creature-roster__list" aria-label="Remembered lives">
+            {[...lifeRecords]
+              .sort((left, right) => right.deathTick - left.deathTick || left.id - right.id)
+              .map((record) => (
+                <li key={record.id}>
+                  <button
+                    type="button"
+                    className={`creature-roster__item creature-roster__item--remembered ${record.id === selectedId ? "is-selected" : ""}`}
+                    aria-pressed={record.id === selectedId}
+                    aria-label={`${record.name}, remembered ${humanize(record.finalLifeStage).toLowerCase()}, ${record.deathTick < 0 ? "death tick not recorded" : `died at tick ${record.deathTick}`}, cause ${humanize(record.deathCause).toLowerCase()}`}
+                    disabled={onSelectRemembered === undefined}
+                    onClick={() => onSelectRemembered?.(record.id)}
+                  >
+                    <span className="creature-roster__identity" aria-hidden="true">
+                      *
+                    </span>
+                    <span className="creature-roster__body">
+                      <span className="creature-roster__name-line">
+                        <strong>{record.name}</strong>
+                        <span>{humanize(record.finalLifeStage)}</span>
+                      </span>
+                      <span className="creature-roster__facts">
+                        <span>
+                          {record.deathTick < 0
+                            ? "Death tick not recorded"
+                            : `Died at tick ${record.deathTick}`}
+                        </span>
+                        <span>{humanize(record.deathCause)}</span>
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+          </ul>
+        )
+      ) : orderedCreatures.length === 0 ? (
         <p className="empty-copy">The roster will appear when the dish is ready.</p>
       ) : (
         <ul
@@ -222,6 +294,13 @@ export function CreatureRoster({
                       </span>
                     </span>
                     <span className="creature-roster__facts">
+                      {creature.lifeStage && creature.sex ? (
+                        <span>
+                          {humanize(creature.lifeStage)} / {humanize(creature.sex)}
+                          {creature.dependent ? " / dependent" : ""}
+                          {creature.pregnant ? " / pregnant" : ""}
+                        </span>
+                      ) : null}
                       <span>
                         <UsersRound aria-hidden="true" size={11} />
                         {groupName}

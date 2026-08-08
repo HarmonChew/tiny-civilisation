@@ -2,9 +2,13 @@ import {
   SCENARIO_CANONICAL_SEEDS,
   SCENARIO_IDS,
   createScenarioReference,
+  createSimulation,
   createSimulationReplay,
   hashSimulationState,
+  serializeSimulationSave,
+  type LifeRecord,
   type ScheduledPlayerCommand,
+  type SimulationState,
 } from "@tiny-civ/sim-core";
 import { describe, expect, it } from "vitest";
 import {
@@ -105,6 +109,60 @@ function requestMessages(worker: ControlledWorker | InProcessWorker) {
       { kind: "tiny-civilisation/runtime-request" }
     > => message.kind === "tiny-civilisation/runtime-request",
   );
+}
+
+function lifeRecord(id: number, overrides: Partial<LifeRecord> = {}): LifeRecord {
+  return {
+    id,
+    name: `Remembered ${id.toString()}`,
+    color: 0x6f8a58,
+    sex: id % 2 === 0 ? "FEMALE" : "MALE",
+    motherId: null,
+    fatherId: null,
+    birthTick: -10_000,
+    deathTick: 0,
+    ageTicks: 10_000,
+    finalLifeStage: "ADULT",
+    deathCause: "OLD_AGE",
+    finalGroupId: null,
+    traitPotential: {
+      generosity: 5_000,
+      aggression: 5_000,
+      sociability: 5_000,
+      loyalty: 5_000,
+    },
+    skillPotential: { foraging: 5_000, combat: 5_000 },
+    majorEventIds: [],
+    heirId: null,
+    ...overrides,
+  };
+}
+
+function stateWithLifeRecords(): SimulationState {
+  const state = createSimulation(23);
+  const firstRecordId = 10_000;
+  state.lifeRecords.push(
+    lifeRecord(firstRecordId),
+    lifeRecord(firstRecordId + 1),
+    lifeRecord(firstRecordId + 2),
+  );
+  const memorialId = firstRecordId + 10;
+  const tile = state.world.tiles.find((candidate) => !candidate.blocked);
+  if (!tile) throw new Error("Missing memorial fixture tile.");
+  state.memorials.push({
+    id: memorialId,
+    deceasedId: firstRecordId + 2,
+    tileIndex: tile.index,
+    createdTick: 0,
+    expiresTick: 600,
+    heirId: null,
+    estate: { food: 1, material: 2, water: 3 },
+    mournerIds: [],
+    completedMournerIds: [],
+  });
+  state.nextEntityId = memorialId + 1;
+  state.metrics.deaths = state.lifeRecords.length;
+  return state;
 }
 
 describe("simulation engines", () => {
@@ -350,6 +408,13 @@ describe("simulation engines", () => {
     expect(workerEvidence).toEqual(directEvidence);
     expect(workerDetail).toEqual(directDetail);
 
+    const [directLifeRecords, workerLifeRecords] = await Promise.all([
+      direct.getLifeRecords({ limit: 50 }),
+      worker.getLifeRecords({ limit: 50 }),
+    ]);
+    expect(workerLifeRecords).toEqual(directLifeRecords);
+    expect(workerLifeRecords).toEqual({ records: [], nextCursor: null });
+
     const [directOutcome, workerOutcome] = await Promise.all([
       direct.getOutcome(),
       worker.getOutcome(),
@@ -390,12 +455,68 @@ describe("simulation engines", () => {
         "get-checkpoint",
         "get-causal-evidence",
         "get-entity-detail",
+        "get-life-records",
         "get-outcome",
         "compare-outcome",
         "get-intervention-outcomes",
       ]),
     );
     expect(operationTypes).not.toContain("get-state");
+
+    direct.dispose();
+    worker.dispose();
+  });
+
+  it("keeps paginated life records identical across direct and Worker engines without adding them to hot snapshots", async () => {
+    const serialized = serializeSimulationSave(stateWithLifeRecords());
+    const direct = new DirectSimulationEngine();
+    const workerPort = new InProcessWorker();
+    const worker = new WorkerSimulationEngine({ worker: workerPort });
+
+    const [directLoaded, workerLoaded] = await Promise.all([
+      direct.load(serialized),
+      worker.load(serialized),
+    ]);
+    expect(workerLoaded.snapshot).toEqual(directLoaded.snapshot);
+    expect(directLoaded.snapshot).not.toHaveProperty("lifeRecords");
+    expect(directLoaded.snapshot.memorials).toEqual([
+      expect.objectContaining({
+        id: 10_010,
+        deceasedId: 10_002,
+        deceasedName: "Remembered 10002",
+      }),
+    ]);
+
+    const firstQuery = { limit: 2 } as const;
+    const [directFirstPage, workerFirstPage] = await Promise.all([
+      direct.getLifeRecords(firstQuery),
+      worker.getLifeRecords(firstQuery),
+    ]);
+    expect(workerFirstPage).toEqual(directFirstPage);
+    expect(workerFirstPage.records.map((record) => record.id)).toEqual([10_000, 10_001]);
+    expect(workerFirstPage.nextCursor).toBe(10_001);
+
+    const secondQuery = { cursor: workerFirstPage.nextCursor, limit: 2 } as const;
+    const [directSecondPage, workerSecondPage] = await Promise.all([
+      direct.getLifeRecords(secondQuery),
+      worker.getLifeRecords(secondQuery),
+    ]);
+    expect(workerSecondPage).toEqual(directSecondPage);
+    expect(workerSecondPage.records.map((record) => record.id)).toEqual([10_002]);
+    expect(workerSecondPage.nextCursor).toBeNull();
+
+    const lifeRecordOperations = requestMessages(workerPort)
+      .map((message) => message.operation)
+      .filter((operation) => operation.type === "get-life-records");
+    expect(lifeRecordOperations).toEqual([
+      { type: "get-life-records", query: firstQuery },
+      { type: "get-life-records", query: secondQuery },
+    ]);
+
+    const [directHot, workerHot] = await Promise.all([direct.step(1), worker.step(1)]);
+    expect(workerHot.snapshot).toEqual(directHot.snapshot);
+    expect(directHot.snapshot).not.toHaveProperty("lifeRecords");
+    expect(directHot.snapshot.memorials).toEqual(directLoaded.snapshot.memorials);
 
     direct.dispose();
     worker.dispose();

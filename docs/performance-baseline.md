@@ -1,14 +1,17 @@
 # Performance baseline
 
 Phase 1 and Phase 2.5 measurements were captured on 1 August 2026. Phase 3
-measurements were captured on 4 August 2026, and Phase 4.1 measurements on 5
-August 2026, with Node.js 24.11.1 on the same local Windows development
-machine. Machine-sensitive latency remains diagnostic; deterministic sizes,
-bounds, ratios, and generous ceilings are automated gates.
+measurements were captured on 4 August 2026, Phase 4.1 measurements on 5
+August 2026, and Phase 4.2 measurements on 6 August 2026, with Node.js 24.11.1
+on the same local Windows development machine. Machine-sensitive latency
+remains diagnostic; deterministic sizes, bounds, ratios, and generous ceilings
+are automated gates.
 
 ## Headless simulation
 
-- Corpus: seeds 1–20, 10,000 ticks per seed, 200,000 total ticks after a 2,000-tick warm-up.
+- Trial corpus: seeds 1–20, 10,000 ticks per seed, 200,000 ticks per trial after
+  a 2,000-tick warm-up. The current harness measures three independent trials,
+  reports every sample, and gates on median throughput.
 - Pre-Phase-2.5 reference: 23,408.7 ticks per second.
 - Final Phase 2.5 runs: 47,572.6, 47,100.3, and 45,191.9 ticks per second; median 47,100.3.
 - Protected Phase 2.5 reference: 47,100 ticks per second.
@@ -38,14 +41,24 @@ measurements are:
 above the inherited floor. Machine speed may change the observed values; the
 25,905-tick floor remains the portable gate.
 
+The final Phase 4.2 isolated benchmark recorded 30,761.8 ticks per second
+against the same 25,905 floor. That historical release-candidate observation
+predates the three-trial harness and remains a single recorded sample; the
+current command no longer treats one sample as sufficient evidence.
+
 Run `npm run benchmark -- --scenario <id>` separately from the portable
-`npm run check` gate. Override the corpus or floor with
+`npm run check` gate. It performs one warm-up and three measured trials, then
+uses their median for the pass/fail result. Override the corpus or floor with
 `TINY_CIV_BENCHMARK_SEEDS`, `TINY_CIV_BENCHMARK_TICKS`, or
 `TINY_CIV_MIN_TICKS_PER_SECOND`. A slower machine can supply a calibrated
 floor, but a pull request must not silently lower the checked-in reference.
-Phase 4.1 activity-profile schema v4 is implemented in
+Phase 4.2 activity-profile schema v5 is implemented in
 `apps/headless/src/activity-collector.ts`; the Phase 2.5 schema remains a
 historical baseline in [its metric definitions](baselines/phase-2.5-metrics-v2.md).
+Phase 4.3 advances the candidate activity profile to schema 6 for lifecycle
+measurements. Its final uncontended four-scenario benchmark has not been
+recorded, so the inherited 25,905-tick floor remains the release gate rather
+than a claimed Phase 4.3 result.
 
 ## Projection, hashing, replay, and persistence
 
@@ -54,9 +67,10 @@ named-region/chokepoint geometry are sent only at bootstrap/load and navigation
 revisions; canonical hashes, detached checkpoints, causal evidence, entity
 detail, intervention outcomes, current outcomes, and comparison outcomes are
 explicit typed runtime queries. Ordinary frames carry `hash: null`; the UI
-retains the latest explicitly verified hash and its tick. Phase 4.1 adds water,
-source-access, and bounded route data without moving authoritative state into
-hot frames.
+retains the latest explicitly verified hash and its tick. Phase 4.1 added
+water, source-access, and bounded route data; Phase 4.2 adds shelter state,
+condition, occupancy, and site evidence without moving authoritative state
+into hot frames.
 
 The historical Phase 3 runtime envelopes and saves measured as follows:
 
@@ -93,9 +107,20 @@ A 200-sample Node diagnostic at seed 4182/tick 5,000 measured:
 The explicit hash cost is why live visual refreshes reuse the latest verified checkpoint hash instead of recomputing one per frame. A fresh in-process 5,000-tick reconstruction took 200.108 ms in the same diagnostic. These latency values are observations, not portable CI ceilings.
 
 The older Phase 2.5 single-reference payload and save measurements are
-superseded by the historical Phase 3 and current Phase 4.1 tables above. The
-operation-latency diagnostic remains useful context but has not been recaptured
-as a Phase 4.1 release artifact.
+superseded by the historical Phase 3 and Phase 4.1 tables above. Phase 4.2's
+bootstrap, hot-frame, and save ceiling assertions pass, but no replacement
+per-scenario size table was recorded. The operation-latency diagnostic remains
+useful historical context and has not been recaptured as a Phase 4.2 release
+artifact.
+
+Phase 4.3 retains the 128 KiB bootstrap, 65,536-byte hot-frame, and 2,500,000-
+byte save ceilings. Bootstrap tile records now carry only terrain and blocked
+state; array position and world width deterministically reconstruct tile index
+and coordinates in the browser adapter. A focused regression forces both the
+24-living cap and zero living creatures, then checks bootstrap, hot-frame,
+save, round-trip, life-record query, and replay navigation behavior. That
+focused test passes in the working candidate, but no final clean-candidate
+payload table or release-command record is attached yet.
 
 ## Production bundle
 
@@ -107,9 +132,10 @@ The root `npm run build` runs `scripts/check-web-bundle.mjs` after Vite and enfo
 
 The experiment workspace and moment replay controls are lazy chunks. The exact content-hashed filenames and measured sizes are printed by the build gate, so the budget remains reviewable without documenting unstable asset names here.
 
-The final Phase 4.1 build measured 357,476 raw / 108,384 gzip bytes for the
-largest JavaScript chunk, 357,249 gzip bytes across all JavaScript, and 14,377
-gzip bytes across all CSS. All bundle ceilings pass.
+The final Phase 4.2 build measured 354,517 raw / 106,527 gzip bytes for the
+largest JavaScript chunk, 1,156,628 raw / 336,732 gzip bytes across all
+JavaScript, and 72,718 raw / 14,758 gzip bytes across all CSS. All bundle
+ceilings pass.
 
 ## Browser responsiveness
 
@@ -118,17 +144,22 @@ replay, causal navigation, automated accessibility scanning, reduced motion,
 forced colors, true touch input, 200% text, and 400% effective-zoom reflow. Its
 34 visual baselines retain the 30 Phase 3 scenes and add four medium-width water
 moments: depletion, contention, sharing, and aftermath. The stable production
-build, bundle gate, and whole-file Chromium run pass 44/44.
+build, bundle gate, and complete Phase 4.2 Chromium run pass 46/46, including
+shelter site, construction, occupancy, degradation, and relocation coverage.
 
-The separate release matrix passes 12/12 in 2.6 minutes: four critical journeys
-each in Chromium, Firefox, and WebKit. Browser runs treat console/page errors,
+The separate Phase 4.2 release matrix passes 24/24: eight critical journeys
+each in Chromium, Firefox, and WebKit. Firefox on the recorded managed Windows
+runner required `MOZ_DISABLE_CONTENT_SANDBOX=1` because the OS rejected its
+content-process launch; this is runner compatibility evidence, not equivalent
+sandbox or security coverage. Browser runs treat console/page errors,
 interaction timeouts, accessibility violations, responsive-flow failures, and
 screenshot diffs as portable regressions. Long-task and heap numbers vary
 substantially across virtualized runners; they remain diagnostic until Windows
 and Linux distributions support a defensible ratchet.
 
-The final automated verification also passes all 438 unit/integration tests,
-golden replays, formatting, lint, type-checking, build, and coverage. Statement
-coverage is 87.93% in sim-core, 90.88% in headless, and 71.73% in web. Manual
-NVDA and usability evidence remains separate and is not inferred from these
-results.
+The final Phase 4.2 source-only verification passes all 506 unit/integration
+tests: 220 sim-core, 121 headless, and 165 web. Statement coverage is 88.09%
+in sim-core, 89.49% in headless, and 72.36% in web; the headless suite remains
+above its explicit coverage floors. Golden replay, formatting, lint,
+type-checking, and build also pass. Manual NVDA and usability evidence remains
+separate and is not inferred from these results.

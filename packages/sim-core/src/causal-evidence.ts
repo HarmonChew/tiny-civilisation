@@ -1,9 +1,11 @@
 import type {
   ActionKind,
   DecisionSwitchReason,
+  DeathCause,
   DesireKind,
   DomainEventType,
   HistoricalEventType,
+  LifeStage,
   MemoryKind,
   PlanKind,
   ReasonFact,
@@ -112,6 +114,12 @@ export type CausalEvidenceDetailV1 =
       readonly kind: "creature";
       readonly alive: boolean;
       readonly groupId: number | null;
+      readonly lifeStage: LifeStage;
+      readonly birthTick: number;
+      readonly deathTick: number | null;
+      readonly deathCause: DeathCause | null;
+      readonly motherId: number | null;
+      readonly fatherId: number | null;
     }
   | {
       readonly kind: "group";
@@ -206,7 +214,11 @@ function humanize(value: string): string {
 }
 
 function creatureName(state: SimulationState, id: number): string | null {
-  return state.creatures.find((creature) => creature.id === id)?.name ?? null;
+  return (
+    state.creatures.find((creature) => creature.id === id)?.name ??
+    state.lifeRecords.find((record) => record.id === id)?.name ??
+    null
+  );
 }
 
 function groupName(state: SimulationState, id: number): string | null {
@@ -233,13 +245,15 @@ function structureName(
   const kind =
     structure.kind === "STORAGE"
       ? "shared store"
-      : structure.kind === "STORAGE_SITE"
-        ? "storage site"
-        : structure.kind === "SHELTER_SITE"
-          ? "shelter site"
-          : structure.kind === "SHELTER"
-            ? "communal shelter"
-            : "abandoned shelter";
+      : structure.kind === "ABANDONED_STORAGE"
+        ? "abandoned store"
+        : structure.kind === "STORAGE_SITE"
+          ? "storage site"
+          : structure.kind === "SHELTER_SITE"
+            ? "shelter site"
+            : structure.kind === "SHELTER"
+              ? "communal shelter"
+              : "abandoned shelter";
   return owner
     ? `${owner}'s ${kind}`
     : `${humanize(kind)} at ${tileLabel(state, structure.tileIndex)}`;
@@ -260,6 +274,9 @@ const MEMORY_LABELS: Record<MemoryKind, string> = {
   HARM_RECEIVED: "being harmed",
   RESOURCE_FOUND: "finding a resource",
   GROUP_FOUNDED: "a group being founded",
+  CARE_RECEIVED: "receiving care",
+  BIRTH_WITNESSED: "witnessing a birth",
+  DEATH_MOURNED: "mourning a death",
 };
 
 function cloneReasonFact(fact: ReasonFact | null): ReasonFact | null {
@@ -267,7 +284,10 @@ function cloneReasonFact(fact: ReasonFact | null): ReasonFact | null {
 }
 
 function entityRef(state: SimulationState, id: number): CausalEvidenceRef | null {
-  if (state.creatures.some((creature) => creature.id === id)) {
+  if (
+    state.creatures.some((creature) => creature.id === id) ||
+    state.lifeRecords.some((record) => record.id === id)
+  ) {
     return { kind: "creature", id };
   }
   if (state.structures.some((structure) => structure.id === id)) {
@@ -436,16 +456,42 @@ function resolveNode(
     }
     case "creature": {
       const creature = state.creatures.find((candidate) => candidate.id === ref.id);
-      return creature
+      if (creature) {
+        return {
+          ref,
+          label: creature.name,
+          tick: creature.lastActionTick < 0 ? null : creature.lastActionTick,
+          summary: `${creature.name} is ${creature.alive ? "alive" : "dead"} and currently ${creature.lastActionKind?.toLowerCase().replaceAll("_", " ") ?? "idle"}.`,
+          detail: {
+            kind: "creature",
+            alive: creature.alive,
+            groupId: creature.groupId,
+            lifeStage: creature.lifeStage,
+            birthTick: creature.birthTick,
+            deathTick: null,
+            deathCause: null,
+            motherId: creature.motherId,
+            fatherId: creature.fatherId,
+          },
+        };
+      }
+      const record = state.lifeRecords.find((candidate) => candidate.id === ref.id);
+      return record
         ? {
             ref,
-            label: creature.name,
-            tick: creature.lastActionTick < 0 ? null : creature.lastActionTick,
-            summary: `${creature.name} is ${creature.alive ? "alive" : "dead"} and currently ${creature.lastActionKind?.toLowerCase().replaceAll("_", " ") ?? "idle"}.`,
+            label: record.name,
+            tick: record.deathTick < 0 ? null : record.deathTick,
+            summary: `${record.name} is remembered as a ${record.finalLifeStage.toLowerCase()} who died${record.deathTick < 0 ? " before lifecycle records began" : ` at tick ${record.deathTick.toString()}`} from ${record.deathCause.toLowerCase().replaceAll("_", " ")}.`,
             detail: {
               kind: "creature",
-              alive: creature.alive,
-              groupId: creature.groupId,
+              alive: false,
+              groupId: record.finalGroupId,
+              lifeStage: record.finalLifeStage,
+              birthTick: record.birthTick,
+              deathTick: record.deathTick < 0 ? null : record.deathTick,
+              deathCause: record.deathCause,
+              motherId: record.motherId,
+              fatherId: record.fatherId,
             },
           }
         : null;
@@ -656,20 +702,30 @@ function outgoingEdges(
     }
     case "creature": {
       const creature = state.creatures.find((candidate) => candidate.id === ref.id);
-      if (!creature) break;
-      for (const memoryId of creature.memoryIds) {
-        add({ kind: "memory", id: memoryId }, "HAS_MEMORY");
-      }
-      for (const relationship of state.relationships) {
-        if (relationship.fromId === creature.id) {
-          add({ kind: "relationship", id: relationship.id }, "HAS_RELATIONSHIP");
+      if (creature) {
+        for (const memoryId of creature.memoryIds) {
+          add({ kind: "memory", id: memoryId }, "HAS_MEMORY");
         }
+        for (const relationship of state.relationships) {
+          if (relationship.fromId === creature.id) {
+            add({ kind: "relationship", id: relationship.id }, "HAS_RELATIONSHIP");
+          }
+        }
+        if (creature.groupId !== null) {
+          add({ kind: "group", id: creature.groupId }, "MEMBER_OF");
+        }
+        if (creature.activeDesire) add({ kind: "desire", id: creature.id }, "WANTS");
+        if (creature.activePlan) add({ kind: "plan", id: creature.id }, "PURSUES");
+        break;
       }
-      if (creature.groupId !== null) {
-        add({ kind: "group", id: creature.groupId }, "MEMBER_OF");
-      }
-      if (creature.activeDesire) add({ kind: "desire", id: creature.id }, "WANTS");
-      if (creature.activePlan) add({ kind: "plan", id: creature.id }, "PURSUES");
+      const record = state.lifeRecords.find((candidate) => candidate.id === ref.id);
+      if (!record) break;
+      if (record.motherId !== null) add({ kind: "creature", id: record.motherId }, "ABOUT");
+      if (record.fatherId !== null) add({ kind: "creature", id: record.fatherId }, "ABOUT");
+      if (record.finalGroupId !== null)
+        add({ kind: "group", id: record.finalGroupId }, "MEMBER_OF");
+      if (record.heirId !== null) add({ kind: "creature", id: record.heirId }, "TARGET");
+      for (const eventId of record.majorEventIds) add(eventRef(eventId), "SHAPED_BY");
       break;
     }
     case "group": {

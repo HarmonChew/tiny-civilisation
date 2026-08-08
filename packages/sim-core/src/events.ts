@@ -65,6 +65,12 @@ function historicalRootEventIds(state: SimulationState): Set<number> {
   for (const group of state.groups) {
     for (const id of group.majorEventIds) protectedIds.add(id);
   }
+  for (const creature of state.creatures) {
+    for (const id of creature.majorLifeEventIds) protectedIds.add(id);
+  }
+  for (const record of state.lifeRecords) {
+    for (const id of record.majorEventIds) protectedIds.add(id);
+  }
   return protectedIds;
 }
 

@@ -90,6 +90,16 @@ const SETTLEMENT_METRIC_IDS = new Set<FrozenPairedMacroMetricId>([
   "SETTLEMENT_RELOCATION_COUNT",
 ]);
 
+const PHASE_4_2_HARD_INVARIANT_IDS = new Set([
+  "PROFILE_SCENARIO_IDENTITY_MATCH",
+  "PROFILE_COMPILED_MAP_HASH_MATCH",
+  "CRITICAL_RESOURCE_REACHABILITY",
+  "OCCUPIED_TILE_P10",
+  "OCCUPIED_TILE_MEDIAN",
+  "EXACT_OVERLAP_RATE",
+  "PER_SEED_KEEP_SHARE",
+]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -574,6 +584,128 @@ function stripProcessProvenance(value: unknown): unknown {
   );
 }
 
+function phase42OutcomeProjection(value: unknown): void {
+  const outcome = recordAt(value, "outcome projection");
+  outcome.classifierVersion = 3;
+  for (const key of ["labels", "evaluatedLabelIds", "notEvaluatedLabelIds"] as const) {
+    const items = arrayAt(outcome[key], `outcome projection ${key}`);
+    outcome[key] = items.filter((item) => {
+      const labelId = key === "labels" ? recordAt(item, "outcome label").id : item;
+      return typeof labelId === "string" && OUTCOME_LABEL_IDS.has(labelId);
+    });
+  }
+}
+
+function phase42HardInvariantProjection(value: unknown): void {
+  const report = recordAt(value, "hard-invariant projection");
+  report.evaluations = arrayAt(
+    report.evaluations,
+    "hard-invariant projection evaluations",
+  ).filter((item) => {
+    const id = recordAt(item, "hard-invariant projection evaluation").id;
+    return typeof id === "string" && PHASE_4_2_HARD_INVARIANT_IDS.has(id);
+  });
+}
+
+function phase42ScenarioAnalysisProjection(value: unknown): void {
+  const analysis = recordAt(value, "scenario-analysis projection");
+  analysis.schemaVersion = 4;
+  const outcomes = recordAt(analysis.outcomes, "scenario-analysis outcomes");
+  for (const outcome of arrayAt(outcomes.perRun, "scenario-analysis per-run outcomes")) {
+    phase42OutcomeProjection(outcome);
+  }
+  const hard = recordAt(analysis.hardInvariants, "scenario-analysis hard invariants");
+  for (const report of arrayAt(hard.perRun, "scenario-analysis per-run invariants")) {
+    phase42HardInvariantProjection(report);
+  }
+}
+
+/**
+ * Removes prospective Phase 4.3 fields from a currently-derived report before
+ * comparing it with immutable Phase 4.2 evidence. No historical field is
+ * synthesized or relaxed by this projection.
+ */
+function phase42MatrixEvidenceProjection(value: unknown): unknown {
+  const report = structuredClone(recordAt(value, "matrix evidence projection"));
+  report.schemaVersion = 5;
+  const configuration = recordAt(report.configuration, "matrix configuration projection");
+  configuration.scenarioAnalysisSchemaVersion = 4;
+  configuration.outcomeClassifierVersion = 3;
+
+  for (const value of arrayAt(report.runs, "matrix run projections")) {
+    const run = recordAt(value, "matrix run projection");
+    const profile = recordAt(run.profile, "matrix profile projection");
+    profile.schemaVersion = 5;
+    delete profile.lifecycle;
+    phase42OutcomeProjection(run.outcomeSummary);
+    phase42HardInvariantProjection(run.hardInvariants);
+  }
+
+  const aggregate = recordAt(report.aggregate, "matrix aggregate projection");
+  for (const value of arrayAt(aggregate.byScenario, "scenario aggregate projections")) {
+    const scenario = recordAt(value, "scenario aggregate projection");
+    delete recordAt(scenario.activity, "scenario activity projection").lifecycle;
+    phase42ScenarioAnalysisProjection(scenario.analysis);
+  }
+  return report;
+}
+
+function currentDerivationRunFromPhase42(
+  run: DeterministicMatrixRun,
+): DeterministicMatrixRun {
+  const projected = structuredClone(run) as unknown as Record<string, unknown>;
+  const profile = recordAt(projected.profile, "Phase 4.2 derivation profile");
+  const groups = recordAt(
+    recordAt(profile.groups, "Phase 4.2 derivation groups").horizon,
+    "Phase 4.2 derivation group horizon",
+  );
+  const livingAtHorizon =
+    Number(groups.groupedCreatureCount ?? 0) + Number(groups.ungroupedCreatureCount ?? 0);
+  profile.lifecycle = {
+    population: {
+      births: 0,
+      deaths: 0,
+      livingAtHorizon,
+      netChange: 0,
+      extinctAtHorizon: livingAtHorizon === 0,
+    },
+    reproduction: { pregnanciesLost: 0, twoKnownParentBirths: 0 },
+    generations: {
+      newGenerationIds: [],
+      dependentYouthAtHorizon: 0,
+      dependentYouthCreatureTicks: 0,
+      maximumLineageDepth: 0,
+    },
+    care: { actions: 0 },
+    legacy: {
+      mourningCompletions: 0,
+      estatesClaimed: 0,
+      lifeRecordsAtHorizon: 0,
+      memorialsAtHorizon: 0,
+    },
+    groups: { extinctions: 0 },
+    invariants: {
+      passed: true,
+      populationCapBreaches: 0,
+      metricEventMismatches: [],
+    },
+  };
+  return projected as unknown as DeterministicMatrixRun;
+}
+
+/** Test seam for constructing immutable Phase 4.2-shaped evidence with the
+ * current derivation implementation. It never executes a simulation corpus. */
+export function derivePhase42MatrixEvidenceWithCurrentRuntimeForTest(
+  input: Parameters<typeof deriveMatrixEvidenceReport>[0],
+): ReturnType<typeof deriveMatrixEvidenceReport> {
+  return phase42MatrixEvidenceProjection(
+    deriveMatrixEvidenceReport({
+      ...input,
+      runs: input.runs.map(currentDerivationRunFromPhase42),
+    }),
+  ) as ReturnType<typeof deriveMatrixEvidenceReport>;
+}
+
 function rawRunProjection(value: unknown, label: string): DeterministicMatrixRun {
   const run = recordAt(value, label);
   return {
@@ -640,7 +772,7 @@ export function authenticatePhase42CalibrationMatrixWithRunnerForTest(
       runIndex += 1;
     }
   }
-  const expected = deriveMatrixEvidenceReport({
+  const expected = derivePhase42MatrixEvidenceWithCurrentRuntimeForTest({
     corpus: "phase-4.2-calibration",
     seeds: PHASE_4_2_CALIBRATION_SEEDS,
     ticks: PHASE_4_2_MATRIX_TICKS,
@@ -650,7 +782,10 @@ export function authenticatePhase42CalibrationMatrixWithRunnerForTest(
     phase42Definition: definitionEvidence,
   });
   if (
-    !isDeepStrictEqual(stripProcessProvenance(report), stripProcessProvenance(expected))
+    !isDeepStrictEqual(
+      stripProcessProvenance(phase42MatrixEvidenceProjection(report)),
+      stripProcessProvenance(phase42MatrixEvidenceProjection(expected)),
+    )
   ) {
     throw new Error(
       "Phase 4.2 calibration derived evidence does not match deterministic recomputation.",

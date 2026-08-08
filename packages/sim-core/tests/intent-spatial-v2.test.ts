@@ -71,7 +71,7 @@ describe("hierarchical intent selection", () => {
     );
     expect(committed[0]?.desire).toBe("RELIEVE_HUNGER");
     expect(rankHierarchicalCandidates(options, null, null, 20, true)[0]?.action).toBe(
-      "EAT",
+      "REST",
     );
   });
 

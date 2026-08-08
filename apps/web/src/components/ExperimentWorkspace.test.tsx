@@ -612,7 +612,7 @@ describe("experiment workspace components", () => {
     expect(populationDelta?.className).toContain("comparison-delta--increase");
     expect(populationDelta?.textContent).toContain("Increase: +1 creature");
     expect(conflictDelta?.className).toContain("comparison-delta--decrease");
-    expect(conflictDelta?.textContent).toContain("Decrease: âˆ’2 events");
+    expect(conflictDelta?.textContent).toContain("Decrease: -2 events");
     expect(table.querySelector('[class*="positive"], [class*="negative"]')).toBeNull();
 
     rerender(

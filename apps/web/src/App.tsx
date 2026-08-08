@@ -576,6 +576,14 @@ export default function App() {
     () => view.creatures.find((creature) => creature.id === selectedId) ?? null,
     [selectedId, view.creatures],
   );
+  useEffect(() => {
+    if (
+      followedId !== null &&
+      !view.creatures.some((creature) => creature.id === followedId && creature.alive)
+    ) {
+      setFollowedId(null);
+    }
+  }, [followedId, view.creatures]);
   const selectedEvidenceEvent = useMemo(
     () => view.events.find((event) => event.id === selectedEvidenceEventId) ?? null,
     [selectedEvidenceEventId, view.events],

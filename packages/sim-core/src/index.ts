@@ -20,13 +20,19 @@ export * from "./causal-evidence.js";
 export * from "./event-attention.js";
 export * from "./desires.js";
 export * from "./interaction-slots.js";
+export * from "./lifecycle.js";
 export * from "./observation-summary.js";
 export * from "./plans.js";
 export * from "./reason-facts.js";
 export * from "./shelters.js";
 export * from "./state-migrations.js";
 export * from "./versions.js";
-export { keyedRandomUnit, keyedRandomU32, nextRandomU32 } from "./rng.js";
+export {
+  keyedRandomUnit,
+  keyedRandomU32,
+  naturalLifespanTicksFor,
+  nextRandomU32,
+} from "./rng.js";
 export {
   findPath,
   findWeightedPath,

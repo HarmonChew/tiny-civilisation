@@ -1,4 +1,5 @@
 import { emitDomainEvent } from "../events.js";
+import { recordCriticalDamage } from "../lifecycle.js";
 import type { SimulationState } from "../types.js";
 
 const UNIT_MAX = 10_000;
@@ -19,17 +20,14 @@ export function updateNeeds(state: SimulationState): void {
     creature.needs.fatigue = clampUnit(
       creature.needs.fatigue + (moving ? 4 : creature.activeAction ? 3 : 1),
     );
-    if (creature.needs.hunger >= 9_400) {
-      creature.health = clamp(creature.health - 2, 1_200, UNIT_MAX);
-    }
-    if (creature.needs.fatigue >= 9_500) {
-      creature.health = clamp(creature.health - 1, 1_200, UNIT_MAX);
-    }
-    if (creature.needs.thirst >= 9_400) {
-      creature.health = clamp(creature.health - 3, 1_200, UNIT_MAX);
-    }
+    const starvationDamage = creature.needs.hunger >= 9_400 ? 2 : 0;
+    const exhaustionDamage = creature.needs.fatigue >= 9_500 ? 1 : 0;
+    const dehydrationDamage = creature.needs.thirst >= 9_400 ? 3 : 0;
+    const hardshipDamage = starvationDamage + exhaustionDamage + dehydrationDamage;
+    creature.health = clamp(creature.health - hardshipDamage, 0, UNIT_MAX);
+    const criticalCauseEventIds: number[] = [];
     if (previousThirst < 8_000 && creature.needs.thirst >= 8_000) {
-      emitDomainEvent(state, {
+      const severeThirstEvent = emitDomainEvent(state, {
         type: "SEVERE_THIRST_STARTED",
         actorIds: [creature.id],
         groupIds: creature.groupId === null ? [] : [creature.groupId],
@@ -38,8 +36,19 @@ export function updateNeeds(state: SimulationState): void {
         importance: 58,
         summary: `${creature.name} entered severe thirst.`,
       });
+      criticalCauseEventIds.push(severeThirstEvent.id);
       creature.nextDecisionTick = Math.min(creature.nextDecisionTick, state.tick + 1);
     }
+    recordCriticalDamage(
+      state,
+      creature,
+      {
+        starvation: starvationDamage,
+        dehydration: dehydrationDamage,
+        exhaustion: exhaustionDamage,
+      },
+      criticalCauseEventIds,
+    );
   }
 }
 

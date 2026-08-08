@@ -194,6 +194,16 @@ describe("versioned simulation contracts", () => {
     expect(snapshot.schemaVersion).toBe(SNAPSHOT_SCHEMA_VERSION);
     expect(snapshot.behaviorVersion).toBe(SIMULATION_BEHAVIOR_VERSION);
     expect(createRenderSnapshotEnvelope(snapshot).snapshot).toBe(snapshot);
+    expect(snapshot.tiles).toHaveLength(snapshot.width * snapshot.height);
+    expect(Object.keys(snapshot.tiles[0]!).sort()).toEqual(["blocked", "terrain"]);
+    for (const [index, tile] of snapshot.tiles.entries()) {
+      expect(tile).toEqual({
+        terrain: state.world.tiles[index]!.terrain,
+        blocked: state.world.tiles[index]!.blocked,
+      });
+      expect(index % snapshot.width).toBe(state.world.tiles[index]!.x);
+      expect(Math.floor(index / snapshot.width)).toBe(state.world.tiles[index]!.y);
+    }
 
     const scheduled = queuePlayerCommand(state, command.command);
     const replay = createSimulationReplay(state.seed, [scheduled]);
@@ -392,14 +402,14 @@ describe("versioned simulation contracts", () => {
       waterDrunk: 0,
       waterShared: 0,
     });
-    const hydrationMigration = first.domainEvents.at(-2);
+    const hydrationMigration = first.domainEvents.at(-3);
     expect(hydrationMigration).toMatchObject({
       tick: legacyState.tick,
       type: "HYDRATION_RULES_ENABLED",
       resourceKind: "WATER",
       quantity: 1,
     });
-    const shelterMigration = first.domainEvents.at(-1);
+    const shelterMigration = first.domainEvents.at(-2);
     expect(shelterMigration).toMatchObject({
       tick: legacyState.tick,
       type: "SHELTER_RULES_ENABLED",
@@ -408,7 +418,7 @@ describe("versioned simulation contracts", () => {
     });
     expect(
       first.domainEvents
-        .slice(0, -2)
+        .slice(0, -3)
         .every(
           (event) =>
             event.resourceKind !== "WATER" &&

@@ -16,6 +16,8 @@ const EMERGENCY_ACTIONS = new Set<ActionKind>([
   "WITHDRAW",
   "STEAL",
   "FLEE",
+  "REST",
+  "REST_SHELTERED",
 ]);
 
 function compareCandidates(left: DecisionCandidate, right: DecisionCandidate): number {

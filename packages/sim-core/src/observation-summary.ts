@@ -30,6 +30,10 @@ const ACTION_LABELS: Record<ActionKind, string> = {
   ATTACK: "confronting a threat",
   FLEE: "fleeing",
   JOIN_GROUP: "approaching a group",
+  FORM_FAMILY: "forming a family",
+  CARE_FOR_YOUNG: "caring for a child",
+  MOURN: "mourning",
+  CLAIM_ESTATE: "claiming an estate",
 };
 
 function cloneFact(fact: ReasonFact): ReasonFact {

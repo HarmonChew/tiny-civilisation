@@ -28,6 +28,56 @@ const OUTCOME_LABEL_IDS = [
   "QUIET_STALEMATE",
 ] as const;
 
+const PHASE_4_2_HARD_INVARIANT_IDS = new Set([
+  "PROFILE_SCENARIO_IDENTITY_MATCH",
+  "PROFILE_COMPILED_MAP_HASH_MATCH",
+  "CRITICAL_RESOURCE_REACHABILITY",
+  "OCCUPIED_TILE_P10",
+  "OCCUPIED_TILE_MEDIAN",
+  "EXACT_OVERLAP_RATE",
+  "PER_SEED_KEEP_SHARE",
+]);
+
+const PHASE_4_3_DESIRE_KINDS = new Set([
+  "RAISE_FAMILY",
+  "HONOUR_THE_DEAD",
+  "SETTLE_ESTATE",
+]);
+
+function freezeScenarioIdentity(value: unknown): void {
+  const scenario = objectAt(value, "scenario identity");
+  scenario.schemaVersion = 2;
+  scenario.behaviorVersion = 5;
+  scenario.scenarioVersion = 2;
+  scenario.mapGenerationVersion = 1;
+}
+
+function preparePhase42Profile(value: unknown): void {
+  const profile = objectAt(value, "profile");
+  profile.schemaVersion = 5;
+  freezeScenarioIdentity(profile.scenario);
+  delete profile.lifecycle;
+
+  const desires = objectAt(profile.desires, "profile desires");
+  desires.byKind = arrayAt(desires.byKind, "profile desire kinds").filter((item) => {
+    const kind = objectAt(item, "profile desire kind").kind;
+    return typeof kind !== "string" || !PHASE_4_3_DESIRE_KINDS.has(kind);
+  });
+  desires.byFamily = arrayAt(desires.byFamily, "profile desire families").filter(
+    (item) => objectAt(item, "profile desire family").family !== "LIFECYCLE",
+  );
+}
+
+function preparePhase42HardInvariants(value: unknown): void {
+  const report = objectAt(value, "hard invariants");
+  report.evaluations = arrayAt(report.evaluations, "hard-invariant evaluations").filter(
+    (item) => {
+      const id = objectAt(item, "hard-invariant evaluation").id;
+      return typeof id === "string" && PHASE_4_2_HARD_INVARIANT_IDS.has(id);
+    },
+  );
+}
+
 function objectAt(value: unknown, label: string): MutableRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Synthetic matrix fixture expected ${label} to be an object.`);
@@ -67,8 +117,10 @@ function prepareRun(template: unknown, seed: number, gateStatus: string): Mutabl
   run.seed = seed;
   run.requestedTicks = 10_000;
   objectAt(run.scenario, "run scenario").seed = seed;
+  freezeScenarioIdentity(run.scenario);
 
   const profile = objectAt(run.profile, "run profile");
+  preparePhase42Profile(profile);
   profile.seed = seed;
   objectAt(profile.scenario, "profile scenario").seed = seed;
   const window = objectAt(profile.window, "profile window");
@@ -82,11 +134,13 @@ function prepareRun(template: unknown, seed: number, gateStatus: string): Mutabl
   objectAt(profile.scenarioSpatial, "profile scenario spatial").observedTicks = 10_000;
 
   const outcome = objectAt(run.outcomeSummary, "run outcome");
+  outcome.classifierVersion = 3;
   outcome.seed = seed;
   outcome.evaluatedLabelIds = [...OUTCOME_LABEL_IDS];
   outcome.notEvaluatedLabelIds = [];
 
   const invariants = objectAt(run.hardInvariants, "run invariants");
+  preparePhase42HardInvariants(invariants);
   invariants.seed = seed;
   invariants.status = gateStatus;
   setEvaluationStatuses(invariants.evaluations, gateStatus);
@@ -126,6 +180,7 @@ function prepareDominanceEvaluations(value: unknown, gateStatus: string): unknow
 
 function prepareActivity(value: unknown): void {
   const activity = objectAt(value, "scenario activity");
+  delete activity.lifecycle;
   activity.runCount = 64;
   activity.totalObservedTicks = 640_000;
   const settlement = objectAt(activity.settlement, "settlement aggregate");
@@ -145,6 +200,8 @@ function prepareScenarioAnalysis(
 ): void {
   const gateStatus = frozenPass ? "PASS" : "NOT_EVALUATED";
   const analysis = objectAt(value, "scenario analysis");
+  analysis.schemaVersion = 4;
+  freezeScenarioIdentity(analysis.scenario);
   const outcomes = objectAt(analysis.outcomes, "scenario outcomes");
   outcomes.perRun = scenarioRuns.map((run) => structuredClone(run.outcomeSummary));
   prepareOutcomeIncidence(outcomes.incidence);
@@ -267,6 +324,7 @@ function prepareFrozenPairedBands(value: unknown, frozenPass: boolean): void {
  */
 export function completeCalibrationMatrixFixture(frozenPass: boolean): MutableRecord {
   const base = structuredClone(completeBaseMatrix());
+  base.schemaVersion = 5;
   const configuration = objectAt(base.configuration, "matrix configuration");
   configuration.corpus = "phase-4.2-calibration";
   configuration.scenarios = [...SCENARIO_IDS];
@@ -274,6 +332,14 @@ export function completeCalibrationMatrixFixture(frozenPass: boolean): MutableRe
   configuration.ticksPerRun = 10_000;
   configuration.repeatCount = 0;
   configuration.executionsPerCase = 1;
+  configuration.scenarioAnalysisSchemaVersion = 4;
+  configuration.outcomeClassifierVersion = 3;
+  for (const definition of arrayAt(
+    configuration.scenarioDefinitions,
+    "matrix scenario definitions",
+  )) {
+    freezeScenarioIdentity(definition);
+  }
   configuration.phase42DefinitionContractSchemaVersion =
     PHASE_4_2_DEFINITION_CONTRACT_SCHEMA_VERSION;
   configuration.phase42DefinitionFingerprintAlgorithm =
@@ -306,8 +372,15 @@ export function completeCalibrationMatrixFixture(frozenPass: boolean): MutableRe
   base.runs = runs;
 
   const aggregate = objectAt(base.aggregate, "matrix aggregate");
+  for (const definition of arrayAt(
+    aggregate.scenarioDefinitions,
+    "aggregate scenario definitions",
+  )) {
+    freezeScenarioIdentity(definition);
+  }
   for (const value of arrayAt(aggregate.byScenario, "scenario aggregates")) {
     const scenarioAggregate = objectAt(value, "scenario aggregate");
+    freezeScenarioIdentity(scenarioAggregate.scenario);
     const scenarioId = objectAt(
       scenarioAggregate.scenario,
       "scenario aggregate identity",

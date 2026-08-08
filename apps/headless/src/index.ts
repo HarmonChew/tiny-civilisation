@@ -76,6 +76,40 @@ import {
   PHASE_4_2_DEFINITION_FINGERPRINT,
   PHASE_4_2_DEFINITION_FINGERPRINT_ALGORITHM,
 } from "./phase-4.2-definition-contract.js";
+import {
+  PHASE_4_3_CALIBRATION_SEEDS,
+  PHASE_4_3_AUTOMATED_RELEASE_CHECK_PATH,
+  PHASE_4_3_CALIBRATION_FREEZE_REVIEW_PATH,
+  PHASE_4_3_CALIBRATION_VERIFICATION_REVIEW_PATH,
+  PHASE_4_3_CALIBRATION_DISCOVERY_OUTPUT_PATH,
+  PHASE_4_3_CALIBRATION_VERIFICATION_OUTPUT_PATH,
+  PHASE_4_3_DEPLOYMENT_SMOKE_PATH,
+  PHASE_4_3_FINAL_NVDA_PATH,
+  PHASE_4_3_HOLDOUT_OUTPUT_PATH,
+  PHASE_4_3_HOLDOUT_POLICY,
+  PHASE_4_3_HOLDOUT_SEEDS,
+  PHASE_4_3_HOLDOUT_STATUS,
+  PHASE_4_3_MATRIX_TICKS,
+  acquirePhase43HoldoutAttempt,
+  assertNotReservedPhase43HoldoutCorpus,
+  assertPhase43CalibrationExecutionRequest,
+  assertPhase43HoldoutExecutionRequest,
+  phase43CalibrationOutputPath,
+  type Phase43HoldoutExecutionRequest,
+} from "./phase-4.3-corpora.js";
+import {
+  PHASE_4_3_DEFINITION_CONTRACT,
+  PHASE_4_3_DEFINITION_CONTRACT_SCHEMA_VERSION,
+  PHASE_4_3_DEFINITION_FINGERPRINT,
+  PHASE_4_3_DEFINITION_FINGERPRINT_ALGORITHM,
+  PHASE_4_3_DEFINITION_STATUS,
+} from "./phase-4.3-definition-contract.js";
+import {
+  authenticatePhase43CalibrationArtifact,
+  authenticatePhase43HashedArtifact,
+  authenticatePhase43ReleaseEvidenceArtifact,
+} from "./phase-4.3-release-auth.js";
+import { acquirePhase43HoldoutAfterReleaseAuthentication } from "./phase-4.3-execution-order.js";
 import { phase42BandsAreFrozen } from "./scenario-bands.js";
 
 const DEFAULT_SEED = 4_182;
@@ -89,9 +123,13 @@ const MATRIX_CORPUS_NAMES = [
   "holdout",
   "phase-4.2-calibration",
   "phase-4.2-holdout",
+  "phase-4.3-calibration",
+  "phase-4.3-holdout",
 ] as const;
 const PHASE_4_2_PROTECTED_EXECUTION = Symbol("phase-4.2-protected-execution");
-type ProtectedExecutionAuthorization = typeof PHASE_4_2_PROTECTED_EXECUTION;
+const PHASE_4_3_PROTECTED_EXECUTION = Symbol("phase-4.3-protected-execution");
+type ProtectedExecutionAuthorization =
+  typeof PHASE_4_2_PROTECTED_EXECUTION | typeof PHASE_4_3_PROTECTED_EXECUTION;
 
 type MatrixCorpusName = (typeof MATRIX_CORPUS_NAMES)[number];
 
@@ -151,8 +189,10 @@ function usage(): string {
     "  npm run headless -- [run] [--scenario ID] [--seed N] [--ticks N]",
     "  npm run headless -- batch [--scenario ID] [--seeds 1..100|1,4,8] [--count N] [--ticks N]",
     "  npm run headless -- profile [--scenario ID] [--seed N|--seeds 4182,921,23|--count N] [--ticks N]",
-    "  npm run headless -- matrix [--corpus smoke|nightly|calibration|holdout|phase-4.2-calibration|phase-4.2-holdout] [--ticks N] [--output PATH.json.gz]",
+    "  npm run headless -- matrix [--corpus smoke|nightly|calibration|holdout|phase-4.2-calibration|phase-4.2-holdout|phase-4.3-calibration|phase-4.3-holdout] [--ticks N] [--output PATH.json.gz]",
     "  npm run headless -- phase-4.2-definition-contract",
+    "  npm run headless -- phase-4.3-definition-contract",
+    "  npm run headless -- phase-4.3-definition-fingerprint",
     "  npm run headless -- definition-fingerprint",
     "",
     "Options:",
@@ -163,6 +203,7 @@ function usage(): string {
     "  --count N      Run seeds 1 through N when --seeds is omitted",
     "  --corpus NAME   Locked matrix corpus (default: smoke)",
     `                    Phase 4.2 holdout is ${PHASE_4_2_HOLDOUT_STATUS.toLowerCase()} while bands are ${PHASE_4_2_BAND_FREEZE_STATUS.toLowerCase().replace("_", " ")}`,
+    `                    Phase 4.3 holdout is ${PHASE_4_3_HOLDOUT_STATUS.toLowerCase()} pending reviewed lifecycle calibration and final NVDA`,
     "  --output PATH   Also write deterministic .json.gz, .sha256, and .md evidence files",
     "  --help, -h     Show this help",
   ].join("\n");
@@ -223,12 +264,19 @@ function matrixCorpusSeeds(corpus: MatrixCorpusName): readonly number[] {
       return SCENARIO_CALIBRATION_SEEDS;
     case "phase-4.2-holdout":
       return PHASE_4_2_HOLDOUT_SEEDS;
+    case "phase-4.3-calibration":
+      return PHASE_4_3_CALIBRATION_SEEDS;
+    case "phase-4.3-holdout":
+      return PHASE_4_3_HOLDOUT_SEEDS;
   }
 }
 
 function matrixCorpusTicks(corpus: MatrixCorpusName): number {
   if (corpus === "phase-4.2-calibration" || corpus === "phase-4.2-holdout") {
     return PHASE_4_2_MATRIX_TICKS;
+  }
+  if (corpus === "phase-4.3-calibration" || corpus === "phase-4.3-holdout") {
+    return PHASE_4_3_MATRIX_TICKS;
   }
   return corpus === "smoke"
     ? SCENARIO_MEASUREMENT_HORIZONS.smokeTicks
@@ -392,6 +440,7 @@ function assertGenericCommandDoesNotUseReservedHoldout(
 ): void {
   try {
     assertNotReservedPhase42HoldoutCorpus(command, seeds, ticks);
+    assertNotReservedPhase43HoldoutCorpus(command, seeds, ticks);
   } catch (error) {
     throw new CliError(error instanceof Error ? error.message : String(error));
   }
@@ -423,9 +472,12 @@ export function parseMatrixOptions(args: readonly string[]): MatrixOptions {
     }
   }
 
-  const phase42Corpus =
-    corpus === "phase-4.2-calibration" || corpus === "phase-4.2-holdout";
-  if (phase42Corpus && ticksSpecified) {
+  const lockedPhaseCorpus =
+    corpus === "phase-4.2-calibration" ||
+    corpus === "phase-4.2-holdout" ||
+    corpus === "phase-4.3-calibration" ||
+    corpus === "phase-4.3-holdout";
+  if (lockedPhaseCorpus && ticksSpecified) {
     throw new CliError(`${corpus} has a locked 10,000-tick horizon; --ticks is forbidden.`);
   }
   const canonicalOutputPath =
@@ -433,7 +485,11 @@ export function parseMatrixOptions(args: readonly string[]): MatrixOptions {
       ? phase42CalibrationOutputPath()
       : corpus === "phase-4.2-holdout"
         ? PHASE_4_2_HOLDOUT_OUTPUT_PATH
-        : undefined;
+        : corpus === "phase-4.3-calibration"
+          ? phase43CalibrationOutputPath()
+          : corpus === "phase-4.3-holdout"
+            ? PHASE_4_3_HOLDOUT_OUTPUT_PATH
+            : undefined;
   if (
     canonicalOutputPath !== undefined &&
     outputPath !== undefined &&
@@ -461,9 +517,13 @@ function assertRawExecutionIsAuthorized(
   ticks: number,
   authorization?: ProtectedExecutionAuthorization,
 ): void {
-  if (authorization === PHASE_4_2_PROTECTED_EXECUTION) return;
   try {
-    assertNotReservedPhase42HoldoutCorpus("raw simulation", [seed], ticks);
+    if (authorization !== PHASE_4_2_PROTECTED_EXECUTION) {
+      assertNotReservedPhase42HoldoutCorpus("raw simulation", [seed], ticks);
+    }
+    if (authorization !== PHASE_4_3_PROTECTED_EXECUTION) {
+      assertNotReservedPhase43HoldoutCorpus("raw simulation", [seed], ticks);
+    }
   } catch (error) {
     throw new CliError(error instanceof Error ? error.message : String(error));
   }
@@ -682,6 +742,38 @@ function assertProtectedHoldoutRequest(
   return request;
 }
 
+function phase43DefinitionsAreFrozen(): boolean {
+  return (
+    (PHASE_4_3_DEFINITION_STATUS as string) === "FROZEN" &&
+    PHASE_4_3_HOLDOUT_POLICY.frozenDefinitionFingerprint ===
+      PHASE_4_3_DEFINITION_FINGERPRINT
+  );
+}
+
+function phase43HoldoutRequest(options: MatrixOptions): Phase43HoldoutExecutionRequest {
+  return {
+    scenarios: SCENARIO_CATALOG.map((scenario) => scenario.scenarioId),
+    seeds: options.seeds,
+    ticks: options.ticks,
+    outputPath: options.outputPath,
+    frozenDefinitionsReady: phase43DefinitionsAreFrozen(),
+    definitionFingerprint: PHASE_4_3_DEFINITION_FINGERPRINT,
+  };
+}
+
+function assertProtectedPhase43HoldoutRequest(
+  options: MatrixOptions,
+  invocationDirectory: string,
+): Phase43HoldoutExecutionRequest {
+  const request = phase43HoldoutRequest(options);
+  try {
+    assertPhase43HoldoutExecutionRequest(request, invocationDirectory);
+  } catch (error) {
+    throw new CliError(error instanceof Error ? error.message : String(error));
+  }
+  return request;
+}
+
 function executeMatrix(
   options: MatrixOptions,
   invocationDirectory = process.cwd(),
@@ -694,6 +786,13 @@ function executeMatrix(
         "Phase 4.2 holdout execution must be bound to the protected evidence writer.",
       );
     }
+  } else if (options.corpus === "phase-4.3-holdout") {
+    if (authorization !== PHASE_4_3_PROTECTED_EXECUTION) {
+      throw new CliError(
+        "Phase 4.3 holdout execution must be bound to the protected evidence writer.",
+      );
+    }
+    assertProtectedPhase43HoldoutRequest(options, invocationDirectory);
   } else if (options.corpus === "phase-4.2-calibration") {
     const expectedOutputPath = phase42CalibrationOutputPath();
     if (
@@ -728,6 +827,22 @@ function executeMatrix(
       );
     }
     try {
+      assertMatrixEvidenceTargetsAbsent(expectedOutputPath, invocationDirectory);
+    } catch (error) {
+      throw new CliError(error instanceof Error ? error.message : String(error));
+    }
+  } else if (options.corpus === "phase-4.3-calibration") {
+    const expectedOutputPath = phase43CalibrationOutputPath();
+    try {
+      assertPhase43CalibrationExecutionRequest(
+        {
+          scenarios: SCENARIO_CATALOG.map((scenario) => scenario.scenarioId),
+          seeds: options.seeds,
+          ticks: options.ticks,
+          outputPath: options.outputPath,
+        },
+        invocationDirectory,
+      );
       assertMatrixEvidenceTargetsAbsent(expectedOutputPath, invocationDirectory);
     } catch (error) {
       throw new CliError(error instanceof Error ? error.message : String(error));
@@ -806,6 +921,16 @@ function executeMatrix(
           contract: PHASE_4_2_DEFINITION_CONTRACT,
         }
       : undefined;
+  const phase43Definition =
+    options.corpus === "phase-4.3-calibration" || options.corpus === "phase-4.3-holdout"
+      ? {
+          contractSchemaVersion: PHASE_4_3_DEFINITION_CONTRACT_SCHEMA_VERSION,
+          fingerprintAlgorithm: PHASE_4_3_DEFINITION_FINGERPRINT_ALGORITHM,
+          status: PHASE_4_3_DEFINITION_STATUS,
+          fingerprint: PHASE_4_3_DEFINITION_FINGERPRINT,
+          contract: PHASE_4_3_DEFINITION_CONTRACT,
+        }
+      : undefined;
   return deriveMatrixEvidenceReport({
     corpus: options.corpus,
     seeds: options.seeds,
@@ -814,6 +939,7 @@ function executeMatrix(
     runs,
     determinismComparisons,
     ...(phase42Definition === undefined ? {} : { phase42Definition }),
+    ...(phase43Definition === undefined ? {} : { phase43Definition }),
   });
 }
 
@@ -821,10 +947,14 @@ export function runMatrix(
   options: MatrixOptions,
   invocationDirectory = process.cwd(),
 ): object {
-  if (options.corpus === "phase-4.2-holdout") {
-    assertProtectedHoldoutRequest(options, invocationDirectory);
+  if (options.corpus === "phase-4.2-holdout" || options.corpus === "phase-4.3-holdout") {
+    if (options.corpus === "phase-4.2-holdout") {
+      assertProtectedHoldoutRequest(options, invocationDirectory);
+    } else {
+      assertProtectedPhase43HoldoutRequest(options, invocationDirectory);
+    }
     throw new CliError(
-      "Imported runMatrix cannot execute the Phase 4.2 holdout without its protected evidence writer.",
+      `Imported runMatrix cannot execute the ${options.corpus === "phase-4.2-holdout" ? "Phase 4.2" : "Phase 4.3"} holdout without its protected evidence writer.`,
     );
   }
   return executeMatrix(options, invocationDirectory);
@@ -877,6 +1007,120 @@ function runProtectedHoldoutAndWrite(
   return report;
 }
 
+function requiredPhase43Provenance(value: string | null, label: string): string {
+  if (value === null) {
+    throw new Error(`Phase 4.3 holdout authentication requires ${label}.`);
+  }
+  return value;
+}
+
+function runProtectedPhase43HoldoutAndWrite(
+  options: MatrixOptions,
+  invocationDirectory: string,
+): MatrixEvidenceReport {
+  const request = assertProtectedPhase43HoldoutRequest(options, invocationDirectory);
+  try {
+    const provenance = PHASE_4_3_HOLDOUT_POLICY.provenance;
+    const frozenFingerprint = requiredPhase43Provenance(
+      PHASE_4_3_HOLDOUT_POLICY.frozenDefinitionFingerprint,
+      "a frozen definition fingerprint",
+    );
+    const releaseCandidateCommit = requiredPhase43Provenance(
+      provenance.releaseCandidateCommit,
+      "a release-candidate commit",
+    );
+    let packageSha256: string | undefined;
+    acquirePhase43HoldoutAfterReleaseAuthentication(
+      () => {
+        authenticatePhase43CalibrationArtifact(
+          resolve(invocationDirectory, PHASE_4_3_CALIBRATION_DISCOVERY_OUTPUT_PATH),
+          requiredPhase43Provenance(
+            provenance.discoveryArtifactSha256,
+            "a discovery artifact SHA-256",
+          ),
+          "CANDIDATE",
+          null,
+        );
+        authenticatePhase43HashedArtifact(
+          resolve(invocationDirectory, PHASE_4_3_CALIBRATION_FREEZE_REVIEW_PATH),
+          requiredPhase43Provenance(
+            provenance.freezeReviewArtifactSha256,
+            "a freeze-review artifact SHA-256",
+          ),
+          "freeze review artifact",
+        );
+      },
+      () => {
+        authenticatePhase43CalibrationArtifact(
+          resolve(invocationDirectory, PHASE_4_3_CALIBRATION_VERIFICATION_OUTPUT_PATH),
+          requiredPhase43Provenance(
+            provenance.verificationArtifactSha256,
+            "a verification artifact SHA-256",
+          ),
+          "FROZEN",
+          frozenFingerprint,
+        );
+        authenticatePhase43HashedArtifact(
+          resolve(invocationDirectory, PHASE_4_3_CALIBRATION_VERIFICATION_REVIEW_PATH),
+          requiredPhase43Provenance(
+            provenance.verificationReviewArtifactSha256,
+            "a verification-review artifact SHA-256",
+          ),
+          "verification review artifact",
+        );
+      },
+      () => {
+        packageSha256 = authenticatePhase43ReleaseEvidenceArtifact(
+          resolve(invocationDirectory, PHASE_4_3_AUTOMATED_RELEASE_CHECK_PATH),
+          requiredPhase43Provenance(
+            provenance.automatedReleaseCheckArtifactSha256,
+            "an automated release-check artifact SHA-256",
+          ),
+          "tiny-civilisation/phase-4.3-automated-release-check",
+          releaseCandidateCommit,
+          frozenFingerprint,
+        ).packageSha256;
+      },
+      () => {
+        authenticatePhase43ReleaseEvidenceArtifact(
+          resolve(invocationDirectory, PHASE_4_3_DEPLOYMENT_SMOKE_PATH),
+          requiredPhase43Provenance(
+            provenance.deploymentSmokeArtifactSha256,
+            "a deployment-smoke artifact SHA-256",
+          ),
+          "tiny-civilisation/phase-4.3-deployment-smoke",
+          releaseCandidateCommit,
+          frozenFingerprint,
+          packageSha256,
+        );
+      },
+      () => {
+        authenticatePhase43ReleaseEvidenceArtifact(
+          resolve(invocationDirectory, PHASE_4_3_FINAL_NVDA_PATH),
+          requiredPhase43Provenance(
+            provenance.finalNvdaArtifactSha256,
+            "a final-NVDA artifact SHA-256",
+          ),
+          "tiny-civilisation/phase-4.3-final-nvda",
+          releaseCandidateCommit,
+          frozenFingerprint,
+          packageSha256,
+        );
+      },
+      () => acquirePhase43HoldoutAttempt(request, invocationDirectory),
+    );
+  } catch (error) {
+    throw new CliError(error instanceof Error ? error.message : String(error));
+  }
+  const report = executeMatrix(
+    options,
+    invocationDirectory,
+    PHASE_4_3_PROTECTED_EXECUTION,
+  ) as MatrixEvidenceReport;
+  writeMatrixEvidence(report, PHASE_4_3_HOLDOUT_OUTPUT_PATH, invocationDirectory);
+  return report;
+}
+
 export function main(args: readonly string[]): void {
   if (args.includes("--help") || args.includes("-h")) {
     process.stdout.write(`${usage()}\n`);
@@ -896,6 +1140,28 @@ export function main(args: readonly string[]): void {
         contract: PHASE_4_2_DEFINITION_CONTRACT,
       })}\n`,
     );
+    return;
+  }
+  if (first === "phase-4.3-definition-contract") {
+    if (rest.length > 0) {
+      throw new CliError("phase-4.3-definition-contract accepts no options.");
+    }
+    process.stdout.write(
+      `${JSON.stringify({
+        schemaVersion: PHASE_4_3_DEFINITION_CONTRACT_SCHEMA_VERSION,
+        fingerprintAlgorithm: PHASE_4_3_DEFINITION_FINGERPRINT_ALGORITHM,
+        status: PHASE_4_3_DEFINITION_STATUS,
+        fingerprint: PHASE_4_3_DEFINITION_FINGERPRINT,
+        contract: PHASE_4_3_DEFINITION_CONTRACT,
+      })}\n`,
+    );
+    return;
+  }
+  if (first === "phase-4.3-definition-fingerprint") {
+    if (rest.length > 0) {
+      throw new CliError("phase-4.3-definition-fingerprint accepts no options.");
+    }
+    process.stdout.write(`${PHASE_4_3_DEFINITION_FINGERPRINT}\n`);
     return;
   }
   if (first === "definition-fingerprint") {
@@ -921,8 +1187,14 @@ export function main(args: readonly string[]): void {
     const report =
       options.corpus === "phase-4.2-holdout"
         ? runProtectedHoldoutAndWrite(options, invocationDirectory)
-        : (runMatrix(options, invocationDirectory) as MatrixEvidenceReport);
-    if (options.corpus !== "phase-4.2-holdout" && options.outputPath !== undefined) {
+        : options.corpus === "phase-4.3-holdout"
+          ? runProtectedPhase43HoldoutAndWrite(options, invocationDirectory)
+          : (runMatrix(options, invocationDirectory) as MatrixEvidenceReport);
+    if (
+      options.corpus !== "phase-4.2-holdout" &&
+      options.corpus !== "phase-4.3-holdout" &&
+      options.outputPath !== undefined
+    ) {
       writeMatrixEvidence(report, options.outputPath, invocationDirectory);
     }
     for (const chunk of matrixEvidenceStdoutChunks(report)) process.stdout.write(chunk);

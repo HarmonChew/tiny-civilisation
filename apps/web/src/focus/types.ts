@@ -7,6 +7,8 @@ export type WorldRef =
   | { readonly kind: "creature"; readonly id: EntityId }
   | { readonly kind: "resource"; readonly id: EntityId }
   | { readonly kind: "structure"; readonly id: EntityId }
+  | { readonly kind: "memorial"; readonly id: EntityId }
+  | { readonly kind: "life-record"; readonly id: EntityId }
   | { readonly kind: "group"; readonly id: EntityId }
   | { readonly kind: "event"; readonly id: number }
   | { readonly kind: "memory"; readonly id: number }
@@ -52,6 +54,8 @@ export function worldRefKey(ref: WorldRef): string {
     case "creature":
     case "resource":
     case "structure":
+    case "memorial":
+    case "life-record":
     case "group":
     case "event":
     case "memory":

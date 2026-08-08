@@ -119,3 +119,16 @@ separately and is complete.
 
 All automated release-candidate gates above pass, but Phase 4.2 remains
 release-incomplete until the inherited and Phase 4.2 human records are complete.
+
+## Administrative disposition of the unexecuted human workflow
+
+`SUPERSEDED_UNEXECUTED_BY_PHASE_4_3_UNIFIED_ALPHA_PROTOCOL`
+
+As of 8 August 2026, the outstanding inherited and Phase 4.2 manual NVDA,
+formative, and confirmatory workflows are administratively superseded by the
+single lifecycle-integrated Phase 4.3 unified-alpha protocol. This records that
+those old workflows will not be executed separately; it does not record a pass,
+waiver, or retroactive Phase 4.2 release. All Phase 4.2 automated artifacts,
+including the consumed holdout, retain their existing historical status. A
+final alpha claim depends on completing the Phase 4.3 protocol on the integrated
+candidate.

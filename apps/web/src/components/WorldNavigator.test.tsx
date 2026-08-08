@@ -115,6 +115,70 @@ const callbacks = () => ({
 afterEach(() => vi.useRealTimers());
 
 describe("WorldNavigator", () => {
+  it("exposes temporary memorials and permanent records in a remembered view", () => {
+    const actions = callbacks();
+    const lifecycleView: WorldView = {
+      ...baseView,
+      memorials: [
+        {
+          id: 700,
+          deceasedId: 77,
+          deceasedName: "Iri",
+          tileIndex: 26,
+          x: 2,
+          y: 2,
+          createdTick: 8,
+          expiresTick: 608,
+          heirId: 1,
+          estate: { food: 1, material: 2, water: 3 },
+          mournersRemaining: 2,
+        },
+      ],
+      lifeRecords: [
+        {
+          id: 77,
+          name: "Iri",
+          color: 0x8ea66c,
+          sex: "FEMALE",
+          childIds: [1],
+          birthTick: -10_000,
+          deathTick: 8,
+          ageTicks: 10_008,
+          finalLifeStage: "ADULT",
+          deathCause: "DEHYDRATION",
+          inheritedTraits: [],
+          skillPotential: [],
+          majorEventIds: [91],
+          heirId: 1,
+        },
+      ],
+    };
+    render(
+      <WorldNavigator
+        view={lifecycleView}
+        selectedRef={{ kind: "creature", id: 77 }}
+        focusedRef={null}
+        keyboardFocusedRef={null}
+        {...actions}
+      />,
+    );
+
+    expect(
+      screen.getByText(/Iri has died; selection remains on their permanent life record/),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remembered" }));
+    const remembered = screen.getByRole("list", {
+      name: "Remembered in spatial order",
+    });
+    expect(within(remembered).getAllByRole("listitem")).toHaveLength(2);
+    expect(
+      screen
+        .getByRole("button", { name: /Iri, permanent life record/ })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(screen.getByRole("button", { name: /Iri's temporary memorial/ })).toBeTruthy();
+  });
+
   it("renders one semantic list in deterministic spatial, ID, and kind order", () => {
     const actions = callbacks();
     render(

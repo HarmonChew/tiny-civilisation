@@ -5,6 +5,8 @@ import type {
   CausalEvidenceRef,
   ExperimentOutcomeComparisonV1,
   ExperimentOutcomeV1,
+  LifeRecordPage,
+  LifeRecordQuery,
   PlayerCommand,
   RenderSnapshot,
   ScheduledPlayerCommand,
@@ -58,6 +60,9 @@ export interface RuntimeInterventionOutcomeProjection {
   readonly commandId: number;
   readonly outcome: SettledInterventionOutcomeV1 | null;
 }
+
+export type RuntimeLifeRecordQuery = Immutable<LifeRecordQuery>;
+export type RuntimeLifeRecordPage = Immutable<LifeRecordPage>;
 
 export interface RuntimeQueryOptions {
   readonly signal?: AbortSignal;
@@ -152,6 +157,10 @@ export interface SimulationRuntime {
     ref: CausalEvidenceRef,
     options?: RuntimeQueryOptions,
   ): RuntimeEntityDetail;
+  getLifeRecords(
+    query?: RuntimeLifeRecordQuery,
+    options?: RuntimeQueryOptions,
+  ): RuntimeLifeRecordPage;
   getInterventionOutcomes(
     commands: readonly ScheduledPlayerCommand[],
     options?: RuntimeQueryOptions,
@@ -202,6 +211,10 @@ export interface SimulationEngine {
     ref: CausalEvidenceRef,
     options?: RuntimeQueryOptions,
   ): Promise<RuntimeEntityDetail>;
+  getLifeRecords(
+    query?: RuntimeLifeRecordQuery,
+    options?: RuntimeQueryOptions,
+  ): Promise<RuntimeLifeRecordPage>;
   getInterventionOutcomes(
     commands: readonly ScheduledPlayerCommand[],
     options?: RuntimeQueryOptions,

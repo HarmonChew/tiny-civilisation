@@ -13,6 +13,11 @@ import {
 import type { ActivityProfile, BinaryOutcomeAggregate } from "./activity-collector.js";
 import { PHASE_4_2_HOLDOUT_SEEDS, PHASE_4_2_MATRIX_TICKS } from "./phase-4.2-corpora.js";
 import {
+  PHASE_4_3_CALIBRATION_SEEDS,
+  PHASE_4_3_HOLDOUT_SEEDS,
+  PHASE_4_3_MATRIX_TICKS,
+} from "./phase-4.3-corpora.js";
+import {
   PAIRED_MACRO_BANDS,
   PAIRED_MACRO_BAND_TABLE_VERSION,
   PHASE_4_1_CALIBRATION_SEED_COUNT,
@@ -48,8 +53,8 @@ import {
   type ScenarioDefinitionIdentity,
 } from "./scenario-reporting.js";
 
-export const SCENARIO_ANALYSIS_SCHEMA_VERSION = 4 as const;
-export const OUTCOME_CLASSIFIER_VERSION = 3 as const;
+export const SCENARIO_ANALYSIS_SCHEMA_VERSION = 5 as const;
+export const OUTCOME_CLASSIFIER_VERSION = 4 as const;
 
 export type ScenarioCorpusName =
   | "smoke"
@@ -57,7 +62,9 @@ export type ScenarioCorpusName =
   | "calibration"
   | "holdout"
   | "phase-4.2-calibration"
-  | "phase-4.2-holdout";
+  | "phase-4.2-holdout"
+  | "phase-4.3-calibration"
+  | "phase-4.3-holdout";
 
 export type OutcomeLabelId = ScenarioOutcomeLabelId;
 
@@ -95,6 +102,21 @@ export const PHASE_4_2_CLASSIFIER_RULES: Phase42ClassifierRules = Object.freeze(
   shelterCrowdingMinimumEvents: 1,
   guestShelteringMinimumEvents: 1,
   settlementRelocationMinimumCount: 1,
+});
+
+export interface Phase43ClassifierRules {
+  readonly visibleNewGenerationMinimumBirths: number;
+  readonly dependentYouthCareMinimumActions: number;
+  readonly mourningAndMemoryMinimumMournings: number;
+  readonly estateTransferredMinimumClaims: number;
+}
+
+/** Prospective classifier-v4 facts; calibration may review incidence, not rewrite predicates. */
+export const PHASE_4_3_CLASSIFIER_RULES: Phase43ClassifierRules = Object.freeze({
+  visibleNewGenerationMinimumBirths: 1,
+  dependentYouthCareMinimumActions: 1,
+  mourningAndMemoryMinimumMournings: 1,
+  estateTransferredMinimumClaims: 1,
 });
 
 /**
@@ -222,6 +244,8 @@ export interface ScenarioOutcomeBandReport {
       | "PHASE_4_2_CALIBRATION_CANDIDATE"
       | "FULL_PHASE_4_2_CALIBRATION"
       | "FULL_PHASE_4_2_HOLDOUT"
+      | "PHASE_4_3_CALIBRATION_CANDIDATE"
+      | "PHASE_4_3_NOT_FROZEN"
       | "PHASE_4_2_NOT_FROZEN"
       | "NOT_EVALUATED";
     readonly reason: string | null;
@@ -255,6 +279,7 @@ export interface ScenarioExpectedBandReport {
       | "FULL_CALIBRATION_PRESENT"
       | "PHASE_4_2_CANDIDATE_CALIBRATION_PRESENT"
       | "FULL_PHASE_4_2_CALIBRATION_PRESENT"
+      | "PHASE_4_3_CANDIDATE_CALIBRATION_PRESENT"
       | "NOT_PRESENT";
     readonly holdoutEvidence:
       "FULL_HOLDOUT_PRESENT" | "FULL_PHASE_4_2_HOLDOUT_PRESENT" | "NOT_PRESENT";
@@ -431,6 +456,31 @@ const OUTCOME_LABEL_ORDER: readonly OutcomeLabelId[] = [
   "SHELTER_CROWDING",
   "GUEST_SHELTERING",
   "SETTLEMENT_RELOCATION",
+  "VISIBLE_NEW_GENERATION",
+  "DEPENDENT_YOUTH_CARED_FOR",
+  "MOURNING_AND_MEMORY",
+  "ESTATE_TRANSFERRED",
+  "POPULATION_GROWTH",
+  "POPULATION_DECLINE",
+  "POPULATION_EXTINCTION",
+  "QUIET_STALEMATE",
+];
+
+/** Classifier-3 surface retained for Phase 4.2 dominance review. */
+const PHASE_4_2_OUTCOME_LABEL_ORDER: readonly OutcomeLabelId[] = [
+  "COOPERATIVE_SHARED_STORAGE",
+  "FRAGMENTED_SOCIAL_STRUCTURE",
+  "PERSISTENT_PRIVATE_RESERVES",
+  "RECURRING_CONFLICT",
+  "SHARED_HYDRATION",
+  "SOURCE_BOTTLENECK",
+  "PERSISTENT_DEHYDRATION",
+  "CONCENTRATED_WATER_ROUTES",
+  "ESTABLISHED_SETTLEMENT",
+  "CHRONIC_SHELTER_NEGLECT",
+  "SHELTER_CROWDING",
+  "GUEST_SHELTERING",
+  "SETTLEMENT_RELOCATION",
   "QUIET_STALEMATE",
 ];
 
@@ -461,6 +511,13 @@ const OUTCOME_LABEL_TITLES: Readonly<Record<OutcomeLabelId, string>> = {
   SHELTER_CROWDING: "Shelter crowding",
   GUEST_SHELTERING: "Guest sheltering",
   SETTLEMENT_RELOCATION: "Settlement relocation",
+  VISIBLE_NEW_GENERATION: "Visible new generation",
+  DEPENDENT_YOUTH_CARED_FOR: "Dependent youth cared for",
+  MOURNING_AND_MEMORY: "Mourning and memory",
+  ESTATE_TRANSFERRED: "Estate transferred",
+  POPULATION_GROWTH: "Population growth",
+  POPULATION_DECLINE: "Population decline",
+  POPULATION_EXTINCTION: "Population extinction",
   QUIET_STALEMATE: "Quiet stalemate",
 };
 
@@ -490,6 +547,14 @@ const CORPUS_CONTRACT: Readonly<
   "phase-4.2-holdout": {
     seeds: PHASE_4_2_HOLDOUT_SEEDS,
     ticks: PHASE_4_2_MATRIX_TICKS,
+  },
+  "phase-4.3-calibration": {
+    seeds: PHASE_4_3_CALIBRATION_SEEDS,
+    ticks: PHASE_4_3_MATRIX_TICKS,
+  },
+  "phase-4.3-holdout": {
+    seeds: PHASE_4_3_HOLDOUT_SEEDS,
+    ticks: PHASE_4_3_MATRIX_TICKS,
   },
 };
 
@@ -951,6 +1016,168 @@ export function summarizeRunOutcome(
         ],
       });
     }
+
+    if (
+      profile.lifecycle.population.births >=
+        PHASE_4_3_CLASSIFIER_RULES.visibleNewGenerationMinimumBirths &&
+      profile.lifecycle.generations.newGenerationIds.length >= 1 &&
+      profile.lifecycle.reproduction.twoKnownParentBirths >= 1
+    ) {
+      labels.push({
+        id: "VISIBLE_NEW_GENERATION",
+        title: OUTCOME_LABEL_TITLES.VISIBLE_NEW_GENERATION,
+        factualSummary:
+          "At least one two-parent birth produced a retained new-generation identity in the observed window.",
+        evidence: [
+          outcomeEvidence(
+            "profile.lifecycle.population.births",
+            profile.lifecycle.population.births,
+            "GTE",
+            PHASE_4_3_CLASSIFIER_RULES.visibleNewGenerationMinimumBirths,
+          ),
+          outcomeEvidence(
+            "profile.lifecycle.generations.newGenerationIds.length",
+            profile.lifecycle.generations.newGenerationIds.length,
+            "GTE",
+            1,
+          ),
+          outcomeEvidence(
+            "profile.lifecycle.reproduction.twoKnownParentBirths",
+            profile.lifecycle.reproduction.twoKnownParentBirths,
+            "GTE",
+            1,
+          ),
+        ],
+      });
+    }
+
+    if (
+      profile.lifecycle.generations.dependentYouthCreatureTicks >= 1 &&
+      profile.lifecycle.care.actions >=
+        PHASE_4_3_CLASSIFIER_RULES.dependentYouthCareMinimumActions
+    ) {
+      labels.push({
+        id: "DEPENDENT_YOUTH_CARED_FOR",
+        title: OUTCOME_LABEL_TITLES.DEPENDENT_YOUTH_CARED_FOR,
+        factualSummary:
+          "Dependent juvenile exposure and at least one care action were both observed.",
+        evidence: [
+          outcomeEvidence(
+            "profile.lifecycle.generations.dependentYouthCreatureTicks",
+            profile.lifecycle.generations.dependentYouthCreatureTicks,
+            "GTE",
+            1,
+          ),
+          outcomeEvidence(
+            "profile.lifecycle.care.actions",
+            profile.lifecycle.care.actions,
+            "GTE",
+            PHASE_4_3_CLASSIFIER_RULES.dependentYouthCareMinimumActions,
+          ),
+        ],
+      });
+    }
+
+    if (
+      profile.lifecycle.population.deaths >= 1 &&
+      profile.lifecycle.legacy.lifeRecordsAtHorizon >= 1 &&
+      profile.lifecycle.legacy.mourningCompletions >=
+        PHASE_4_3_CLASSIFIER_RULES.mourningAndMemoryMinimumMournings
+    ) {
+      labels.push({
+        id: "MOURNING_AND_MEMORY",
+        title: OUTCOME_LABEL_TITLES.MOURNING_AND_MEMORY,
+        factualSummary:
+          "A death, retained life record, and completed mourning were all observed.",
+        evidence: [
+          outcomeEvidence(
+            "profile.lifecycle.population.deaths",
+            profile.lifecycle.population.deaths,
+            "GTE",
+            1,
+          ),
+          outcomeEvidence(
+            "profile.lifecycle.legacy.lifeRecordsAtHorizon",
+            profile.lifecycle.legacy.lifeRecordsAtHorizon,
+            "GTE",
+            1,
+          ),
+          outcomeEvidence(
+            "profile.lifecycle.legacy.mourningCompletions",
+            profile.lifecycle.legacy.mourningCompletions,
+            "GTE",
+            PHASE_4_3_CLASSIFIER_RULES.mourningAndMemoryMinimumMournings,
+          ),
+        ],
+      });
+    }
+
+    if (
+      profile.lifecycle.legacy.estatesClaimed >=
+      PHASE_4_3_CLASSIFIER_RULES.estateTransferredMinimumClaims
+    ) {
+      labels.push({
+        id: "ESTATE_TRANSFERRED",
+        title: OUTCOME_LABEL_TITLES.ESTATE_TRANSFERRED,
+        factualSummary: "At least one estate claim transferred retained goods.",
+        evidence: [
+          outcomeEvidence(
+            "profile.lifecycle.legacy.estatesClaimed",
+            profile.lifecycle.legacy.estatesClaimed,
+            "GTE",
+            PHASE_4_3_CLASSIFIER_RULES.estateTransferredMinimumClaims,
+          ),
+        ],
+      });
+    }
+
+    if (profile.lifecycle.population.netChange > 0) {
+      labels.push({
+        id: "POPULATION_GROWTH",
+        title: OUTCOME_LABEL_TITLES.POPULATION_GROWTH,
+        factualSummary: "The living population was larger at the horizon than at start.",
+        evidence: [
+          outcomeEvidence(
+            "profile.lifecycle.population.netChange",
+            profile.lifecycle.population.netChange,
+            "GT",
+            0,
+          ),
+        ],
+      });
+    }
+
+    if (profile.lifecycle.population.netChange < 0) {
+      labels.push({
+        id: "POPULATION_DECLINE",
+        title: OUTCOME_LABEL_TITLES.POPULATION_DECLINE,
+        factualSummary: "The living population was smaller at the horizon than at start.",
+        evidence: [
+          outcomeEvidence(
+            "profile.lifecycle.population.netChange",
+            profile.lifecycle.population.netChange,
+            "LTE",
+            -1,
+          ),
+        ],
+      });
+    }
+
+    if (profile.lifecycle.population.extinctAtHorizon) {
+      labels.push({
+        id: "POPULATION_EXTINCTION",
+        title: OUTCOME_LABEL_TITLES.POPULATION_EXTINCTION,
+        factualSummary: "No living creatures remained at the measurement horizon.",
+        evidence: [
+          outcomeEvidence(
+            "profile.lifecycle.population.extinctAtHorizon",
+            profile.lifecycle.population.extinctAtHorizon,
+            "EQ",
+            true,
+          ),
+        ],
+      });
+    }
   }
 
   if (stalemateEligible && profile.stalemate.declared) {
@@ -1012,8 +1239,11 @@ export function summarizeRunOutcome(
   };
 }
 
-function labelIncidence(summaries: readonly RunOutcomeSummary[]): OutcomeLabelIncidence[] {
-  return OUTCOME_LABEL_ORDER.map((labelId) => {
+function labelIncidence(
+  summaries: readonly RunOutcomeSummary[],
+  labelOrder: readonly OutcomeLabelId[] = OUTCOME_LABEL_ORDER,
+): OutcomeLabelIncidence[] {
+  return labelOrder.map((labelId) => {
     const eligible = summaries.filter((summary) =>
       summary.evaluatedLabelIds.includes(labelId),
     );
@@ -1176,6 +1406,20 @@ function outcomeBandEligibility(
             "Phase 4.2 outcome-incidence and dominance bands are not frozen; the reserved holdout remains sealed.",
         };
   }
+  if (context.corpus === "phase-4.3-calibration") {
+    return {
+      status: "PHASE_4_3_CALIBRATION_CANDIDATE",
+      reason:
+        "Phase 4.3 calibration reports prospective lifecycle incidence; no lifecycle outcome bands are frozen.",
+    };
+  }
+  if (context.corpus === "phase-4.3-holdout") {
+    return {
+      status: "PHASE_4_3_NOT_FROZEN",
+      reason:
+        "Phase 4.3 lifecycle bands are not frozen and the reserved holdout remains sealed.",
+    };
+  }
   return {
     status: "NOT_EVALUATED",
     reason:
@@ -1201,6 +1445,11 @@ export function evaluateScenarioOutcomeBands(
     profiles.map((profile) =>
       summarizeRunOutcome(profile, phase42ClassifierRulesForContext(context)),
     ),
+    context.corpus === "phase-4.3-calibration" || context.corpus === "phase-4.3-holdout"
+      ? OUTCOME_LABEL_ORDER
+      : context.corpus === "phase-4.2-calibration" || context.corpus === "phase-4.2-holdout"
+        ? PHASE_4_2_OUTCOME_LABEL_ORDER
+        : PHASE_4_1_OUTCOME_LABEL_ORDER,
   );
   const definitions = (
     phase42Context
@@ -1248,7 +1497,7 @@ export function evaluateScenarioOutcomeBands(
   });
 
   const dominanceLabelOrder = phase42Context
-    ? OUTCOME_LABEL_ORDER
+    ? PHASE_4_2_OUTCOME_LABEL_ORDER
     : PHASE_4_1_OUTCOME_LABEL_ORDER;
   const dominanceEvaluations = dominanceLabelOrder.map(
     (labelId): ScenarioOutcomeDominanceEvaluation => {
@@ -1377,11 +1626,13 @@ export function evaluateScenarioExpectedBands(
               ? phase42DefinitionsAreFrozenForContext(context)
                 ? "FULL_PHASE_4_2_CALIBRATION_PRESENT"
                 : "PHASE_4_2_CANDIDATE_CALIBRATION_PRESENT"
-              : context.corpus === "nightly"
-                ? "NIGHTLY_SUBSET_ONLY"
-                : context.corpus === "smoke"
-                  ? "SMOKE_SUBSET_ONLY"
-                  : "NOT_PRESENT",
+              : context.corpus === "phase-4.3-calibration"
+                ? "PHASE_4_3_CANDIDATE_CALIBRATION_PRESENT"
+                : context.corpus === "nightly"
+                  ? "NIGHTLY_SUBSET_ONLY"
+                  : context.corpus === "smoke"
+                    ? "SMOKE_SUBSET_ONLY"
+                    : "NOT_PRESENT",
       holdoutEvidence:
         validation.status !== "MATCHED_LOCKED_CORPUS"
           ? "NOT_PRESENT"
@@ -1461,6 +1712,33 @@ function runHardInvariants(
       reason,
     ),
     hardEvaluation(
+      "LIFECYCLE_INVARIANTS_PASSED",
+      "profile.lifecycle.invariants.passed",
+      profile.lifecycle.invariants.passed ? 1 : 0,
+      "EQ",
+      1,
+      true,
+      reason,
+    ),
+    hardEvaluation(
+      "LIVING_POPULATION_CAP_BREACHES",
+      "profile.lifecycle.invariants.populationCapBreaches",
+      profile.lifecycle.invariants.populationCapBreaches,
+      "EQ",
+      0,
+      true,
+      reason,
+    ),
+    hardEvaluation(
+      "LIFECYCLE_METRIC_EVENT_MISMATCHES",
+      "profile.lifecycle.invariants.metricEventMismatches.length",
+      profile.lifecycle.invariants.metricEventMismatches.length,
+      "EQ",
+      0,
+      true,
+      reason,
+    ),
+    hardEvaluation(
       "OCCUPIED_TILE_P10",
       "profile.spatial.occupiedTiles.p10",
       profile.spatial.occupiedTiles.p10,
@@ -1532,6 +1810,10 @@ export function analyzeScenarioRuns(
   const outcomes = profiles.map((profile) =>
     summarizeRunOutcome(profile, phase42ClassifierRulesForContext(context)),
   );
+  const incidenceLabelOrder =
+    context.corpus === "phase-4.3-calibration" || context.corpus === "phase-4.3-holdout"
+      ? OUTCOME_LABEL_ORDER
+      : PHASE_4_2_OUTCOME_LABEL_ORDER;
   const expectedBands = evaluateScenarioExpectedBands(scenarioId, profiles, context);
   const horizonEligible = validation.status === "MATCHED_LOCKED_CORPUS";
   const perRunHardInvariants = runs.map((run) => runHardInvariants(run, horizonEligible));
@@ -1541,7 +1823,7 @@ export function analyzeScenarioRuns(
     ...identity,
     outcomes: {
       perRun: outcomes,
-      incidence: labelIncidence(outcomes),
+      incidence: labelIncidence(outcomes, incidenceLabelOrder),
     },
     hardInvariants: {
       status: evaluationSummaryStatus([
@@ -2138,10 +2420,15 @@ export function convergenceDiagnostics(
  */
 export function phase42AnalysisSemanticContract() {
   return {
-    scenarioAnalysisSchemaVersion: SCENARIO_ANALYSIS_SCHEMA_VERSION,
-    outcomeClassifierVersion: OUTCOME_CLASSIFIER_VERSION,
-    outcomeLabelOrder: [...OUTCOME_LABEL_ORDER],
-    outcomeLabelTitles: { ...OUTCOME_LABEL_TITLES },
+    scenarioAnalysisSchemaVersion: 4,
+    outcomeClassifierVersion: 3,
+    outcomeLabelOrder: [...PHASE_4_2_OUTCOME_LABEL_ORDER],
+    outcomeLabelTitles: Object.fromEntries(
+      PHASE_4_2_OUTCOME_LABEL_ORDER.map((labelId) => [
+        labelId,
+        OUTCOME_LABEL_TITLES[labelId],
+      ]),
+    ),
     historicalClassifier2LabelOrder: [...PHASE_4_1_OUTCOME_LABEL_ORDER],
     evaluationWindows: {
       anyObservedTickEnablesOrdinaryLabels: true,
@@ -2205,6 +2492,41 @@ export function phase42AnalysisSemanticContract() {
       mean: mean.toString(),
       median: median.toString(),
       sampleStandardDeviation: sampleStandardDeviation.toString(),
+    },
+  };
+}
+
+/** Prospective Phase 4.3 classifier-v4 contract. It contains no reviewed evidence. */
+export function phase43AnalysisSemanticContract() {
+  return {
+    scenarioAnalysisSchemaVersion: SCENARIO_ANALYSIS_SCHEMA_VERSION,
+    outcomeClassifierVersion: OUTCOME_CLASSIFIER_VERSION,
+    outcomeLabelOrder: [...OUTCOME_LABEL_ORDER],
+    outcomeLabelTitles: { ...OUTCOME_LABEL_TITLES },
+    inheritedClassifier3LabelOrder: [...PHASE_4_2_OUTCOME_LABEL_ORDER],
+    lifecycleClassifierRules: { ...PHASE_4_3_CLASSIFIER_RULES },
+    phase43CorpusContracts: {
+      calibration: {
+        seeds: [...CORPUS_CONTRACT["phase-4.3-calibration"].seeds],
+        ticks: CORPUS_CONTRACT["phase-4.3-calibration"].ticks,
+      },
+      holdout: {
+        seeds: [...CORPUS_CONTRACT["phase-4.3-holdout"].seeds],
+        ticks: CORPUS_CONTRACT["phase-4.3-holdout"].ticks,
+      },
+    },
+    interpretation: "FACTUAL_NON_EXCLUSIVE_NO_WINNER",
+    releaseClaim: false,
+    classifierImplementation: {
+      summarizeRunOutcome: summarizeRunOutcome.toString(),
+      outcomeEvidence: outcomeEvidence.toString(),
+      labelIncidence: labelIncidence.toString(),
+      wilsonOutcome: wilsonOutcome.toString(),
+    },
+    lifecycleInvariantImplementation: {
+      hardEvaluation: hardEvaluation.toString(),
+      runHardInvariants: runHardInvariants.toString(),
+      analyzeScenarioRuns: analyzeScenarioRuns.toString(),
     },
   };
 }

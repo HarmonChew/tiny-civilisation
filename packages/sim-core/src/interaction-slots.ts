@@ -150,6 +150,10 @@ const PURPOSE_BY_ACTION: Record<ActionKind, InteractionPurpose> = {
   ATTACK: "CONFLICT",
   FLEE: "FLIGHT",
   JOIN_GROUP: "SOCIAL",
+  FORM_FAMILY: "FAMILY",
+  CARE_FOR_YOUNG: "CARE",
+  MOURN: "MOURNING",
+  CLAIM_ESTATE: "ESTATE",
 };
 
 export function interactionPurpose(action: ActionKind): InteractionPurpose {
@@ -182,7 +186,13 @@ export function interactionCapacity(action: ActionKind): number {
     case "SHARE":
     case "SHARE_WATER":
     case "ATTACK":
+    case "FORM_FAMILY":
+    case "CARE_FOR_YOUNG":
       return 2;
+    case "MOURN":
+      return 6;
+    case "CLAIM_ESTATE":
+      return 1;
     default:
       return 1;
   }
@@ -268,7 +278,13 @@ function anchorKindFor(action: ActionKind, targetEntityId: number | null) {
   ) {
     return "RESOURCE" as const;
   }
-  if (action === "SHARE" || action === "SHARE_WATER" || action === "ATTACK") {
+  if (
+    action === "SHARE" ||
+    action === "SHARE_WATER" ||
+    action === "ATTACK" ||
+    action === "FORM_FAMILY" ||
+    action === "CARE_FOR_YOUNG"
+  ) {
     return "CREATURE" as const;
   }
   return "STRUCTURE" as const;
@@ -559,9 +575,15 @@ export function attemptInteractionSlotClaim(
         )
         .sort((left, right) => right.id - left.id);
       if (reservations.length >= capacity) {
-        const displaced = reservations.find(
-          (candidate) => candidate.groupId !== shelter.groupId,
-        );
+        const displaced =
+          reservations.find((candidate) => candidate.groupId !== shelter.groupId) ??
+          (creature.lifeStage === "JUVENILE"
+            ? reservations.find(
+                (candidate) =>
+                  candidate.groupId === shelter.groupId &&
+                  candidate.lifeStage !== "JUVENILE",
+              )
+            : undefined);
         if (displaced) {
           state.metrics.shelterDeniedClaims += 1;
           emitShelterCrowding(
@@ -770,10 +792,12 @@ function compactShelterReservations(state: SimulationState): void {
           creature.activeAction.interactionClaim !== null,
       )
       .sort((left, right) => {
-        const leftMember = isShelterStructure(shelter) && left.groupId === shelter.groupId;
-        const rightMember =
-          isShelterStructure(shelter) && right.groupId === shelter.groupId;
-        return Number(rightMember) - Number(leftMember) || left.id - right.id;
+        const priority = (candidate: CreatureState): number => {
+          if (!isShelterStructure(shelter) || candidate.groupId !== shelter.groupId)
+            return 2;
+          return candidate.lifeStage === "JUVENILE" ? 0 : 1;
+        };
+        return priority(left) - priority(right) || left.id - right.id;
       });
 
     if (!isShelterStructure(shelter) || shelter.kind !== "SHELTER") {
